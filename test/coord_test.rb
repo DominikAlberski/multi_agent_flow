@@ -335,6 +335,35 @@ class WorktreeTest < Minitest::Test
 
     assert_empty status.strip
   end
+
+  # Calling `coord worktree` again for the same role/worker (e.g. a second
+  # `setup_agent` run) must reuse the existing worktree, not abort.
+  def test_create_is_idempotent_when_the_worktree_still_exists
+    worktree = Coord::Worktree.new(@root)
+    worktree.create("tester", nil)
+    @worktree_dir = File.join(worktrees_root, "tester")
+
+    worktree.create("tester", nil)
+
+    assert Dir.exist?(@worktree_dir)
+  end
+
+  # Regression: `git worktree remove` deletes the worktree directory but not
+  # its branch. A later `setup_agent` run then hit `git worktree add -b
+  # agent/tester` against a branch that already existed and aborted with
+  # "fatal: a branch named ... already exists".
+  def test_create_recreates_the_worktree_when_only_the_branch_survives
+    worktree = Coord::Worktree.new(@root)
+    worktree.create("tester", nil)
+    @worktree_dir = File.join(worktrees_root, "tester")
+    run_git("worktree", "remove", @worktree_dir)
+    refute Dir.exist?(@worktree_dir)
+
+    worktree.create("tester", nil)
+
+    assert Dir.exist?(@worktree_dir)
+    assert_equal "agent/tester", `git -C #{@worktree_dir} branch --show-current`.strip
+  end
 end
 
 # Regression: on a first run, `coord` and the flow's .gitignore block are not

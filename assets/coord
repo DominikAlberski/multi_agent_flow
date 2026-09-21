@@ -719,23 +719,55 @@ module Coord
       @root = project_root
     end
 
+    # Idempotent: a repeat call must not abort just because a previous call
+    # (or a `git worktree remove` that left the branch behind) already did
+    # part of the work.
     def create(role, worker)
       slug = [role, worker].compact.join("-")
       branch = "agent/#{slug}"
       dir = self.class.dir_for(@root, slug)
+      return reuse(dir, branch) if Dir.exist?(dir)
+
       FileUtils.mkdir_p(File.dirname(dir))
-      ok = system("git", "-C", @root, "worktree", "add", dir, "-b", branch)
+      ok = system("git", "-C", @root, "worktree", "add", *add_args(dir, branch))
       abort "coord: git worktree add failed" unless ok
 
+      finish(dir, branch, "worktree #{dir} on branch #{branch}")
+    end
+
+    private
+
+    # No `-b` when the branch already exists (e.g. its worktree was removed
+    # without deleting the branch) -- `git worktree add -b` refuses to reuse
+    # a branch name, `git worktree add` without `-b` checks it out instead.
+    def add_args(dir, branch)
+      branch_exists?(branch) ? [dir, branch] : [dir, "-b", branch]
+    end
+
+    def branch_exists?(branch)
+      system("git", "-C", @root, "show-ref", "--verify", "--quiet", "refs/heads/#{branch}")
+    end
+
+    def reuse(dir, branch)
+      unless worktree?(dir)
+        abort "coord: #{dir} exists but is not a git worktree. Remove it or choose a different slug."
+      end
+
+      finish(dir, branch, "worktree #{dir} already exists, reusing (branch #{branch})")
+    end
+
+    def worktree?(dir)
+      system("git", "-C", dir, "rev-parse", "--is-inside-work-tree", out: File::NULL, err: File::NULL)
+    end
+
+    def finish(dir, branch, message)
       ensure_coord(dir)
       exclude_env_file(dir)
       write_env_file(dir)
       warn_uncommitted_coord
-      puts "worktree #{dir} on branch #{branch}"
+      puts message
       puts "In that worktree, run: source #{ENV_FILE}   (shares this project's coordination/ and task board)"
     end
-
-    private
 
     # `coord` is normally committed, so a fresh worktree checks out its own
     # copy. If it is not committed yet, the checkout has none and ./coord would
