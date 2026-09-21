@@ -144,7 +144,8 @@ graphify . --obsidian --obsidian-dir vault --watch --mcp
    say "never edit" also get a restricted tool grant where the harness
    supports one.
 2. Work in a per-agent branch or git worktree (`coord worktree ROLE`, or
-   `setup_agent HARNESS ROLE` which also does this). In the worktree, run
+   `setup_agent HARNESS ROLE` which also does this). Worktrees live under one
+   sibling folder, `<project>.worktrees/<role>`. In the worktree, run
    `source coord-env.sh` so `COORD_DIR`/`TASKRC` point at the main project
    and every worktree shares one coordination/ dir and board.
 3. Acquire the `ollama` lock before any local generation.

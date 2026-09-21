@@ -24,6 +24,16 @@ module Check
     contract: File.join(ROOT, "assets", "agents-contract.md")
   }.freeze
 
+  # The worktree path is computed in two standalone scripts (coord creates the
+  # worktree, setup_agent finds it again) that share no load path, so the
+  # formula is duplicated on purpose. Keep the two identical.
+  WORKTREE_FILES = {
+    coord: File.join(ROOT, "assets", "coord"),
+    setup_agent: File.join(ROOT, "assets", "setup_agent")
+  }.freeze
+  WORKTREE_SUFFIX_DEF = 'WORKTREES_SUFFIX = ".worktrees"'
+  WORKTREE_DIR_EXPR = 'File.join(File.dirname(root), "#{File.basename(root)}#{WORKTREES_SUFFIX}", slug)'
+
   module_function
 
   def check_files_exist
@@ -71,7 +81,20 @@ module Check
     false
   end
 
-  CHECKS = %i[check_udas check_markers check_no_duplicate_block].freeze
+  def check_worktree_paths
+    bad = WORKTREE_FILES.reject do |_, path|
+      next false unless File.exist?(path)
+
+      text = File.read(path)
+      text.include?(WORKTREE_SUFFIX_DEF) && text.include?(WORKTREE_DIR_EXPR)
+    end
+    return true if bad.empty?
+
+    warn "FAIL: worktree path definition out of sync in: #{bad.keys.join(", ")}"
+    false
+  end
+
+  CHECKS = %i[check_udas check_markers check_no_duplicate_block check_worktree_paths].freeze
 
   def run
     ok = check_files_exist && CHECKS.map { |name| send(name) }.all?

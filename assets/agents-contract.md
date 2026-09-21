@@ -19,7 +19,7 @@ This project uses a shared coordination layer for multiple coding agents
 ./coord annotate ID TEXT                      # task-scoped update
 ./coord status                                # per-role summary
 ./coord board                                 # regenerate Obsidian kanban
-./coord worktree ROLE [WORKER]                # create a git worktree + branch for a role
+./coord worktree ROLE [WORKER]                # git worktree in <project>.worktrees/ + branch
                                               # in it: `source coord-env.sh` to share this board
 ```
 

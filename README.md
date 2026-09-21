@@ -55,6 +55,9 @@ multi_agent_flow/
     agents-contract.md        # contract appended to AGENTS.md / CLAUDE.md
     gitignore.append          # marker-guarded ignore entries
     coordination/             # inbox / locks / exports skeleton
+  test/
+    coord_test.rb             # behavioral tests for the coord CLI
+    installer_test.rb         # tests for bootstrap.rb, flow.rb, setup_agent
 ```
 
 ## Install into a project
@@ -120,7 +123,8 @@ without `--force`. `coord unclaim` releases one immediately.
 ```
 
 It creates or reuses the worktree, exports `COORD_DIR`/`TASKRC`/`COORD_AGENT`/
-`COORD_WORKER`, then execs the harness in that worktree:
+`COORD_WORKER`, then execs the harness in that worktree. All worktrees live in
+one sibling folder, `<project>.worktrees/<role>-<worker>`:
 
 - `opencode`/`codex`: `--agent ROLE` (or the `.codex/prompts/ROLE.md` file)
   loads the role file automatically.
@@ -152,13 +156,16 @@ Exit code is non-zero on failure. Run it after editing the UDA block or markers.
 
 ```sh
 ruby test/coord_test.rb
+ruby test/installer_test.rb
 ```
 
-Minitest, stdlib only. Scope-overlap tests are pure; the Taskwarrior and
-worktree tests run for real (a disposable, project-local task database, never
-`~/.task`; a disposable git repo) and skip — exit code still 0 — if `task` or
-`git` is missing. If wiring this into CI, make sure both are installed there;
-a run of "16 runs, 0 failures, N skips" with N > 0 is not full coverage.
+Minitest, stdlib only. `coord_test.rb` covers the `coord` CLI: scope-overlap
+tests are pure; the Taskwarrior and worktree tests run for real (a disposable,
+project-local task database, never `~/.task`; a disposable git repo) and skip —
+exit code still 0 — if `task` or `git` is missing. `installer_test.rb` covers
+`bootstrap.rb`, `flow.rb`, and `setup_agent` against disposable project dirs and
+needs no external tools. If wiring this into CI, make sure `task` and `git` are
+installed there; a run with 0 failures but N > 0 skips is not full coverage.
 
 ## Design notes
 

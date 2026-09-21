@@ -24,6 +24,7 @@ module Flow
   TEMPLATES = File.join(ROOT, "templates")
   ASSETS = File.join(ROOT, "assets")
   HARNESSES = %w[opencode claude codex hermes].freeze
+  DEFAULT_HERMES_DIR = File.join(Dir.home, ".hermes", "skills")
 
   WORKER_LOOP = <<~LOOP
     Work loop:
@@ -65,7 +66,7 @@ module Flow
       @project = nil
       @agents = []
       @models = {}
-      @hermes_dir = File.join(Dir.home, ".hermes", "skills")
+      @hermes_dir = DEFAULT_HERMES_DIR
       @check = false
       @force = false
       @bootstrap = true
@@ -248,9 +249,11 @@ module Flow
       path = File.join(@project, ".agent-flow.json")
       data = {
         generated_at: Time.now.utc.iso8601,
-        agents: @agents.map { |a| { harness: a[:harness], role: a[:role], model: a[:model] || @models[a[:role]] } },
-        hermes_dir: @hermes_dir
+        agents: @agents.map { |a| { harness: a[:harness], role: a[:role], model: a[:model] || @models[a[:role]] } }
       }
+      # Only record hermes_dir when it differs from the default: the default is
+      # an absolute home path that would leak into a committed manifest.
+      data[:hermes_dir] = @hermes_dir unless @hermes_dir == DEFAULT_HERMES_DIR
       File.write(path, JSON.pretty_generate(data))
     end
 

@@ -82,9 +82,17 @@ module SetupAgent
   end
 
   class Worktree
+    # All worktrees live under one sibling folder, <project>.worktrees/<slug>.
+    # This must match Coord::Worktree.dir_for; scripts/check.rb enforces it.
+    WORKTREES_SUFFIX = ".worktrees"
+
+    def self.dir_for(root, slug)
+      File.join(File.dirname(root), "#{File.basename(root)}#{WORKTREES_SUFFIX}", slug)
+    end
+
     def self.ensure(role, worker_id)
       slug = "#{role}-#{worker_id}"
-      dir = File.join(File.dirname(Dir.pwd), "#{File.basename(Dir.pwd)}-#{slug}")
+      dir = dir_for(Dir.pwd, slug)
       return new(dir) if Dir.exist?(dir)
 
       create(role, worker_id, dir)
@@ -169,4 +177,4 @@ module SetupAgent
   end
 end
 
-SetupAgent.run(ARGV)
+SetupAgent.run(ARGV) if __FILE__ == $PROGRAM_NAME

@@ -130,14 +130,16 @@ collide even inside the same repository clone:
 
 ```sh
 ./coord worktree backend-developer
-# -> ../<project>-backend-developer, branch agent/backend-developer
+# -> ../<project>.worktrees/backend-developer, branch agent/backend-developer
 ```
+
+All worktrees live in one sibling folder, `<project>.worktrees/`.
 
 Run the agent's terminal from inside that worktree directory. Source the
 environment file once so the worktree shares this project's task board:
 
 ```sh
-cd ../<project>-backend-developer
+cd ../<project>.worktrees/backend-developer
 source coord-env.sh
 ```
 
@@ -171,7 +173,7 @@ Set this once per terminal.
 If you run more than one instance of the same role, give each a unique worker id.
 
 ```sh
-export COORD_WORKER=backend-1
+export COORD_WORKER=backend-developer-1
 ```
 
 Without `COORD_WORKER`, two instances of the same role share one identity and can
@@ -363,7 +365,7 @@ export COORD_AGENT=backend-developer
 ./coord add --agent backend-developer --scope "test/queries/**" --title "Fix reek in test/queries"
 # prints: 3f2a...  (call it $ID)
 ./coord claim $ID
-./coord with-lock ollama -- opencode run --agent tester "Fix reek in test/queries"
+./coord with-lock ollama -- opencode run --agent backend-developer "Fix reek in test/queries"
 ./coord annotate $ID "0 offenses remain, tests pass"
 ./coord done $ID
 ./coord msg --from backend-developer reviewer "please review test/queries"
@@ -398,7 +400,7 @@ role and different worker ids.
 ```sh
 # terminal 1
 export COORD_AGENT=backend-developer
-export COORD_WORKER=backend-1
+export COORD_WORKER=backend-developer-1
 ./coord next          # shows all three unclaimed tasks
 ./coord claim <id>    # claims one; the other two are now hidden from 'next'
 ```
@@ -406,14 +408,14 @@ export COORD_WORKER=backend-1
 ```sh
 # terminal 2
 export COORD_AGENT=backend-developer
-export COORD_WORKER=backend-2
+export COORD_WORKER=backend-developer-2
 ./coord next          # shows the remaining unclaimed tasks
 ```
 
 ```sh
 # terminal 3
 export COORD_AGENT=backend-developer
-export COORD_WORKER=backend-3
+export COORD_WORKER=backend-developer-3
 ./coord next
 ```
 

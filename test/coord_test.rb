@@ -119,6 +119,19 @@ class TaskwarriorTest < Minitest::Test
     assert_equal 1, error.status
   end
 
+  # Regression: a failed `task add` used to return nil, so `coord add` printed
+  # a blank line and exited 0 while creating nothing.
+  def test_add_raises_when_taskwarrior_cannot_create_the_task
+    blocker = File.join(@dir, "not-a-directory")
+    File.write(blocker, "x")
+    File.write(@env["TASKRC"], "data.location=#{blocker}\n")
+
+    error = assert_raises(Coord::Error) do
+      Coord::Tasks.new.add(title: "boom", agent: "backend-developer")
+    end
+    assert_match(/task add failed/, error.message)
+  end
+
   def test_inbox_wait_with_no_positional_agent_still_recognizes_wait
     Thread.new { sleep 0.3; Coord::CLI.new(["msg", "--from", "architect", "backend-developer", "hi"], env: @env).run }
     out, = capture_io do
@@ -160,6 +173,22 @@ class TaskrcSafetyTest < Minitest::Test
     assert_includes content, "# pre-existing personal config"
     assert_includes content, Coord::MARKER
   end
+
+  # Regression: a marked taskrc from an older install that has no
+  # data.location would silently fall back to the global ~/.task database.
+  def test_ensure_taskrc_adds_data_location_to_an_old_marked_taskrc
+    coord_dir = File.join(@dir, "coordination")
+    taskrc = File.join(coord_dir, "taskrc")
+    FileUtils.mkdir_p(coord_dir)
+    File.write(taskrc, "# #{Coord::MARKER}\nuda.agent.type=string\n")
+
+    Coord::Setup.new(Coord::Paths.new(coord_dir), taskrc).ensure_taskrc
+
+    content = File.read(taskrc)
+    assert_match(/^data\.location=/, content)
+    assert_includes content, "uda.agent.type=string"
+    assert_equal 1, content.scan(Coord::MARKER).size
+  end
 end
 
 class WorktreeTest < Minitest::Test
@@ -180,18 +209,24 @@ class WorktreeTest < Minitest::Test
 
   def teardown
     FileUtils.remove_entry(@root)
-    FileUtils.remove_entry(@worktree_dir) if @worktree_dir && Dir.exist?(@worktree_dir)
+    FileUtils.remove_entry(worktrees_root) if Dir.exist?(worktrees_root)
   end
 
   def run_git(*args)
     system("git", "-C", @root, *args, out: File::NULL) || raise("git #{args.join(" ")} failed")
   end
 
-  def test_worktree_points_at_shared_coordination_state
+  # All worktrees live under one sibling folder, <project>.worktrees/<slug>.
+  def worktrees_root
+    File.join(File.dirname(@root), "#{File.basename(@root)}.worktrees")
+  end
+
+  def test_worktree_lives_under_the_worktrees_folder
     Coord::Worktree.new(@root).create("tester", nil)
-    @worktree_dir = "#{@root}-tester"
+    @worktree_dir = File.join(worktrees_root, "tester")
     env_file = File.read(File.join(@worktree_dir, "coord-env.sh"))
 
+    assert_equal "#{@root}.worktrees/tester", @worktree_dir
     assert Dir.exist?(@worktree_dir)
     assert_includes env_file, "COORD_DIR=#{File.join(@root, "coordination")}"
     assert_includes env_file, "TASKRC=#{File.join(@root, "coordination", "taskrc")}"
@@ -202,7 +237,7 @@ class WorktreeTest < Minitest::Test
   # commits over them, is exactly the failure this design avoids.
   def test_worktree_leaves_tracked_files_untouched
     Coord::Worktree.new(@root).create("tester", nil)
-    @worktree_dir = "#{@root}-tester"
+    @worktree_dir = File.join(worktrees_root, "tester")
     status = `git -C #{@worktree_dir} status --porcelain`
 
     assert_empty status.strip
@@ -223,12 +258,13 @@ class WorktreeFirstRunTest < Minitest::Test
     run_git("add", "README.md")
     run_git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init")
     File.write(File.join(@root, "coord"), "#!/usr/bin/env ruby\n")
-    @worktree_dir = "#{@root}-tester"
+    @worktree_dir = File.join(File.dirname(@root), "#{File.basename(@root)}.worktrees", "tester")
   end
 
   def teardown
     FileUtils.remove_entry(@root)
-    FileUtils.remove_entry(@worktree_dir) if @worktree_dir && Dir.exist?(@worktree_dir)
+    worktrees_root = File.dirname(@worktree_dir)
+    FileUtils.remove_entry(worktrees_root) if Dir.exist?(worktrees_root)
   end
 
   def run_git(*args)

@@ -129,7 +129,7 @@ module Bootstrap
 
     def report_required_dep(bin, meta)
       return say("#{bin}: present") if which(bin)
-      return install_dep(bin, meta) if @install_deps
+      return install_dep(bin, meta) if @install_deps && !@check
 
       say("#{bin}: MISSING (required - #{meta[:why]}). Re-run with --install-deps or install it yourself.")
     end
@@ -202,7 +202,29 @@ module Bootstrap
 
     def plan_taskrc
       path = taskrc_path
-      action(marked?(path) ? :skip : :create_taskrc, path, "#{path} (Taskwarrior UDAs, project-local)")
+      status = taskrc_status(path)
+      label = if status == :refuse
+                "#{path} (exists and is not ours; use --force)"
+              else
+                "#{path} (Taskwarrior UDAs, project-local)"
+              end
+      action(status, path, label)
+    end
+
+    # Never overwrite a taskrc this tool did not create: it may point at a
+    # real Taskwarrior database. A marked taskrc from an older install that
+    # has no data.location is upgraded in place, not rewritten.
+    def taskrc_status(path)
+      return :create_taskrc unless File.exist?(path)
+      return :create_taskrc if @force && !ours?(path, MARKER)
+      return :refuse unless ours?(path, MARKER)
+      return :skip if has_data_location?(path)
+
+      :upgrade_taskrc
+    end
+
+    def has_data_location?(path)
+      File.read(path).match?(/^data\.location=/)
     end
 
     def taskrc_path
@@ -256,6 +278,7 @@ module Bootstrap
         when :touch  then FileUtils.touch(a[:path]) && say("done   #{a[:label]}")
         when :create, :update then write_script(a[:path], a[:source]) && say("done   #{a[:label]}")
         when :create_taskrc then write_taskrc(a[:path]) && say("done   #{a[:label]}")
+        when :upgrade_taskrc then upgrade_taskrc(a[:path]) && say("done   #{a[:label]}")
         when :append then append_marked(a[:path], a[:source]) && say("done   #{a[:label]}")
         end
       end
@@ -265,6 +288,7 @@ module Bootstrap
       case a[:kind]
       when :skip   then "skip   #{a[:label]}"
       when :refuse then "REFUSE #{a[:label]}"
+      when :upgrade_taskrc then "upgrade #{a[:label]}"
       else "#{a[:kind]} #{a[:label]}"
       end
     end
@@ -280,6 +304,18 @@ module Bootstrap
       FileUtils.mkdir_p(File.dirname(path))
       FileUtils.mkdir_p(taskdata_path)
       File.write(path, "data.location=#{taskdata_path}\n\n#{append_content(:taskrc)}")
+      true
+    end
+
+    # Add the missing data.location to a taskrc this tool already owns,
+    # without touching the rest of the file. An old marked taskrc without it
+    # would otherwise fall back to the user's global ~/.task.
+    def upgrade_taskrc(path)
+      FileUtils.mkdir_p(taskdata_path)
+      File.open(path, "a") do |file|
+        file.puts unless file.size.zero?
+        file.puts("data.location=#{taskdata_path}")
+      end
       true
     end
 

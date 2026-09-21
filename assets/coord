@@ -120,19 +120,11 @@ module Coord
     end
 
     def ensure_taskrc
-      return if File.exist?(@taskrc) && File.read(@taskrc).include?(MARKER)
-
+      had_marker = File.exist?(@taskrc) && File.read(@taskrc).include?(MARKER)
       FileUtils.mkdir_p(File.dirname(@taskrc))
       FileUtils.touch(@taskrc)
-      if project_local?
-        write_data_location
-      else
-        warn "coord: TASKRC=#{@taskrc} is outside coordination/; using its existing database as-is, not redirecting it."
-      end
-      File.open(@taskrc, "a") do |file|
-        file.puts unless File.zero?(@taskrc)
-        file.puts(TASKRC_BLOCK)
-      end
+      ensure_data_location(warn_when_external: !had_marker)
+      append_uda_block unless had_marker
     end
 
     private
@@ -145,13 +137,29 @@ module Coord
       File.expand_path(File.dirname(@taskrc)) == File.expand_path(@paths.coord_dir)
     end
 
-    def write_data_location
+    # A taskrc this tool owns but that predates the project-local database
+    # (marker present, no data.location) would otherwise fall back to the
+    # user's global ~/.task. Add the missing data.location in place.
+    def ensure_data_location(warn_when_external:)
       return if has_data_location?
+      return write_data_location if project_local?
+      return unless warn_when_external
 
+      warn "coord: TASKRC=#{@taskrc} is outside coordination/; using its existing database as-is, not redirecting it."
+    end
+
+    def write_data_location
       FileUtils.mkdir_p(@paths.taskdata_dir)
       File.open(@taskrc, "a") do |file|
-        file.puts unless File.zero?(@taskrc)
+        file.puts unless file.size.zero?
         file.puts("data.location=#{File.expand_path(@paths.taskdata_dir)}")
+      end
+    end
+
+    def append_uda_block
+      File.open(@taskrc, "a") do |file|
+        file.puts unless file.size.zero?
+        file.puts(TASKRC_BLOCK)
       end
     end
 
@@ -265,7 +273,11 @@ module Coord
     # parsed as that attribute and the text is silently lost.
     def create(args)
       require!
-      extract_uuid(capture(args))
+      output = capture(args)
+      uuid = extract_uuid(output)
+      raise Error, "task add failed: #{last_line(output)}" if uuid.nil?
+
+      uuid
     end
 
     def modify(id, *args)
@@ -323,6 +335,10 @@ module Coord
     def uuid_from_created(output)
       id = output[/Created task (\d+)/, 1]
       id && task(id)["uuid"]
+    end
+
+    def last_line(output)
+      output.lines.map(&:strip).reject(&:empty?).last || "no task id returned"
     end
   end
 
@@ -482,9 +498,23 @@ module Coord
       release(name)
     end
 
+    # A lock whose metadata is missing is either a crashed writer or a
+    # concurrent writer between mkdir and write_meta. Treat it as stale only
+    # after a short grace period, so a racing acquire cannot delete a lock
+    # that was just created.
+    GRACE_PERIOD = 5
+
     def stale?(name)
       meta = read_meta(name)
-      meta.empty? || meta["ts"].to_i + meta["ttl"].to_i <= Time.now.to_i
+      return meta["ts"].to_i + meta["ttl"].to_i <= Time.now.to_i unless meta.empty?
+
+      lock_age(name) > GRACE_PERIOD
+    end
+
+    def lock_age(name)
+      Time.now - File.mtime(@paths.lock_dir(name))
+    rescue Errno::ENOENT
+      Float::INFINITY
     end
 
     def holder(name)
@@ -639,8 +669,17 @@ module Coord
   # board through COORD_DIR/TASKRC exported by an untracked coord-env.sh, not
   # by symlinking tracked paths (a symlink would dirty the worktree and, if
   # committed, break the coordination dir on merge).
+  #
+  # All worktrees live under one sibling folder, <project>.worktrees/<slug>,
+  # so they are grouped instead of scattered next to the project. setup_agent
+  # computes the same path; keep the two in sync (scripts/check.rb).
   class Worktree
     ENV_FILE = "coord-env.sh"
+    WORKTREES_SUFFIX = ".worktrees"
+
+    def self.dir_for(root, slug)
+      File.join(File.dirname(root), "#{File.basename(root)}#{WORKTREES_SUFFIX}", slug)
+    end
 
     def initialize(project_root)
       @root = project_root
@@ -649,7 +688,8 @@ module Coord
     def create(role, worker)
       slug = [role, worker].compact.join("-")
       branch = "agent/#{slug}"
-      dir = File.join(File.dirname(@root), "#{File.basename(@root)}-#{slug}")
+      dir = self.class.dir_for(@root, slug)
+      FileUtils.mkdir_p(File.dirname(dir))
       ok = system("git", "-C", @root, "worktree", "add", dir, "-b", branch)
       abort "coord: git worktree add failed" unless ok
 

@@ -160,7 +160,7 @@ Report the generated files. Then give the user these instructions.
 - Take the `ollama` lock before a local model generation:
   `./coord with-lock ollama -- <command>`.
 - Give each agent its own worktree so file changes never collide:
-  `./coord worktree <role>` (creates `../<project>-<role>` on branch `agent/<role>`).
+  `./coord worktree <role>` (creates `../<project>.worktrees/<role>` on branch `agent/<role>`).
   In that worktree run `source coord-env.sh` first; it points `COORD_DIR` and
   `TASKRC` at the main project, so every worktree shares one coordination/ dir
   and one task board. `./setup_agent` does all of this for you.
