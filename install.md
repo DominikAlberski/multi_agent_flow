@@ -44,8 +44,12 @@ Show the available roles. Run:
 ruby "$FLOW/scripts/flow.rb" --list-roles
 ```
 
-Ask the user to map roles to harnesses. Example answer:
+Tell the user about the `project-manager` role: the user talks to it, it sends
+one goal at a time to the architect, and the architect reports back to it.
+Recommend it whenever the architect would otherwise take requests directly
+from the user. Ask the user to map roles to harnesses. Example answer:
 
+- claude -> project-manager
 - claude -> architect
 - opencode -> backend-developer
 - opencode -> frontend-developer
@@ -73,11 +77,13 @@ Preview first. This writes nothing.
 ```sh
 ruby "$FLOW/scripts/flow.rb" \
   --project "$PROJECT" \
+  --agent claude:project-manager \
   --agent claude:architect \
   --agent opencode:backend-developer \
   --agent opencode:frontend-developer \
   --agent codex:reviewer \
   --agent hermes:tester \
+  --model project-manager=anthropic/claude-opus-4-6 \
   --model architect=anthropic/claude-opus-4-6 \
   --check
 ```
@@ -87,11 +93,13 @@ Then run it for real. Remove `--check`.
 ```sh
 ruby "$FLOW/scripts/flow.rb" \
   --project "$PROJECT" \
+  --agent claude:project-manager \
   --agent claude:architect \
   --agent opencode:backend-developer \
   --agent opencode:frontend-developer \
   --agent codex:reviewer \
   --agent hermes:tester \
+  --model project-manager=anthropic/claude-opus-4-6 \
   --model architect=anthropic/claude-opus-4-6
 ```
 
@@ -133,6 +141,7 @@ Report the generated files. Then give the user these instructions.
 >
 > Example, for this setup:
 >
+>     ./setup_agent claude project-manager
 >     ./setup_agent claude architect
 >     ./setup_agent opencode backend-developer_1
 >     ./setup_agent opencode frontend-developer_1
@@ -149,14 +158,21 @@ Report the generated files. Then give the user these instructions.
 > with `./coord claim <id>`, do the work, and finish with `./coord done
 > <id>`. Repeat."
 >
-> In the architect session, describe what you want built. For example: "Build a
-> task tracker app." The architect creates tasks. The workers pick them up.
+> Talk to the project manager session, not the architect. For example: "Build a
+> task tracker app." The project manager sends the goal to the architect. The
+> architect creates tasks. The workers pick them up. The architect reports back
+> to the project manager, and the project manager reports back to you. If no
+> `project-manager` role was set up, talk to the architect session directly
+> instead.
 
 ## Notes
 
 - One writer per path. The task scope defines the paths. `coord add`/`conflicts`
   warns on overlap; roles marked "never edit" also get a restricted tool grant
   where the harness supports one (Claude Code, opencode).
+- Every generated role file requires Simplified Technical English in
+  `coord msg`, `coord annotate`, and task titles: one instruction per
+  sentence, active voice, named subject, no idioms.
 - Take the `ollama` lock before a local model generation:
   `./coord with-lock ollama -- <command>`.
 - Give each agent its own worktree so file changes never collide:

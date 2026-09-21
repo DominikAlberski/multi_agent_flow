@@ -34,6 +34,15 @@ module Check
   WORKTREE_SUFFIX_DEF = 'WORKTREES_SUFFIX = ".worktrees"'
   WORKTREE_DIR_EXPR = 'File.join(File.dirname(root), "#{File.basename(root)}#{WORKTREES_SUFFIX}", slug)'
 
+  # bootstrap.rb decides whether an existing script is "ours" by these signature
+  # strings. If a script's header drifts, bootstrap stops recognizing its own
+  # file and refuses to update it. Keep each signature in both places.
+  SCRIPTS = {
+    "coord" => "coord - shared coordination layer",
+    "setup_agent" => "setup_agent - create a worktree for one agent and launch its harness session.",
+    "vault" => "vault - shared knowledge base watcher (graphify + Obsidian + MCP)."
+  }.freeze
+
   module_function
 
   def check_files_exist
@@ -94,7 +103,20 @@ module Check
     false
   end
 
-  CHECKS = %i[check_udas check_markers check_no_duplicate_block check_worktree_paths].freeze
+  def check_script_signatures
+    bootstrap = File.read(FILES[:bootstrap])
+    bad = SCRIPTS.reject do |name, signature|
+      path = File.join(ROOT, "assets", name)
+      File.exist?(path) && File.read(path).include?(signature) && bootstrap.include?(signature)
+    end
+    return true if bad.empty?
+
+    warn "FAIL: script signature missing in the asset or assets/bootstrap.rb: #{bad.keys.join(", ")}"
+    false
+  end
+
+  CHECKS = %i[check_udas check_markers check_no_duplicate_block check_worktree_paths
+              check_script_signatures].freeze
 
   def run
     ok = check_files_exist && CHECKS.map { |name| send(name) }.all?

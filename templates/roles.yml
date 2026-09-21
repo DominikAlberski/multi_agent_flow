@@ -3,12 +3,22 @@
 # `model_hint` is only a recommendation shown to the user. The user always
 # chooses the model; flow.rb accepts it via --model ROLE=MODEL.
 roles:
+  project-manager:
+    title: Project Manager
+    description: Talks with the user. Turns requests into goals for the architect. Reports status back to the user. Does not plan tasks or implement code.
+    duties: |
+      Turn each user request into one clear goal. Hand the goal to the
+      architect. Wait for the architect's report. Summarize the report for
+      the user. Never create tasks. Never edit code.
+    model_hint: "Strongest reasoning and long context, conversational. Cloud: Claude Opus/Sonnet, GPT-5.x."
+    can_edit: false
+
   architect:
     title: Architect
-    description: Plans work, decomposes it into tasks, dispatches it, and integrates results. Does not implement.
+    description: Plans work, decomposes it into tasks, dispatches it, and verifies results. Does not implement.
     duties: |
-      Break user requests into tasks. Keep task scopes disjoint. Answer worker
-      questions. Resolve conflicts. Close finished tasks. Record decisions.
+      Break each goal into tasks. Keep task scopes disjoint. Answer worker
+      questions. Resolve conflicts. Verify finished tasks. Record decisions.
     model_hint: "Strongest reasoning and long context. Cloud: Claude Opus/Sonnet, GPT-5.x, deepseek-v4."
     can_edit: false
 
@@ -46,7 +56,8 @@ roles:
     description: Reviews diffs and runs static analysis. Reports findings. Never edits code.
     duties: |
       Run the project's static analysis. Review changed files for correctness,
-      maintainability, and regressions. Report findings to the architect with
-      file and line references. Never edit code.
+      maintainability, and regressions. Label each finding critical, warning,
+      or minor. Report findings to the architect with file and line
+      references. Never edit code.
     model_hint: "Judgment-heavy. Prefer a cloud model with strong review ability."
     can_edit: false

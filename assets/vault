@@ -1,0 +1,90 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# vault - shared knowledge base watcher (graphify + Obsidian + MCP).
+#
+# Usage: ./vault [start|stop|status]
+#   ./vault           # start (default); no-op if already running
+#   ./vault stop
+#   ./vault status
+#
+# Started automatically by bootstrap.rb when graphify is on PATH. Run by hand
+# after installing graphify if it was not on PATH at bootstrap time.
+
+module Vault
+  DIR = "vault"
+  PID_FILE = "coordination/vault.pid"
+  LOG_FILE = "coordination/vault.log"
+  CMD = ["graphify", ".", "--obsidian", "--obsidian-dir", DIR, "--watch", "--mcp"].freeze
+
+  def self.run(argv)
+    case argv.first
+    when "stop" then Daemon.stop
+    when "status" then Daemon.status
+    else Daemon.start
+    end
+  end
+
+  module Daemon
+    def self.start
+      return puts("vault: already running (pid #{Pid.read})") if Pid.running?
+      abort "vault: graphify not found on PATH. Install: pip/uv install graphifyy" unless which("graphify")
+
+      spawn_detached
+    end
+
+    def self.spawn_detached
+      pid = Process.spawn(*CMD, out: LOG_FILE, err: LOG_FILE, pgroup: true)
+      Process.detach(pid)
+      Pid.write(pid)
+      puts "vault: started (pid #{pid}), log at #{LOG_FILE}"
+    end
+
+    def self.stop
+      return puts("vault: not running") unless Pid.running?
+
+      pid = Pid.read
+      Process.kill("TERM", -pid)
+      Pid.clear
+      puts "vault: stopped"
+    end
+
+    def self.status
+      Pid.running? ? puts("vault: running (pid #{Pid.read})") : puts("vault: not running")
+    end
+
+    def self.which(bin)
+      ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).any? { |dir| File.executable?(File.join(dir, bin)) }
+    end
+  end
+
+  module Pid
+    def self.running?
+      return false unless File.exist?(PID_FILE)
+
+      pid = read
+      # A corrupt or empty pid file reads as 0; Process.kill(0, 0) would signal
+      # this process's own group, so treat a non-positive pid as not running.
+      return false if pid <= 0
+
+      Process.kill(0, pid)
+      true
+    rescue Errno::ESRCH, Errno::ENOENT, Errno::EINVAL, RangeError
+      false
+    end
+
+    def self.read
+      File.read(PID_FILE).to_i
+    end
+
+    def self.write(pid)
+      File.write(PID_FILE, pid)
+    end
+
+    def self.clear
+      File.delete(PID_FILE)
+    end
+  end
+end
+
+Vault.run(ARGV) if __FILE__ == $PROGRAM_NAME

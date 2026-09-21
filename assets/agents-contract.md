@@ -10,6 +10,7 @@ This project uses a shared coordination layer for multiple coding agents
 ```
 ./coord init                                  # create coordination/ dirs
 ./coord add --agent ROLE --scope S --title T  # architect: add a task (prints id)
+./coord annotate ID "Goal: ... Inputs: ... Acceptance: ..."  # architect: add the task's spec, right after `add`
 ./coord next [ROLE] [--wait [--interval S]]   # list unclaimed tasks (or block until one appears)
 ./coord next --mine                           # list your in-progress tasks
 ./coord conflicts                             # list pending tasks with overlapping scopes
@@ -36,6 +37,12 @@ run `coord unclaim ID` instead of leaving it to expire.
 - `claim` is atomic (per-task lock). Two workers racing one task → exactly one wins.
 - The architect creates tasks for a role and does not need to know how many
   instances exist. Run one instance per role unless you set `COORD_WORKER`.
+- Hierarchy (if `project-manager` is one of the installed roles): the user
+  talks to the project manager. The project manager sends one goal at a time
+  to the architect (`coord msg --from project-manager architect "..."`). The
+  architect decomposes the goal into tasks, dispatches them, and reports the
+  outcome back to the project manager. Workers and the architect never talk
+  to the user directly.
 
 `add` prints a warning on stderr when the new scope overlaps a pending task
 owned by another agent. Fix the overlap before work starts. Run `coord conflicts`
@@ -75,18 +82,36 @@ Only one local-model generation may run at a time on the shared Ollama host.
    Never edit outside your task scope.
 2. One writer per path. The task `scope` defines the paths you own. This is a
    convention `coord add`/`conflicts` warns about, not a lock the filesystem
-   enforces — a role whose duties say "never edit" (reviewer, architect) also
-   gets a read-only tool grant where the harness supports one; other roles
-   rely on scope discipline.
+   enforces — a role whose duties say "never edit" (reviewer, architect,
+   project manager) also gets a read-only tool grant where the harness
+   supports one; other roles rely on scope discipline.
 3. Acquire the `ollama` lock before any local generation.
-4. Report progress with `coord annotate`; ask other agents with `coord msg`.
-5. Prefer the shared knowledge graph over grep when `graphify-out/` exists
+4. Before you report, run the tests. Check the task's acceptance criteria.
+   Report with `coord annotate ID "STATUS: done or blocked. FILES: <paths>.
+   TESTS: <one-line result>. NOTES: <assumptions or risks>"`. Ask other
+   agents with `coord msg`.
+5. If you cannot finish a task, keep the claim. Annotate the blocker.
+   Message the architect. Stop. Do not retry a failing approach. Do not
+   `unclaim` a blocked task — that returns it to the pool for another worker
+   to hit the same wall.
+6. The architect inspects a done task's diff and reruns its tests in the
+   worker's worktree (`git -C ../<project>.worktrees/<role>-<worker> diff`)
+   before trusting it. A bad result gets a new fix task, not a silent
+   re-close.
+7. Prefer the shared knowledge graph over grep when `graphify-out/` exists
    (query it via MCP or `graphify query "..."`).
-6. If no task is available, use `coord next --wait` (or `coord inbox --wait`)
+8. If no task is available, use `coord next --wait` (or `coord inbox --wait`)
    instead of a manual poll loop.
+9. Write `coord msg`, `coord annotate`, and task titles in Simplified
+   Technical English: one instruction per sentence, active voice, name the
+   subject, max 20 words per sentence, no idioms.
+10. Never write ad-hoc verification scripts. The test suite is the
+    verification.
 
 ### Shared memory
 
+- `./vault status` / `./vault stop` control the graphify watcher; bootstrap
+  starts it automatically when `graphify` is on PATH.
 - `vault/` is the Obsidian knowledge base: graphify's regenerated code graph
   plus any notes you add there. It is gitignored and rebuilt, so nothing you
   need to keep permanently belongs there.

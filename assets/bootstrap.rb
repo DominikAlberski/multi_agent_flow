@@ -16,6 +16,7 @@ module Bootstrap
   MARKER = ">>> multi-agent-flow >>>"
   COORD_SIGNATURE = "coord - shared coordination layer"
   SETUP_AGENT_SIGNATURE = "setup_agent - create a worktree for one agent and launch its harness session."
+  VAULT_SIGNATURE = "vault - shared knowledge base watcher (graphify + Obsidian + MCP)."
   SUBDIRS = %w[inbox locks exports].freeze
 
   REQUIRED_DEPS = {
@@ -38,8 +39,7 @@ module Bootstrap
       2. Set COORD_AGENT so messages and locks are attributed, e.g.:
            export COORD_AGENT=local
 
-      3. Shared memory (optional, needs graphify):
-           graphify . --obsidian --obsidian-dir vault --watch --mcp
+      3. Shared memory (graphify + Obsidian vault): %{vault_note}
 
       4. Serialize local generation on the shared model host:
            ./coord with-lock ollama -- <command>
@@ -86,6 +86,7 @@ module Bootstrap
       return print_plan(actions) if @check
 
       apply(actions)
+      auto_start_vault(actions)
       print_next_steps
     end
 
@@ -149,6 +150,7 @@ module Bootstrap
         plan_gitkeeps,
         plan_coord,
         plan_setup_agent,
+        plan_vault,
         plan_taskrc,
         plan_contracts,
         plan_gitignore
@@ -175,6 +177,10 @@ module Bootstrap
 
     def plan_setup_agent
       plan_script("setup_agent", SETUP_AGENT_SIGNATURE)
+    end
+
+    def plan_vault
+      plan_script("vault", VAULT_SIGNATURE)
     end
 
     def plan_script(name, signature)
@@ -284,6 +290,28 @@ module Bootstrap
       end
     end
 
+    # Auto-start the vault watcher once the script is in place, so shared
+    # memory is live right after install with no extra step for the common
+    # case (graphify already installed). Skipped when graphify is missing;
+    # the printed next steps cover installing it and running `./vault` later.
+    def auto_start_vault(actions)
+      return @vault_note = "run `./vault` after bootstrap (graphify not needed at install time, only to run it)" \
+        unless vault_script_installed?(actions)
+      return @vault_note = "run `./vault` once graphify is installed" unless which("graphify")
+
+      start_vault
+    end
+
+    def vault_script_installed?(actions)
+      actions.any? { |a| a[:path] == File.join(@target, "vault") && a[:kind] != :refuse }
+    end
+
+    def start_vault
+      ok = system(File.join(@target, "vault"), chdir: @target)
+      @vault_note = ok ? "started (`./vault status` / `./vault stop`)" : "failed to start; see coordination/vault.log"
+      say("vault: #{@vault_note}")
+    end
+
     def format_action(a)
       case a[:kind]
       when :skip   then "skip   #{a[:label]}"
@@ -346,7 +374,7 @@ module Bootstrap
 
     def print_next_steps
       puts
-      puts format(NEXT_STEPS, project: @target, roles: @roles)
+      puts format(NEXT_STEPS, project: @target, roles: @roles, vault_note: @vault_note)
     end
   end
 end

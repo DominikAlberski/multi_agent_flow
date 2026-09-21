@@ -47,7 +47,8 @@ required tools), `--force` (overwrite a foreign `coord`).
 It creates and never destroys:
 
 - `coordination/{inbox,locks,exports,taskdata}/`
-- `coord` and `setup_agent` (executable) at the project root
+- `coord`, `setup_agent`, and `vault` (executable) at the project root; `vault`
+  is also started automatically if `graphify` is on PATH (see Shared memory)
 - `coordination/taskrc`: a project-local Taskwarrior config (own database,
   under `coordination/taskdata`) plus the UDA block — never the user's
   global `~/.taskrc`, so two projects never share one board
@@ -126,9 +127,19 @@ Locks are `mkdir`-based, so they work on macOS and Linux without `flock`.
 
 ## Shared memory
 
+`bootstrap.rb` installs a `vault` script and starts it automatically when
+`graphify` is on PATH at install time:
+
 ```sh
-graphify . --obsidian --obsidian-dir vault --watch --mcp
+./vault           # start (no-op if already running); bootstrap.rb runs this for you
+./vault status
+./vault stop
 ```
+
+It wraps `graphify . --obsidian --obsidian-dir vault --watch --mcp`, run as a
+detached background process, with its pid in `coordination/vault.pid` and its
+output in `coordination/vault.log`. If `graphify` was not installed yet, run
+`./vault` by hand once it is.
 
 - Agents query the graph over MCP or `graphify query "..."` instead of grepping.
 - `vault/` is the human-facing Obsidian base (graph notes, the board). It is

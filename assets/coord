@@ -137,15 +137,18 @@ module Coord
       File.expand_path(File.dirname(@taskrc)) == File.expand_path(@paths.coord_dir)
     end
 
-    # A taskrc this tool owns but that predates the project-local database
-    # (marker present, no data.location) would otherwise fall back to the
-    # user's global ~/.task. Add the missing data.location in place.
+    # Never redirect an external taskrc (e.g. a personal ~/.taskrc), and warn
+    # once that it is used as-is. A project-local taskrc this tool owns but
+    # that predates the project-local database (marker present, no
+    # data.location) would otherwise fall back to the global ~/.task; add the
+    # missing data.location in place.
     def ensure_data_location(warn_when_external:)
-      return if has_data_location?
-      return write_data_location if project_local?
-      return unless warn_when_external
+      unless project_local?
+        warn "coord: TASKRC=#{@taskrc} is outside coordination/; using its existing database as-is, not redirecting it." if warn_when_external
+        return
+      end
 
-      warn "coord: TASKRC=#{@taskrc} is outside coordination/; using its existing database as-is, not redirecting it."
+      write_data_location unless has_data_location?
     end
 
     def write_data_location
@@ -275,9 +278,15 @@ module Coord
       require!
       output = capture(args)
       uuid = extract_uuid(output)
-      raise Error, "task add failed: #{last_line(output)}" if uuid.nil?
+      return uuid if uuid
 
-      uuid
+      # The add may have succeeded even when the uuid could not be read back
+      # (extract_uuid queries the created task again). Distinguish the two so a
+      # caller does not retry and create a duplicate.
+      id = created_id(output)
+      raise Error, "task #{id} was created but its uuid could not be read" if id
+
+      raise Error, "task add failed: #{last_line(output)}"
     end
 
     def modify(id, *args)
@@ -333,8 +342,12 @@ module Coord
     end
 
     def uuid_from_created(output)
-      id = output[/Created task (\d+)/, 1]
+      id = created_id(output)
       id && task(id)["uuid"]
+    end
+
+    def created_id(output)
+      output[/Created task (\d+)/, 1]
     end
 
     def last_line(output)
@@ -346,8 +359,23 @@ module Coord
   # older than the lease is presumed abandoned (the worker crashed) and
   # becomes claimable again without --force.
   module Lease
+    @warned = {}
+
+    # An unset, empty, non-numeric, or non-positive COORD_LEASE_TTL falls back
+    # to the default instead of collapsing to 0 (which would make every claim
+    # look instantly expired). Warn once per distinct bad value.
     def self.ttl
-      (ENV["COORD_LEASE_TTL"] || DEFAULT_LEASE_TTL).to_i
+      raw = ENV["COORD_LEASE_TTL"].to_s
+      return DEFAULT_LEASE_TTL if raw.empty?
+
+      value = Integer(raw, exception: false)
+      return value if value&.positive?
+
+      unless @warned[raw]
+        warn "coord: invalid COORD_LEASE_TTL=#{raw.inspect}; using default #{DEFAULT_LEASE_TTL}s"
+        @warned[raw] = true
+      end
+      DEFAULT_LEASE_TTL
     end
 
     def self.expired?(task)
@@ -362,6 +390,10 @@ module Coord
 
   # Tasks exposes the task operations the flow needs.
   class Tasks
+    # The previous owner of a task, split so a steal notice can go to the
+    # role's inbox (what agents poll) while still naming the exact worker.
+    Holder = Struct.new(:agent, :worker)
+
     ATTRIBUTES = { agent: "agent", scope: "scope", ref: "taskref", project: "project" }.freeze
 
     def initialize
@@ -391,7 +423,7 @@ module Coord
       holder = task["worker"].to_s
       refuse_steal(id, holder) if active_claim?(task, holder, worker) && !force
       @cli.modify(id, "worker:#{worker}", "start:now")
-      holder.empty? ? nil : holder
+      holder.empty? ? nil : Holder.new(task["agent"].to_s, holder)
     end
 
     def unclaim(id)
@@ -548,10 +580,17 @@ module Coord
     end
 
     def inbox(agent, peek: false, all: false)
-      files = message_files(agent, all)
+      files = files(agent, all: all)
       return puts("no messages for #{agent}") if files.empty?
 
       files.each { |file| read_message(file, peek) }
+    end
+
+    # Paths of the agent's message files, oldest first. Shared with the
+    # `--wait` poller so "is there mail yet" tests exactly what `inbox` reads.
+    def files(agent, all: false)
+      dir = @paths.inbox_dir(agent)
+      Dir.glob(File.join(dir, all ? "**" : "", "*.md")).sort
     end
 
     private
@@ -562,11 +601,6 @@ module Coord
 
     def stamp
       Time.now.utc.strftime("%Y%m%dT%H%M%SZ")
-    end
-
-    def message_files(agent, all)
-      dir = @paths.inbox_dir(agent)
-      Dir.glob(File.join(dir, all ? "**" : "", "*.md")).sort
     end
 
     def read_message(file, peek)
@@ -804,7 +838,18 @@ module Coord
     def first = @argv.first
     def empty? = @argv.empty?
     def join = @argv.join(" ")
-    def rest = @argv
+
+    # Splits argv at the first literal "--" and returns the words after it,
+    # leaving only the option part in @argv. This keeps a wrapped command's own
+    # flags (e.g. "--ttl") out of coord's option parsing.
+    def take_command
+      index = @argv.index("--")
+      return nil unless index
+
+      command = @argv[(index + 1)..]
+      @argv.replace(@argv[0...index])
+      command
+    end
   end
 
   # Commands implements each coord subcommand. State lives on the CLI instance.
@@ -851,7 +896,7 @@ module Coord
       force = @args.flag?("--force")
       require_agent!(@worker, "claim ID (needs COORD_WORKER or COORD_AGENT)")
       holder = locks.with_mutex("task-#{id}", agent: @worker) { tasks.claim(id, @worker, force: force) }
-      notify_prior_holder(id, holder) if holder && holder != @worker
+      notify_prior_holder(id, holder) if holder && holder.worker != @worker
       puts "claimed #{id} by #{@worker}"
     end
 
@@ -886,10 +931,12 @@ module Coord
       timeout = @args.timeout
       peek = @args.flag?("--peek")
       all = @args.flag?("--all")
-      agent = @args.shift || @agent
+      agent = require_agent!(@args.shift || @agent, "inbox AGENT, or export COORD_AGENT")
       return messages.inbox(agent, peek: peek, all: all) unless wait
 
-      wait_for(interval, timeout, -> { inbox_files(agent, all) }) { messages.inbox(agent, peek: peek, all: all) }
+      wait_for(interval, timeout, -> { messages.files(agent, all: all) }) do
+        messages.inbox(agent, peek: peek, all: all)
+      end
     end
 
     def cmd_lock
@@ -902,10 +949,10 @@ module Coord
 
     def cmd_with_lock
       name = @args.require_arg("with-lock", "NAME")
-      @args.shift if @args.first == "--"
-      abort "usage: coord with-lock NAME -- CMD..." if @args.empty?
+      command = @args.take_command
+      abort "usage: coord with-lock NAME [--ttl SECONDS] -- CMD..." if command.nil? || command.empty?
 
-      locks.with_lock(name, ttl: @args.ttl, command: @args.rest, agent: @agent)
+      locks.with_lock(name, ttl: @args.ttl, command: command, agent: @agent)
     end
 
     def cmd_worktree
@@ -933,12 +980,11 @@ module Coord
     end
 
     def notify_prior_holder(id, holder)
-      warn "coord: task #{id} was claimed from #{holder} by #{@worker}"
-      messages.send_message(holder, @worker, "task #{id} was claimed from you by #{@worker}")
-    end
-
-    def inbox_files(agent, all)
-      Dir.glob(File.join(paths.inbox_dir(agent), all ? "**" : "", "*.md"))
+      warn "coord: task #{id} was claimed from #{holder.worker} by #{@worker}"
+      # Send to the role's inbox (what agents poll with `coord inbox`), not the
+      # worker id, which no agent reads. Name the exact worker in the body.
+      to = holder.agent.empty? ? holder.worker : holder.agent
+      messages.send_message(to, @worker, "task #{id} was claimed from worker #{holder.worker} by #{@worker}")
     end
 
     # Polls at `interval` seconds until `check` returns a non-empty result, then

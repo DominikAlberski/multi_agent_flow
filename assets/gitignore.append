@@ -15,6 +15,10 @@ coordination/exports/*
 # this project's coordination/ dir, never meant to be committed.
 coord-env.sh
 
+# Written by `./vault` (the graphify watcher's pid and log).
+coordination/vault.pid
+coordination/vault.log
+
 # Knowledge graph build output
 graphify-out/
 vault/

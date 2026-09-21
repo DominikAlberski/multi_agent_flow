@@ -26,7 +26,8 @@ walkthrough for a first-time user.
 
 3. The agent asks which harnesses, which roles, and which model per role.
 4. The agent generates the agent files and prints the session instructions.
-5. Open one session per agent and start giving the architect work.
+5. Open one session per agent and start giving the project manager work (or
+   the architect directly, if you skipped the `project-manager` role).
 
 See **[install.md](install.md)** for the exact instruction the agent follows.
 
@@ -50,6 +51,7 @@ multi_agent_flow/
   assets/
     coord                     # the coordination CLI (Ruby)
     setup_agent               # worktree + harness launch, one command (Ruby)
+    vault                     # graphify + Obsidian + MCP watcher control (Ruby)
     bootstrap.rb              # idempotent installer (Ruby)
     taskrc.append             # Taskwarrior UDA block
     agents-contract.md        # contract appended to AGENTS.md / CLAUDE.md
@@ -63,7 +65,7 @@ multi_agent_flow/
 ## Install into a project
 
 ```sh
-./assets/bootstrap.rb /path/to/project --roles architect,backend-developer,frontend-developer,reviewer,tester
+./assets/bootstrap.rb /path/to/project --roles project-manager,architect,backend-developer,frontend-developer,reviewer,tester
 ```
 
 Prerequisites: Ruby 3.x and `task` (Taskwarrior). Optional: `graphify`.
@@ -148,6 +150,8 @@ Verifies the repo is internally consistent:
   (they are duplicated because `coord` is copied into projects and cannot read
   the append file at runtime);
 - the `>>> multi-agent-flow >>>` marker is present in every generated/parsed file;
+- the worktree path formula in `assets/coord` and `assets/setup_agent` matches;
+- each installed script's signature string matches `assets/bootstrap.rb`;
 - `assets/bootstrap.rb` does not define its own `TASKRC_BLOCK`.
 
 Exit code is non-zero on failure. Run it after editing the UDA block or markers.
@@ -195,5 +199,11 @@ installed there; a run with 0 failures but N > 0 skips is not full coverage.
   a manual `git merge`/PR step. `coord worktree ROLE` only creates the worktree;
   it writes an untracked `coord-env.sh` that you `source` so the worktree shares
   the main project's `coordination/` dir and board.
+- The optional `project-manager` role is that second tier for the user, not
+  for scale: the user talks only to the project manager, which sends the
+  architect one goal at a time and relays its report back. This keeps the
+  user's conversation free while the architect dispatches tasks and watches
+  worker progress. Without `project-manager`, the user talks to the architect
+  directly, as before.
 - UI is deliberately deferred: Obsidian (Kanban/Dataview) or `taskwarrior-tui` can
   read the same data with no agent changes.

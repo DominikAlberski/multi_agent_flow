@@ -28,6 +28,53 @@ class ScopesTest < Minitest::Test
   end
 end
 
+class ArgsTest < Minitest::Test
+  def test_take_command_splits_at_the_separator
+    args = Coord::Args.new(["ollama", "--ttl", "30", "--", "echo", "--ttl", "5"])
+    assert_equal "ollama", args.shift
+
+    command = args.take_command
+
+    assert_equal ["echo", "--ttl", "5"], command
+    assert_equal 30, args.ttl
+  end
+
+  def test_take_command_returns_nil_without_a_separator
+    assert_nil Coord::Args.new(["echo", "hi"]).take_command
+  end
+end
+
+class LeaseTest < Minitest::Test
+  def with_lease_env(value)
+    old = ENV["COORD_LEASE_TTL"]
+    value.nil? ? ENV.delete("COORD_LEASE_TTL") : ENV["COORD_LEASE_TTL"] = value
+    yield
+  ensure
+    old.nil? ? ENV.delete("COORD_LEASE_TTL") : ENV["COORD_LEASE_TTL"] = old
+  end
+
+  def test_defaults_when_unset
+    with_lease_env(nil) { assert_equal Coord::DEFAULT_LEASE_TTL, Coord::Lease.ttl }
+  end
+
+  def test_honors_a_positive_override
+    with_lease_env("120") { assert_equal 120, Coord::Lease.ttl }
+  end
+
+  # Regression: a non-numeric COORD_LEASE_TTL used to collapse to 0, making
+  # every claim look instantly expired.
+  def test_invalid_override_falls_back_to_the_default
+    _, err = capture_io do
+      with_lease_env("soon") { assert_equal Coord::DEFAULT_LEASE_TTL, Coord::Lease.ttl }
+    end
+    assert_match(/invalid COORD_LEASE_TTL/, err)
+  end
+
+  def test_non_positive_override_falls_back_to_the_default
+    with_lease_env("0") { assert_equal Coord::DEFAULT_LEASE_TTL, Coord::Lease.ttl }
+  end
+end
+
 class TaskwarriorTest < Minitest::Test
   def setup
     skip "Taskwarrior ('task') not installed" unless Coord::TaskCli.new.available?
@@ -79,7 +126,8 @@ class TaskwarriorTest < Minitest::Test
     id = add("task two")
     tasks.claim(id, "backend-1")
     holder = Coord::Tasks.new.claim(id, "backend-2", force: true)
-    assert_equal "backend-1", holder
+    assert_equal "backend-1", holder.worker
+    assert_equal "backend-developer", holder.agent
   end
 
   def test_unclaim_frees_a_task_for_reclaim
@@ -97,7 +145,36 @@ class TaskwarriorTest < Minitest::Test
     stale = (Time.now - Coord::Lease.ttl - 10).utc.strftime("%Y%m%dT%H%M%SZ")
     system("task", "rc.confirmation=no", id, "modify", "start:#{stale}", out: File::NULL, err: File::NULL)
     holder = Coord::Tasks.new.claim(id, "backend-2")
-    assert_equal "backend-1", holder
+    assert_equal "backend-1", holder.worker
+  end
+
+  # Regression: the steal notice went to the prior holder's worker-id inbox
+  # (e.g. inbox/backend-developer-1/), which no agent polls. It must land in
+  # the role inbox the prior holder reads with `coord inbox`.
+  def test_force_steal_notifies_the_prior_holder_role_inbox
+    id = add("steal me")
+    tasks.claim(id, "backend-1")
+    capture_io do
+      Coord::CLI.new(["claim", id, "--force"],
+                     env: @env.merge("COORD_WORKER" => "backend-2")).run
+    end
+
+    files = Dir.glob(File.join(@env["COORD_DIR"], "inbox", "backend-developer", "*.md"))
+    refute_empty files, "expected a message in the role inbox"
+    assert_includes File.read(files.first), "backend-1"
+  end
+
+  # Regression: `coord with-lock NAME --ttl S -- CMD` used to strip the `--`
+  # before parsing `--ttl`, so the separator became the command's first word
+  # and the command never ran.
+  def test_with_lock_accepts_ttl_before_the_separator
+    error = assert_raises(SystemExit) do
+      capture_io do
+        Coord::CLI.new(["with-lock", "ollama", "--ttl", "30", "--", "true"], env: @env).run
+      end
+    end
+    assert_equal 0, error.status
+    refute Dir.exist?(File.join(@env["COORD_DIR"], "locks", "ollama.d")), "lock must be released"
   end
 
   # Regression: `next --wait` used to re-query through the CLI-memoized Tasks
@@ -172,6 +249,22 @@ class TaskrcSafetyTest < Minitest::Test
     refute_match(/^data\.location=/, content)
     assert_includes content, "# pre-existing personal config"
     assert_includes content, Coord::MARKER
+  end
+
+  # Regression: the external-taskrc warning must still fire when the external
+  # taskrc already has data.location (e.g. a personal ~/.taskrc), not only when
+  # it is missing.
+  def test_ensure_taskrc_warns_for_an_external_taskrc_with_data_location
+    coord_dir = File.join(@dir, "coordination")
+    external_taskrc = File.join(@dir, "external", ".taskrc")
+    personal_data = File.join(@dir, "my-tasks")
+    FileUtils.mkdir_p(File.dirname(external_taskrc))
+    File.write(external_taskrc, "data.location=#{personal_data}\n")
+
+    _, err = capture_io { Coord::Setup.new(Coord::Paths.new(coord_dir), external_taskrc).ensure_taskrc }
+
+    assert_match(/outside coordination\//, err)
+    assert_includes File.read(external_taskrc), "data.location=#{personal_data}"
   end
 
   # Regression: a marked taskrc from an older install that has no

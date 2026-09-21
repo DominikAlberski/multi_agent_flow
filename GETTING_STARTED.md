@@ -37,6 +37,12 @@ The flow stores all shared state in a folder named `coordination/`.
 - **Lock**: a flag that stops two agents from using one shared resource at the same time.
 - **Board**: a Markdown file that shows all tasks as columns.
 - **Vault**: an Obsidian folder with the project knowledge.
+- **Architect**: the role that turns a request into tasks and dispatches them.
+  It does not write code.
+- **Project Manager**: an optional role above the architect. You talk to the
+  project manager. It sends one goal at a time to the architect and relays
+  the architect's report back to you. Use it so you are never stuck waiting
+  on the architect's own dispatch loop.
 
 ---
 
@@ -83,7 +89,7 @@ $FLOW/assets/bootstrap.rb /path/to/your/project --check
 Run the installation.
 
 ```sh
-$FLOW/assets/bootstrap.rb /path/to/your/project --roles architect,backend-developer,reviewer
+$FLOW/assets/bootstrap.rb /path/to/your/project --roles project-manager,architect,backend-developer,reviewer
 ```
 
 The installer does five things:
@@ -224,6 +230,9 @@ finishing it:
 ./coord unclaim $ID
 ```
 
+Do not unclaim a task you are blocked on. Keep the claim, annotate the
+blocker, and message the architect. Another worker would hit the same wall.
+
 If no task is available, block instead of polling by hand:
 
 ```sh
@@ -337,17 +346,28 @@ The export is at `coordination/exports/tasks.json`.
 
 ## 16. Step 13 - Build the shared knowledge base
 
-Run this once in the project. It needs `graphify`.
+Bootstrap already started this for you if `graphify` was on PATH during
+install. Check:
 
 ```sh
-graphify . --obsidian --obsidian-dir vault --watch --mcp
+./vault status
 ```
 
-Now agents query the knowledge graph instead of grepping the code.
+If it says "not running" (for example, `graphify` was installed after
+bootstrap), start it by hand:
+
+```sh
+./vault
+```
+
+This runs `graphify . --obsidian --obsidian-dir vault --watch --mcp` as a
+background process. Now agents query the knowledge graph instead of grepping
+the code.
 
 - `--obsidian` writes the vault.
 - `--watch` rebuilds the graph when files change.
 - `--mcp` serves the graph to agents.
+- `./vault stop` stops it.
 
 Open the `vault/` folder in Obsidian. You now see the task board and the code graph together.
 
@@ -467,6 +487,10 @@ You watch from any terminal:
 3. Take the `ollama` lock before a local generation.
 4. Write decisions in `docs/decisions/`. Append. Never rewrite history.
 5. Use `annotate` for progress. Use `msg` to talk to another agent.
+6. Write `annotate` and `msg` text in Simplified Technical English: one
+   instruction per sentence, active voice, named subject, no idioms.
+7. If you are blocked, keep the claim. Annotate the blocker. Message the
+   architect. Do not unclaim the task.
 
 ---
 

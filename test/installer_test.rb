@@ -134,6 +134,7 @@ class FlowTest < InstallerTestCase
   end
 
   def agent_file = File.join(@dir, ".opencode", "agents", "backend-developer.md")
+  def architect_file = File.join(@dir, ".opencode", "agents", "architect.md")
   def manifest = JSON.parse(File.read(File.join(@dir, ".agent-flow.json")))
 
   def test_generates_agent_file_and_manifest
@@ -181,6 +182,29 @@ class FlowTest < InstallerTestCase
 
     assert_equal 0, status, out
     assert_equal custom, manifest["hermes_dir"]
+  end
+
+  # Regression: the architect prompt used to tell the architect to take goals
+  # only from the project manager even when no project-manager role was set up,
+  # so it pointed at an inbox nobody runs and refused the user's request.
+  def test_architect_prompt_points_to_the_project_manager_when_pm_is_present
+    out, status = flow("--agent", "opencode:architect", "--agent", "opencode:project-manager")
+
+    assert_equal 0, status, out
+    content = File.read(architect_file)
+    assert_includes content, "Read goals from the project manager"
+    assert_includes content, "coord msg --from architect project-manager"
+    refute_includes content, "no project manager"
+  end
+
+  def test_architect_prompt_takes_user_requests_when_no_pm_is_present
+    out, status = flow("--agent", "opencode:architect", "--agent", "opencode:backend-developer")
+
+    assert_equal 0, status, out
+    content = File.read(architect_file)
+    assert_includes content, "Read the user's request"
+    assert_includes content, "no project manager"
+    refute_includes content, "coord msg --from architect project-manager"
   end
 end
 

@@ -26,6 +26,20 @@ module Flow
   HARNESSES = %w[opencode claude codex hermes].freeze
   DEFAULT_HERMES_DIR = File.join(Dir.home, ".hermes", "skills")
 
+  # Roles that dispatch or coordinate instead of implementing. They are never
+  # advertised as dispatch targets in the architect prompt.
+  DISPATCH_EXCLUDE = %w[architect project-manager].freeze
+
+  # Applies to every `coord msg`, `coord annotate`, and task title/scope an
+  # agent writes. Generated agent files ship standalone (opencode/codex/hermes
+  # sessions never see the user's own CLAUDE.md), so the rules are spelled
+  # out here instead of referenced.
+  STE_RULE = <<~TEXT.strip
+    - Write `coord msg`, `coord annotate`, and task titles in Simplified
+      Technical English: one instruction per sentence, active voice, name the
+      subject, max 20 words per sentence, no idioms.
+  TEXT
+
   WORKER_LOOP = <<~LOOP
     Work loop:
     1. Read messages: `./coord inbox`.
@@ -33,31 +47,90 @@ module Flow
     3. Claim one: `./coord claim <id>`.
     4. Do the work. Stay inside the task scope.
     5. Before any local model generation: `./coord with-lock ollama -- <command>`.
-    6. Report: `./coord annotate <id> "<short summary>"`.
-    7. Finish: `./coord done <id>`.
+    6. Run the tests. Check the task's acceptance criteria.
+    7. Report:
+         ./coord annotate <id> "STATUS: done or blocked. FILES: <paths>. TESTS: <one-line result>. NOTES: <assumptions or risks>"
+    8. Finish: `./coord done <id>`.
 
     Rules:
     - You are one worker in a role pool. COORD_WORKER identifies you.
     - One writer per path. Never edit outside the task scope.
     - Do not create tasks. Ask the architect: `./coord msg --from %{role} architect "<text>"`.
-    - If no task is available, wait 60 seconds before checking again. Do not spin.
+    - If you cannot finish, keep the claim. Annotate the blocker. Message the
+      architect. Stop. Do not retry a failing approach.
+    - If no task is available, run `./coord next --wait`. Do not poll by hand.
     - Record durable knowledge in the shared vault or `docs/decisions/`.
+    - Never write ad-hoc verification scripts. The test suite is the verification.
+    #{STE_RULE}
   LOOP
 
-  ARCHITECT_LOOP = <<~LOOP
+  # The architect takes goals from the project manager when that role exists,
+  # and takes requests from the user directly when it does not. Two variants so
+  # the generated file never points at a role nobody runs.
+  ARCHITECT_LOOP_PM = <<~LOOP
     Work loop:
-    1. Read the request and the shared knowledge base.
-    2. Decompose it into tasks. Keep scopes disjoint (one writer per path).
-    3. Create each task:
+    1. Read goals from the project manager: `./coord inbox architect`.
+    2. Decompose each goal into tasks. Keep scopes disjoint (one writer per path).
+    3. Create each task, then add its spec:
          ./coord add --agent <role> --scope "<paths>" --title "<title>"
+         ./coord annotate <id> "Goal: <goal>. Inputs: <files or context>. Acceptance: <done condition>."
     4. Watch progress: `./coord status`, `./coord conflicts`, `./coord inbox architect`.
-    5. Answer worker questions. Resolve conflicts. Close finished tasks.
-    6. Record decisions in `docs/decisions/`.
+    5. Answer worker questions. Resolve conflicts.
+    6. Before you trust a done task, inspect its diff and rerun its tests in the
+       worker's worktree: `git -C ../<project>.worktrees/<role>-<worker> diff`.
+       If something is wrong, open a new task for the fix.
+    7. Report back: `./coord msg --from architect project-manager "<summary>"`.
+    8. Record decisions in `docs/decisions/`.
 
-    Available roles: %{roles}.
+    Available roles:
+    %{roles}
+
     Rules:
     - Never edit files directly. Dispatch work.
+    - Take goals only from the project manager. Never take requests directly from the user.
     - Take the `ollama` lock only if you run a local model yourself.
+    #{STE_RULE}
+  LOOP
+
+  ARCHITECT_LOOP_DIRECT = <<~LOOP
+    Work loop:
+    1. Read the user's request from this session.
+    2. Decompose the request into tasks. Keep scopes disjoint (one writer per path).
+    3. Create each task, then add its spec:
+         ./coord add --agent <role> --scope "<paths>" --title "<title>"
+         ./coord annotate <id> "Goal: <goal>. Inputs: <files or context>. Acceptance: <done condition>."
+    4. Watch progress: `./coord status`, `./coord conflicts`.
+    5. Answer worker questions. Resolve conflicts.
+    6. Before you trust a done task, inspect its diff and rerun its tests in the
+       worker's worktree: `git -C ../<project>.worktrees/<role>-<worker> diff`.
+       If something is wrong, open a new task for the fix.
+    7. Report the outcome to the user in this session.
+    8. Record decisions in `docs/decisions/`.
+
+    Available roles:
+    %{roles}
+
+    Rules:
+    - Never edit files directly. Dispatch work.
+    - Take requests from the user directly. This project has no project manager.
+    - Take the `ollama` lock only if you run a local model yourself.
+    #{STE_RULE}
+  LOOP
+
+  PM_LOOP = <<~LOOP
+    Work loop:
+    1. Read the user's request.
+    2. Turn it into one goal. Hand it to the architect:
+         ./coord msg --from project-manager architect "<goal>"
+    3. Wait for the architect's report: `./coord inbox project-manager --wait`.
+    4. Summarize the report for the user.
+    5. Record decisions in `docs/decisions/`.
+
+    Rules:
+    - Never edit files directly. Never create tasks; only the architect creates tasks.
+    - Send goals to the architect only. Never dispatch work to other roles directly.
+    - If no report has arrived yet, tell the user and check again with `./coord inbox project-manager`.
+    #{STE_RULE}
   LOOP
 
   class Generator
@@ -171,6 +244,19 @@ module Flow
       @agents.map { |a| a[:role] }.uniq.join(",")
     end
 
+    # What the architect can dispatch to: this run's worker roles, not every
+    # role in roles.yml. Advertising a role nobody generated a session for
+    # means tasks pile up unclaimed forever.
+    def dispatch_roles
+      @agents.map { |a| a[:role] }.uniq - DISPATCH_EXCLUDE
+    end
+
+    def dispatch_roles_text
+      return "  (none requested yet in this run)" if dispatch_roles.empty?
+
+      dispatch_roles.map { |r| "  - #{r}: #{@roles.fetch(r).fetch("description")}" }.join("\n")
+    end
+
     def generate
       @agents.map { |agent| generate_agent(agent) }
     end
@@ -208,7 +294,11 @@ module Flow
     end
 
     def build_prompt(role, data)
-      role == "architect" ? architect_prompt(data) : worker_prompt(role, data)
+      case role
+      when "project-manager" then project_manager_prompt(data)
+      when "architect" then architect_prompt(data)
+      else worker_prompt(role, data)
+      end
     end
 
     def worker_prompt(role, data)
@@ -216,8 +306,18 @@ module Flow
     end
 
     def architect_prompt(data)
+      loop_text = project_manager? ? ARCHITECT_LOOP_PM : ARCHITECT_LOOP_DIRECT
       "#{intro(data)} You do not implement code yourself.\n\n#{duties_block(data)}\n\n" \
-        "#{format(ARCHITECT_LOOP, roles: roles_arg)}"
+        "#{format(loop_text, roles: dispatch_roles_text)}"
+    end
+
+    def project_manager?
+      @agents.any? { |a| a[:role] == "project-manager" }
+    end
+
+    def project_manager_prompt(data)
+      "#{intro(data)} You do not plan tasks or implement code yourself.\n\n" \
+        "#{duties_block(data)}\n\n#{PM_LOOP}"
     end
 
     def intro(data)
@@ -292,7 +392,14 @@ module Flow
       puts
       puts "In each worker session, paste:"
       puts %(  "Run ./coord inbox <role>. Then work the pending tasks assigned to you. Repeat.")
-      puts "In the architect session, describe what you want built."
+      puts entry_point_hint(results)
+    end
+
+    def entry_point_hint(results)
+      roles = results.map { |result| result[:agent][:role] }
+      return "Talk to the project manager session. It hands goals to the architect." if roles.include?("project-manager")
+
+      "In the architect session, describe what you want built."
     end
 
     def print_unembeddable(results)
