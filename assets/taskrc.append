@@ -1,0 +1,8 @@
+# >>> multi-agent-flow >>>
+# User Defined Attributes used by the `coord` wrapper.
+# Do not remove: coord relies on these to attribute tasks to agents.
+uda.agent.type=string
+uda.worker.type=string
+uda.scope.type=string
+uda.taskref.type=string
+# <<< multi-agent-flow <<<

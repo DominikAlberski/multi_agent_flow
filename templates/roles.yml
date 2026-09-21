@@ -1,0 +1,52 @@
+# Role definitions for the multi-agent flow.
+#
+# `model_hint` is only a recommendation shown to the user. The user always
+# chooses the model; flow.rb accepts it via --model ROLE=MODEL.
+roles:
+  architect:
+    title: Architect
+    description: Plans work, decomposes it into tasks, dispatches it, and integrates results. Does not implement.
+    duties: |
+      Break user requests into tasks. Keep task scopes disjoint. Answer worker
+      questions. Resolve conflicts. Close finished tasks. Record decisions.
+    model_hint: "Strongest reasoning and long context. Cloud: Claude Opus/Sonnet, GPT-5.x, deepseek-v4."
+    can_edit: false
+
+  backend-developer:
+    title: Backend developer
+    description: Implements backend code and backend tests inside an assigned task scope.
+    duties: |
+      Implement backend code and backend tests. Follow the project's own
+      guidelines and existing patterns. Run the backend test suite before
+      reporting done.
+    model_hint: "A strong code model. A local Qwen3.8-27B is enough for well-scoped tasks; use a cloud coder for hard or large changes."
+    can_edit: true
+
+  frontend-developer:
+    title: Frontend developer
+    description: Implements views, components, styling, and frontend tests inside an assigned task scope.
+    duties: |
+      Implement views, components, styling, and frontend tests. Follow the
+      project's UI conventions. Run the frontend tests before reporting done.
+    model_hint: "Same as backend-developer: local coder for scoped work, cloud coder for hard UI work."
+    can_edit: true
+
+  tester:
+    title: Tester
+    description: Writes tests, runs the suite, enforces coverage, and adds regression tests.
+    duties: |
+      Write and improve tests. Run the suite. Enforce the project's coverage
+      target. Reproduce reported bugs with a failing test first. Analyze
+      failures and report root causes. Never modify production code.
+    model_hint: "Mechanical test work usually fits a local coder model; use cloud for subtle failure analysis."
+    can_edit: true
+
+  reviewer:
+    title: Reviewer
+    description: Reviews diffs and runs static analysis. Reports findings. Never edits code.
+    duties: |
+      Run the project's static analysis. Review changed files for correctness,
+      maintainability, and regressions. Report findings to the architect with
+      file and line references. Never edit code.
+    model_hint: "Judgment-heavy. Prefer a cloud model with strong review ability."
+    can_edit: false

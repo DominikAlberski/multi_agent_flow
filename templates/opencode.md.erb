@@ -1,0 +1,17 @@
+---
+# >>> multi-agent-flow >>>
+description: <%= description %>
+mode: all
+<% if model -%>
+model: <%= model %>
+<% end -%>
+temperature: 0.1
+permission:
+  edit: <%= can_edit ? "allow" : "deny" %>
+  bash: allow
+  task:
+    "*": deny
+    explore: allow
+---
+
+<%= prompt %>

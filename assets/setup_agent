@@ -1,0 +1,172 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# setup_agent - create a worktree for one agent and launch its harness session.
+#
+# Usage: ./setup_agent HARNESS ROLE[_WORKER] [model:PROVIDER/MODEL]
+#   ./setup_agent claude backend-developer_1
+#   ./setup_agent opencode reviewer model:openrouter/deepseek-v3
+#
+# HARNESS:ROLE must already exist in .agent-flow.json (run scripts/flow.rb
+# in multi_agent_flow first to add a new one). Run from the project root.
+
+require "json"
+
+module SetupAgent
+  MANIFEST = ".agent-flow.json"
+
+  def self.run(argv)
+    args = Args.parse(argv)
+    manifest = Manifest.load(MANIFEST)
+    manifest.verify!(args.harness, args.role)
+    worktree = enter_worktree(args)
+    launch(args, manifest, worktree)
+  end
+
+  def self.enter_worktree(args)
+    worktree = Worktree.ensure(args.role, args.worker_id)
+    Dir.chdir(worktree.dir)
+    worktree.export_env!
+    worktree
+  end
+
+  def self.launch(args, manifest, _worktree)
+    ENV["COORD_AGENT"] = args.role
+    ENV["COORD_WORKER"] = args.worker
+    model = args.model || manifest.model_for(args.harness, args.role)
+    Launcher.for(args.harness).launch(args.role, args.worker, model)
+  end
+
+  class Args
+    Parsed = Struct.new(:harness, :role, :worker_id, :worker, :model)
+
+    def self.parse(argv)
+      harness, role_spec, model_arg = argv
+      abort_usage if harness.nil? || role_spec.nil?
+      role, worker_id = split_role(role_spec)
+      model = model_arg&.sub(/\Amodel:/, "")
+      Parsed.new(harness, role, worker_id, "#{role}-#{worker_id}", model)
+    end
+
+    def self.split_role(spec)
+      role, _sep, worker_id = spec.rpartition("_")
+      role.empty? ? [spec, "1"] : [role, worker_id]
+    end
+
+    def self.abort_usage
+      abort "usage: ./setup_agent HARNESS ROLE[_WORKER] [model:PROVIDER/MODEL]"
+    end
+  end
+
+  class Manifest
+    def self.load(path)
+      abort "setup_agent: #{path} missing. Run scripts/flow.rb first." unless File.exist?(path)
+
+      new(JSON.parse(File.read(path))["agents"])
+    end
+
+    def initialize(agents)
+      @agents = agents
+    end
+
+    def verify!(harness, role)
+      return if @agents.any? { |a| a["harness"] == harness && a["role"] == role }
+
+      abort "setup_agent: no #{harness}:#{role} in .agent-flow.json. Add it via scripts/flow.rb."
+    end
+
+    def model_for(harness, role)
+      entry = @agents.find { |a| a["harness"] == harness && a["role"] == role }
+      entry && entry["model"]
+    end
+  end
+
+  class Worktree
+    def self.ensure(role, worker_id)
+      slug = "#{role}-#{worker_id}"
+      dir = File.join(File.dirname(Dir.pwd), "#{File.basename(Dir.pwd)}-#{slug}")
+      return new(dir) if Dir.exist?(dir)
+
+      create(role, worker_id, dir)
+    end
+
+    def self.create(role, worker_id, dir)
+      ok = system("./coord", "worktree", role, worker_id)
+      abort "setup_agent: ./coord worktree failed" unless ok
+
+      new(dir)
+    end
+
+    def initialize(dir)
+      @dir = dir
+    end
+
+    def dir
+      @dir
+    end
+
+    def export_env!
+      path = File.join(@dir, "coord-env.sh")
+      File.readlines(path).each { |line| set_env(line) } if File.exist?(path)
+    end
+
+    private
+
+    def set_env(line)
+      return unless line.chomp =~ /\Aexport (\w+)=(.+)\z/
+
+      ENV[Regexp.last_match(1)] = Regexp.last_match(2)
+    end
+  end
+
+  module Launcher
+    REGISTRY = {}
+
+    def self.for(harness)
+      register_defaults if REGISTRY.empty?
+      REGISTRY.fetch(harness) { abort "setup_agent: no launcher for harness '#{harness}' yet." }
+    end
+
+    def self.register_defaults
+      REGISTRY["claude"] = Claude
+      REGISTRY["opencode"] = Opencode
+      REGISTRY["codex"] = Codex
+    end
+
+    def self.exec_or_die(cmd)
+      Kernel.exec(*cmd)
+    rescue Errno::ENOENT
+      abort "setup_agent: '#{cmd.first}' not found on PATH."
+    end
+
+    module Claude
+      def self.launch(role, _worker, model)
+        prompt = "Read .claude/agents/#{role}.md and follow it exactly. Start your work loop now."
+        cmd = ["claude"]
+        cmd += ["--model", model] if model
+        Launcher.exec_or_die(cmd + [prompt])
+      end
+    end
+
+    module Opencode
+      def self.launch(role, _worker, model)
+        cmd = ["opencode", ".", "--agent", role, "--prompt", "Start your work loop now."]
+        cmd += ["--model", model] if model
+        Launcher.exec_or_die(cmd)
+      end
+    end
+
+    module Codex
+      def self.launch(role, _worker, model)
+        prompt_file = ".codex/prompts/#{role}.md"
+        abort "setup_agent: #{prompt_file} missing." unless File.exist?(prompt_file)
+
+        cmd = ["codex"]
+        cmd += ["--model", model] if model
+        Launcher.exec_or_die(cmd + [File.read(prompt_file)])
+      end
+    end
+  end
+end
+
+SetupAgent.run(ARGV)

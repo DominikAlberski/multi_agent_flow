@@ -1,0 +1,12 @@
+---
+# >>> multi-agent-flow >>>
+name: <%= role %>
+description: <%= description %>
+---
+
+# <%= title %>
+
+<% if model -%>
+> Model: `<%= model %>` (Hermes sets the model with `hermes model`)
+<% end -%>
+<%= prompt %>

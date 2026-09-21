@@ -1,0 +1,15 @@
+---
+# >>> multi-agent-flow >>>
+name: <%= role %>
+description: <%= description %>
+<% if model -%>
+model: <%= model %>
+<% end -%>
+<% if can_edit -%>
+tools: Read, Write, Edit, Bash, Grep, Glob
+<% else -%>
+tools: Read, Bash, Grep, Glob
+<% end -%>
+---
+
+<%= prompt %>

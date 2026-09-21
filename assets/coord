@@ -1,0 +1,951 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# coord - shared coordination layer for multi-agent development.
+#
+# Storage:  coordination/ (Taskwarrior board, inbox, locks, exports)
+# Locking:  mkdir-based (portable on macOS and Linux; no flock required)
+# Deps:     task (Taskwarrior). Ruby parses the JSON itself; no jq needed.
+#
+# Agents should use this wrapper, not raw `task`, so the protocol stays stable.
+require "json"
+require "fileutils"
+require "time"
+require "shellwords"
+require "optparse"
+
+module Coord
+  class Error < StandardError; end
+
+  # NOTE: MARKER is duplicated in bootstrap.rb on purpose. Both scripts run
+  # standalone (coord is copied into projects), so they share no load path.
+  MARKER = ">>> multi-agent-flow >>>"
+  UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/
+
+  TASKRC_BLOCK = <<~BLOCK
+    # >>> multi-agent-flow >>>
+    uda.agent.type=string
+    uda.worker.type=string
+    uda.scope.type=string
+    uda.taskref.type=string
+    # <<< multi-agent-flow <<<
+  BLOCK
+
+  # A claim older than this is presumed abandoned (crashed worker) and can be
+  # taken over by `next`/`claim` without --force. Override with COORD_LEASE_TTL.
+  DEFAULT_LEASE_TTL = 4 * 3600
+  DEFAULT_POLL_INTERVAL = 60
+
+  USAGE = <<~TEXT
+    coord - multi-agent coordination
+
+      coord init
+      coord add --agent A --scope S --title T [--project P] [--ref R]
+      coord next [ROLE] [--mine] [--wait [--interval S] [--timeout S]]
+      coord conflicts                      list pending tasks with overlapping scopes
+      coord claim ID [--force]             claim for COORD_WORKER (atomic)
+      coord unclaim ID                     release a claim without finishing it
+      coord done ID
+      coord annotate ID TEXT...
+      coord msg [--from A] TO TEXT...
+      coord inbox [AGENT] [--peek] [--all] [--wait [--interval S] [--timeout S]]
+      coord lock NAME [--ttl SECONDS] [--agent A]
+      coord unlock NAME
+      coord with-lock NAME [--ttl SECONDS] -- CMD...
+      coord worktree ROLE [WORKER]          create a git worktree + branch for a role
+      coord status
+      coord board
+      coord export
+      coord help
+  TEXT
+
+  COMMANDS = {
+      "init" => :cmd_init, "add" => :cmd_add, "next" => :cmd_next,
+      "conflicts" => :cmd_conflicts,
+      "claim" => :cmd_claim, "unclaim" => :cmd_unclaim,
+      "done" => :cmd_done, "annotate" => :cmd_annotate,
+    "msg" => :cmd_msg, "inbox" => :cmd_inbox, "lock" => :cmd_lock,
+    "unlock" => :cmd_unlock, "with-lock" => :cmd_with_lock,
+    "worktree" => :cmd_worktree,
+    "status" => :cmd_status, "board" => :cmd_board, "export" => :cmd_export,
+    "help" => :cmd_help
+  }.freeze
+
+  ADD_OPTS = { "--agent" => :agent, "--scope" => :scope, "--ref" => :ref,
+               "--project" => :project, "--title" => :title }.freeze
+
+  # Wiring lazily builds the collaborators the CLI needs.
+  module Wiring
+    def paths = @paths ||= Paths.new(@coord_dir)
+    def setup = @setup ||= Setup.new(paths, @taskrc)
+    def tasks = @tasks ||= Tasks.new
+    def conflicts = @conflicts ||= Conflicts.new(tasks)
+    def locks = @locks ||= Locks.new(paths)
+    def messages = @messages ||= Messages.new(paths, @agent)
+    def board = @board ||= Board.new(tasks, paths)
+  end
+
+  # Paths resolves every coordination path from one root.
+  class Paths
+    attr_reader :coord_dir
+
+    def initialize(coord_dir)
+      @coord_dir = coord_dir
+    end
+
+    def inbox_dir(agent) = File.join(coord_dir, "inbox", agent.to_s)
+    def locks_dir = File.join(coord_dir, "locks")
+    def exports_dir = File.join(coord_dir, "exports")
+    def lock_dir(name) = File.join(locks_dir, "#{name}.d")
+    def lock_meta(name) = File.join(locks_dir, "#{name}.json")
+    def export_path = File.join(exports_dir, "tasks.json")
+    def board_path = File.join(exports_dir, "board.md")
+    def taskdata_dir = File.join(coord_dir, "taskdata")
+  end
+
+  # Setup creates the coordination directories and the Taskwarrior UDAs.
+  # The Taskwarrior database is project-local (coordination/taskdata), not the
+  # user's global ~/.task, so two projects never share one board. An explicit
+  # TASKRC env var still overrides this (see CLI#initialize).
+  class Setup
+    SUBDIRS = %w[inbox locks exports].freeze
+
+    def initialize(paths, taskrc)
+      @paths = paths
+      @taskrc = taskrc
+    end
+
+    def ensure_dirs
+      SUBDIRS.each { |sub| FileUtils.mkdir_p(File.join(@paths.coord_dir, sub)) }
+    end
+
+    def ensure_taskrc
+      return if File.exist?(@taskrc) && File.read(@taskrc).include?(MARKER)
+
+      FileUtils.mkdir_p(File.dirname(@taskrc))
+      FileUtils.touch(@taskrc)
+      if project_local?
+        write_data_location
+      else
+        warn "coord: TASKRC=#{@taskrc} is outside coordination/; using its existing database as-is, not redirecting it."
+      end
+      File.open(@taskrc, "a") do |file|
+        file.puts unless File.zero?(@taskrc)
+        file.puts(TASKRC_BLOCK)
+      end
+    end
+
+    private
+
+    # An explicit TASKRC pointed outside coord_dir (e.g. a user's own
+    # ~/.taskrc) is a deliberate choice to use their own database. Only touch
+    # data.location in the taskrc this tool created and owns, never redirect
+    # someone else's existing Taskwarrior config to a project-local database.
+    def project_local?
+      File.expand_path(File.dirname(@taskrc)) == File.expand_path(@paths.coord_dir)
+    end
+
+    def write_data_location
+      return if has_data_location?
+
+      FileUtils.mkdir_p(@paths.taskdata_dir)
+      File.open(@taskrc, "a") do |file|
+        file.puts unless File.zero?(@taskrc)
+        file.puts("data.location=#{File.expand_path(@paths.taskdata_dir)}")
+      end
+    end
+
+    def has_data_location?
+      File.exist?(@taskrc) && File.read(@taskrc).match?(/^data\.location=/)
+    end
+  end
+
+  # Scopes compares path scopes with a component-prefix heuristic.
+  # It understands "dir/**" and exact paths, not {} alternation or mid-globs.
+  module Scopes
+    GLOB = /[*?\[\{]/
+
+    def self.overlap?(left, right)
+      patterns(left).product(patterns(right)).any? { |a, b| pair_overlap?(a, b) }
+    end
+
+    def self.pair_overlap?(left, right)
+      # A top-level glob ("*.rb") has an empty base: an empty prefix matches
+      # any path, so treating it like a normal prefix would flag it as
+      # overlapping every other scope. Only count it as overlap when the
+      # pattern is literally the same.
+      return left == right if base(left).empty? || base(right).empty?
+
+      prefix?(base(left), base(right)) || prefix?(base(right), base(left))
+    end
+
+    def self.base(scope)
+      scope.split("/").take_while { |part| part !~ GLOB }
+    end
+
+    def self.prefix?(short, long)
+      short == long.first(short.size)
+    end
+
+    def self.patterns(scope)
+      scope.to_s.split(",").map(&:strip).reject(&:empty?)
+    end
+  end
+
+  # Conflicts finds overlapping scopes among pending tasks and reports them.
+  class Conflicts
+    def initialize(tasks)
+      @tasks = tasks
+    end
+
+    def with(scope, exclude: nil)
+      candidates(exclude).select { |task| Scopes.overlap?(task["scope"], scope) }
+    end
+
+    def warn_with(scope, exclude:)
+      with(scope, exclude: exclude).each { |task| warn warning(scope, task) }
+    end
+
+    def report
+      pairs = all
+      return puts("no scope conflicts") if pairs.empty?
+
+      pairs.each { |a, b| puts line(a, b) }
+    end
+
+    private
+
+    def all
+      @tasks.pending.combination(2).select { |a, b| Scopes.overlap?(a["scope"], b["scope"]) }
+    end
+
+    def candidates(exclude)
+      @tasks.pending.reject { |task| task["uuid"] == exclude }
+    end
+
+    def warning(scope, task)
+      "coord: scope '#{scope}' overlaps task #{task["uuid"]} " \
+        "owned by #{task["agent"]} (#{task["scope"]})"
+    end
+
+    def line(a, b)
+      "#{a["agent"]} #{a["scope"]} (#{a["uuid"]}) <> #{b["agent"]} #{b["scope"]} (#{b["uuid"]})"
+    end
+  end
+
+  # Tasks wraps the Taskwarrior CLI. Every query is scoped to one task.
+  # Schedule interprets Taskwarrior date fields.
+  module Schedule
+    # Taskwarrior keeps the `wait` field after the date elapses; it only stops
+    # filtering the task out of default reports. Compare the date, not presence.
+    def self.waiting?(task)
+      wait = task["wait"].to_s
+      return false if wait.empty?
+
+      Time.parse(wait) > Time.now
+    rescue ArgumentError
+      false
+    end
+  end
+
+  # TaskCli runs Taskwarrior and parses its output. No domain logic here.
+  class TaskCli
+    def available?
+      @available = system("task", "--version", out: File::NULL, err: File::NULL) if @available.nil?
+      @available
+    end
+
+    def require!
+      raise Error, "Taskwarrior ('task') is not installed. See README (brew install task)." unless available?
+    end
+
+    # `--` forces every following word into the description, even one that
+    # reads like an attribute ("due:tomorrow", "scope:x"). Without it, a title
+    # or annotation matching NAME:VALUE for a built-in or registered UDA is
+    # parsed as that attribute and the text is silently lost.
+    def create(args)
+      require!
+      extract_uuid(capture(args))
+    end
+
+    def modify(id, *args)
+      run(id, "modify", *args) || raise(Error, "task modify failed")
+    end
+
+    def done(id)
+      require!
+      run(id, "done") || raise(Error, "task done failed")
+    end
+
+    def stop(id)
+      run(id, "stop") || raise(Error, "task stop failed")
+    end
+
+    def annotate(id, text)
+      require!
+      run(id, "annotate", "--", text) || raise(Error, "annotate failed")
+    end
+
+    # `status:pending` hides waited tasks; include them so the board can show
+    # a Waiting column. Waited tasks still export status "pending"; the `wait`
+    # field is the discriminator.
+    def pending
+      export(["(", "status:pending", "or", "status:waiting", ")", "export"])
+    end
+
+    def task(id)
+      export([id, "export"]).first || {}
+    end
+
+    private
+
+    def run(*args)
+      system("task", *args, out: File::NULL, err: File::NULL)
+    end
+
+    def capture(args)
+      `task #{Shellwords.join(args)} 2>&1`
+    end
+
+    def export(args)
+      raw = `task #{Shellwords.join(args)} 2>/dev/null`
+      raw.strip.empty? ? [] : JSON.parse(raw)
+    rescue JSON::ParserError
+      []
+    end
+
+    # Prefer a UUID printed by Taskwarrior; otherwise read the id from
+    # "Created task N" and export that one task. Never query the whole database.
+    def extract_uuid(output)
+      output[UUID_PATTERN] || uuid_from_created(output)
+    end
+
+    def uuid_from_created(output)
+      id = output[/Created task (\d+)/, 1]
+      id && task(id)["uuid"]
+    end
+  end
+
+  # Lease interprets how long a claim is honored without renewal. A claim
+  # older than the lease is presumed abandoned (the worker crashed) and
+  # becomes claimable again without --force.
+  module Lease
+    def self.ttl
+      (ENV["COORD_LEASE_TTL"] || DEFAULT_LEASE_TTL).to_i
+    end
+
+    def self.expired?(task)
+      start = task["start"].to_s
+      return false if start.empty?
+
+      Time.parse(start) + ttl <= Time.now
+    rescue ArgumentError
+      false
+    end
+  end
+
+  # Tasks exposes the task operations the flow needs.
+  class Tasks
+    ATTRIBUTES = { agent: "agent", scope: "scope", ref: "taskref", project: "project" }.freeze
+
+    def initialize
+      @cli = TaskCli.new
+    end
+
+    def available? = @cli.available?
+
+    def add(title:, **opts)
+      @cli.create(add_args(title, opts))
+    end
+
+    def next_for(role)
+      pending.select { |task| task["agent"] == role && claimable?(task) && actionable?(task) }
+    end
+
+    def mine(role, worker)
+      pending.select { |task| task["agent"] == role && task["worker"] == worker && task["start"] }
+    end
+
+    # Returns the prior holder (nil if there was none) so the caller can warn
+    # or notify them. Refuses only an active (non-expired) claim by someone
+    # else, unless --force.
+    def claim(id, worker, force: false)
+      @cli.require!
+      task = @cli.task(id)
+      holder = task["worker"].to_s
+      refuse_steal(id, holder) if active_claim?(task, holder, worker) && !force
+      @cli.modify(id, "worker:#{worker}", "start:now")
+      holder.empty? ? nil : holder
+    end
+
+    def unclaim(id)
+      @cli.require!
+      @cli.stop(id)
+      @cli.modify(id, "worker:")
+    end
+
+    def done(id) = @cli.done(id)
+    def annotate(id, text) = @cli.annotate(id, text)
+    def pending = @pending ||= @cli.pending
+    def export_to(path) = File.write(path, JSON.pretty_generate(pending))
+
+    private
+
+    def actionable?(task) = !Schedule.waiting?(task)
+
+    def claimable?(task) = task["worker"].to_s.empty? || Lease.expired?(task)
+
+    def active_claim?(task, holder, worker)
+      !holder.empty? && holder != worker && !Lease.expired?(task)
+    end
+
+    def refuse_steal(id, holder)
+      raise Error, "task #{id} is already claimed by #{holder} (use --force to steal)"
+    end
+
+    def add_args(title, opts)
+      ["add"] + attribute_args(opts) + ["--", title]
+    end
+
+    def attribute_args(opts)
+      ATTRIBUTES.filter_map { |key, attr| "#{attr}:#{opts[key]}" if opts[key] }
+    end
+  end
+
+  # Locks provides mkdir-based mutual exclusion with TTL metadata.
+  class Locks
+    def initialize(paths)
+      @paths = paths
+    end
+
+    def lock(name, ttl:, agent:)
+      acquire!(name, ttl: ttl, agent: agent)
+      puts "locked #{name} by #{agent} (ttl #{ttl}s)"
+    end
+
+    def unlock(name)
+      release(name)
+      puts "unlocked #{name}"
+    end
+
+    def with_lock(name, ttl:, command:, agent:)
+      acquire!(name, ttl: ttl, agent: agent)
+      run_locked(name, command)
+    end
+
+    # Short critical section (e.g. claiming a task). Retries briefly instead of
+    # failing when two workers contend.
+    def with_mutex(name, agent:)
+      acquire_with_retry(name, agent)
+      begin
+        yield
+      ensure
+        release(name)
+      end
+    end
+
+    def acquire!(name, ttl:, agent:)
+      reclaim_if_stale(name)
+      Dir.mkdir(@paths.lock_dir(name))
+      write_meta(name, ttl, agent)
+    rescue Errno::EEXIST
+      raise Error, "lock #{name} busy"
+    end
+
+    def release(name)
+      FileUtils.rm_rf(@paths.lock_dir(name))
+      FileUtils.rm_f(@paths.lock_meta(name))
+    end
+
+    private
+
+    def acquire_with_retry(name, agent, attempts: 20)
+      attempts.times do
+        return acquire!(name, ttl: 30, agent: agent)
+      rescue Error
+        sleep 0.05
+      end
+      raise Error, "could not lock #{name}"
+    end
+
+    def run_locked(name, command)
+      ok = system(*command)
+      exit(ok ? 0 : 1)
+    ensure
+      release(name)
+    end
+
+    def reclaim_if_stale(name)
+      return unless Dir.exist?(@paths.lock_dir(name))
+      raise Error, "locked by #{holder(name)} (coord unlock #{name})" unless stale?(name)
+
+      release(name)
+    end
+
+    def stale?(name)
+      meta = read_meta(name)
+      meta.empty? || meta["ts"].to_i + meta["ttl"].to_i <= Time.now.to_i
+    end
+
+    def holder(name)
+      read_meta(name)["agent"] || "unknown"
+    end
+
+    def read_meta(name)
+      JSON.parse(File.read(@paths.lock_meta(name)))
+    rescue Errno::ENOENT, JSON::ParserError
+      {}
+    end
+
+    def write_meta(name, ttl, agent)
+      File.write(@paths.lock_meta(name), JSON.generate(agent: agent, ts: Time.now.to_i, ttl: ttl))
+    end
+  end
+
+  # Messages writes inbox files and archives them when read.
+  class Messages
+    def initialize(paths, default_from)
+      @paths = paths
+      @from = default_from
+    end
+
+    def send_message(to, from, text)
+      dir = @paths.inbox_dir(to)
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "#{stamp}-#{Process.pid}.md")
+      File.write(path, body(to, from, text))
+      puts "msg -> #{path}"
+    end
+
+    def inbox(agent, peek: false, all: false)
+      files = message_files(agent, all)
+      return puts("no messages for #{agent}") if files.empty?
+
+      files.each { |file| read_message(file, peek) }
+    end
+
+    private
+
+    def body(to, from, text)
+      "# to: #{to}\n# from: #{from}\n# at: #{Time.now.utc.iso8601}\n\n#{text}\n"
+    end
+
+    def stamp
+      Time.now.utc.strftime("%Y%m%dT%H%M%SZ")
+    end
+
+    def message_files(agent, all)
+      dir = @paths.inbox_dir(agent)
+      Dir.glob(File.join(dir, all ? "**" : "", "*.md")).sort
+    end
+
+    def read_message(file, peek)
+      puts "== #{file} =="
+      puts File.read(file)
+      puts
+      archive(file) unless peek || file.include?("/read/")
+    end
+
+    def archive(file)
+      dir = File.join(File.dirname(file), "read")
+      FileUtils.mkdir_p(dir)
+      FileUtils.mv(file, File.join(dir, File.basename(file)))
+    end
+  end
+
+  # Board renders status summaries and the Obsidian kanban file.
+  class Board
+    SECTIONS = {
+      "Backlog" => ->(task) { !Schedule.waiting?(task) && !task["start"] },
+      "In progress" => ->(task) { !Schedule.waiting?(task) && task["start"] },
+      "Waiting" => ->(task) { Schedule.waiting?(task) }
+    }.freeze
+
+    def initialize(tasks, paths)
+      @tasks = tasks
+      @paths = paths
+    end
+
+    def status
+      rows = grouped
+      return puts("no tasks") if rows.empty?
+
+      rows.each { |agent, list| puts summary_line(agent, list) }
+    end
+
+    def next_tasks(role)
+      list = @tasks.next_for(role)
+      return puts("no unclaimed tasks for #{role}") if list.empty?
+
+      list.each { |task| puts task_line(task) }
+    end
+
+    def mine_tasks(role, worker)
+      list = @tasks.mine(role, worker)
+      return puts("no in-progress tasks for #{worker}") if list.empty?
+
+      list.each { |task| puts task_line(task) }
+    end
+
+    def board
+      File.write(@paths.board_path, board_body)
+      puts "board -> #{@paths.board_path}"
+    end
+
+    private
+
+    def summary_line(agent, list)
+      counts = list.group_by { |task| bucket(task) }.transform_values(&:size)
+      "#{agent}: #{counts.map { |key, value| "#{key}=#{value}" }.join(" ")}"
+    end
+
+    def task_line(task)
+      [task["uuid"], task["description"], task["scope"], task["worker"]].compact.join("\t")
+    end
+
+    def grouped
+      @tasks.pending.group_by { |task| task["agent"] || "unassigned" }.sort.to_h
+    end
+
+    def bucket(task)
+      return "waiting" if Schedule.waiting?(task)
+
+      task["start"] ? "in-progress" : "backlog"
+    end
+
+    def board_body
+      SECTIONS.map { |title, pick| section(title, @tasks.pending.select(&pick)) }.join
+    end
+
+    def section(title, list)
+      "## #{title}\n\n#{list.map { |task| card(task) }.join("\n")}\n\n"
+    end
+
+    def card(task)
+      scope = task["scope"].to_s
+      scope_part = scope.empty? ? "" : " `#{scope}`"
+      "- [ ] #{owner_label(task)} \u2014 #{task["description"]}#{scope_part}"
+    end
+
+    def owner_label(task)
+      worker = task["worker"].to_s
+      worker.empty? ? (task["agent"] || "unassigned") : "#{task["agent"]}/#{worker}"
+    end
+  end
+
+  # Worktree creates a per-role git worktree and branch, so "one branch or
+  # worktree per agent" (the contract's own rule) is a command, not a manual
+  # step. The worktree shares the main project's coordination/ dir and task
+  # board through COORD_DIR/TASKRC exported by an untracked coord-env.sh, not
+  # by symlinking tracked paths (a symlink would dirty the worktree and, if
+  # committed, break the coordination dir on merge).
+  class Worktree
+    ENV_FILE = "coord-env.sh"
+
+    def initialize(project_root)
+      @root = project_root
+    end
+
+    def create(role, worker)
+      slug = [role, worker].compact.join("-")
+      branch = "agent/#{slug}"
+      dir = File.join(File.dirname(@root), "#{File.basename(@root)}-#{slug}")
+      ok = system("git", "-C", @root, "worktree", "add", dir, "-b", branch)
+      abort "coord: git worktree add failed" unless ok
+
+      ensure_coord(dir)
+      exclude_env_file(dir)
+      write_env_file(dir)
+      warn_uncommitted_coord
+      puts "worktree #{dir} on branch #{branch}"
+      puts "In that worktree, run: source #{ENV_FILE}   (shares this project's coordination/ and task board)"
+    end
+
+    private
+
+    # `coord` is normally committed, so a fresh worktree checks out its own
+    # copy. If it is not committed yet, the checkout has none and ./coord would
+    # not exist; copy the main worktree's copy so the agent can still run it.
+    def ensure_coord(dir)
+      dest = File.join(dir, "coord")
+      return if File.exist?(dest)
+
+      src = File.join(@root, "coord")
+      return unless File.exist?(src)
+
+      FileUtils.cp(src, dest)
+      FileUtils.chmod("+x", dest)
+    end
+
+    # coord-env.sh holds absolute host paths and must never be committed. Git
+    # has no per-worktree exclude, and .gitignore may not be committed yet, so
+    # add it to the repository's shared local exclude instead. coord-env.sh
+    # only ever exists inside a worktree, so this cannot hide anything in the
+    # main worktree.
+    def exclude_env_file(dir)
+      exclude = local_exclude(dir)
+      return if exclude.nil?
+
+      listed = File.exist?(exclude) && File.read(exclude).lines.map(&:strip).include?(ENV_FILE)
+      return if listed
+
+      FileUtils.mkdir_p(File.dirname(exclude))
+      File.open(exclude, "a") { |file| file.puts(ENV_FILE) }
+    end
+
+    def local_exclude(dir)
+      path = `git -C #{Shellwords.escape(dir)} rev-parse --git-path info/exclude 2>/dev/null`.strip
+      path.empty? ? nil : path
+    end
+
+    def warn_uncommitted_coord
+      tracked = system("git", "-C", @root, "ls-files", "--error-unmatch", "coord",
+                       out: File::NULL, err: File::NULL)
+      return if tracked
+
+      warn "coord: 'coord' is not committed in #{@root}. It was copied into the worktree so ./coord " \
+           "works, but commit it (git add coord .gitignore) so future worktrees are clean and self-contained."
+    end
+
+    def write_env_file(dir)
+      coord_dir = File.join(@root, "coordination")
+      File.write(File.join(dir, ENV_FILE), <<~SH)
+        export COORD_DIR=#{coord_dir}
+        export TASKRC=#{File.join(coord_dir, "taskrc")}
+      SH
+    end
+  end
+
+  # CLI dispatches commands. Keep methods small; collaborators do the work.
+  # Args wraps the argument list with small parsing helpers.
+  class Args
+    def initialize(argv)
+      @argv = argv
+    end
+
+    def flag?(name)
+      index = @argv.index(name)
+      return false unless index
+
+      @argv.delete_at(index)
+      true
+    end
+
+    def value_of(name)
+      index = @argv.index(name)
+      return nil unless index
+
+      @argv.delete_at(index)
+      @argv.delete_at(index)
+    end
+
+    def ttl = (value_of("--ttl") || 3600).to_i
+    def interval = (value_of("--interval") || DEFAULT_POLL_INTERVAL).to_i
+    def timeout = (v = value_of("--timeout")) && v.to_i
+
+    def require_arg(command, name)
+      shift || abort("usage: coord #{command} #{name}")
+    end
+
+    def require_text(command)
+      text = @argv.join(" ")
+      abort "usage: coord #{command} ... TEXT" if text.empty?
+
+      text
+    end
+
+    def parse_options(spec)
+      opts = {}
+      OptionParser.new { |o| spec.each { |flag, key| o.on("#{flag} VALUE") { |v| opts[key] = v } } }.parse!(@argv)
+      opts
+    end
+
+    def shift = @argv.shift
+    def first = @argv.first
+    def empty? = @argv.empty?
+    def join = @argv.join(" ")
+    def rest = @argv
+  end
+
+  # Commands implements each coord subcommand. State lives on the CLI instance.
+  module Commands
+    def cmd_init
+      setup.ensure_dirs
+      setup.ensure_taskrc
+      puts "coordination/ ready (#{@coord_dir})"
+    end
+
+    def cmd_add
+      opts = @args.parse_options(ADD_OPTS)
+      opts[:title] ||= @args.join unless @args.empty?
+      abort "usage: coord add --agent A --scope S --title T" if opts[:title].to_s.empty?
+      id = tasks.add(**opts)
+      conflicts.warn_with(opts[:scope], exclude: id)
+      puts id
+    end
+
+    def cmd_next
+      # Every flag must be parsed out before the positional `shift` below:
+      # `shift` takes whatever token is first, flag or not, so a flag left
+      # unparsed (e.g. --timeout) would be swallowed as the ROLE argument.
+      mine = @args.flag?("--mine")
+      wait = @args.flag?("--wait")
+      interval = @args.interval
+      timeout = @args.timeout
+      role = require_agent!(@args.shift || @agent, "next ROLE, or export COORD_AGENT")
+      return board.mine_tasks(role, @worker) if mine
+
+      return board.next_tasks(role) unless wait
+
+      # A fresh Tasks instance per check: Tasks#pending memoizes (so one
+      # `coord board` run only shells out to `task` once), but reusing the
+      # single Wiring-memoized instance across poll iterations would freeze
+      # the result at the first, possibly-empty, snapshot forever.
+      wait_for(interval, timeout, -> { Tasks.new.next_for(role) }) { board.next_tasks(role) }
+    end
+
+    def cmd_conflicts = conflicts.report
+
+    def cmd_claim
+      id = @args.require_arg("claim", "ID")
+      force = @args.flag?("--force")
+      require_agent!(@worker, "claim ID (needs COORD_WORKER or COORD_AGENT)")
+      holder = locks.with_mutex("task-#{id}", agent: @worker) { tasks.claim(id, @worker, force: force) }
+      notify_prior_holder(id, holder) if holder && holder != @worker
+      puts "claimed #{id} by #{@worker}"
+    end
+
+    def cmd_unclaim
+      id = @args.require_arg("unclaim", "ID")
+      tasks.unclaim(id)
+      puts "unclaimed #{id}"
+    end
+
+    def cmd_done
+      id = @args.require_arg("done", "ID")
+      tasks.done(id)
+      puts "done #{id}"
+    end
+
+    def cmd_annotate
+      id = @args.require_arg("annotate", "ID")
+      tasks.annotate(id, @args.require_text("annotate"))
+      puts "annotated #{id}"
+    end
+
+    def cmd_msg
+      from = require_agent!(@args.value_of("--from") || @agent, "msg --from A, or export COORD_AGENT")
+      messages.send_message(@args.require_arg("msg", "TO"), from, @args.require_text("msg"))
+    end
+
+    def cmd_inbox
+      # Same ordering requirement as cmd_next: parse every flag before the
+      # positional `shift`, or an unparsed flag gets read as the AGENT.
+      wait = @args.flag?("--wait")
+      interval = @args.interval
+      timeout = @args.timeout
+      peek = @args.flag?("--peek")
+      all = @args.flag?("--all")
+      agent = @args.shift || @agent
+      return messages.inbox(agent, peek: peek, all: all) unless wait
+
+      wait_for(interval, timeout, -> { inbox_files(agent, all) }) { messages.inbox(agent, peek: peek, all: all) }
+    end
+
+    def cmd_lock
+      name = @args.require_arg("lock", "NAME")
+      agent = require_agent!(@args.value_of("--agent") || @agent, "lock NAME --agent A, or export COORD_AGENT")
+      locks.lock(name, ttl: @args.ttl, agent: agent)
+    end
+
+    def cmd_unlock = locks.unlock(@args.require_arg("unlock", "NAME"))
+
+    def cmd_with_lock
+      name = @args.require_arg("with-lock", "NAME")
+      @args.shift if @args.first == "--"
+      abort "usage: coord with-lock NAME -- CMD..." if @args.empty?
+
+      locks.with_lock(name, ttl: @args.ttl, command: @args.rest, agent: @agent)
+    end
+
+    def cmd_worktree
+      role = @args.require_arg("worktree", "ROLE")
+      worker = @args.shift
+      Worktree.new(@project_root).create(role, worker)
+    end
+
+    def cmd_status = board.status
+    def cmd_board = board.board
+
+    def cmd_export
+      tasks.export_to(paths.export_path)
+      puts "export -> #{paths.export_path}"
+    end
+
+    def cmd_help = puts(USAGE)
+
+    private
+
+    def require_agent!(value, usage)
+      return value unless value.nil? || value.empty? || value == "unknown"
+
+      abort "coord: no role set. Pass one explicitly or `export COORD_AGENT=<role>` (usage: #{usage})"
+    end
+
+    def notify_prior_holder(id, holder)
+      warn "coord: task #{id} was claimed from #{holder} by #{@worker}"
+      messages.send_message(holder, @worker, "task #{id} was claimed from you by #{@worker}")
+    end
+
+    def inbox_files(agent, all)
+      Dir.glob(File.join(paths.inbox_dir(agent), all ? "**" : "", "*.md"))
+    end
+
+    # Polls at `interval` seconds until `check` returns a non-empty result, then
+    # runs the given block once. Matches the documented "wait 60s, do not spin"
+    # rule in code instead of leaving it to agent self-discipline.
+    def wait_for(interval, timeout, check)
+      deadline = Time.now + timeout if timeout
+      loop do
+        break unless check.call.empty?
+        abort "coord: timed out after #{timeout}s waiting" if deadline && Time.now >= deadline
+
+        sleep interval
+      end
+      yield
+    end
+  end
+
+  # CLI parses arguments and dispatches to a command.
+  class CLI
+    include Commands
+    include Wiring
+
+    def initialize(argv, env: ENV)
+      @args = Args.new(argv)
+      @coord_dir = env.fetch("COORD_DIR", "coordination")
+      @agent = env.fetch("COORD_AGENT", "unknown")
+      @worker = env.fetch("COORD_WORKER", @agent)
+      @taskrc = env.fetch("TASKRC", File.join(@coord_dir, "taskrc"))
+      @project_root = Dir.pwd
+      ENV["TASKRC"] = @taskrc
+    end
+
+    def run
+      dispatch(@args.shift || "help")
+    rescue Error => e
+      abort "coord: #{e.message}"
+    end
+
+    private
+
+    def dispatch(command)
+      method = COMMANDS[command]
+      abort "coord: unknown command '#{command}'\n\n#{USAGE}" unless method
+
+      send(method)
+    end
+  end
+end
+
+Coord::CLI.new(ARGV).run if __FILE__ == $PROGRAM_NAME

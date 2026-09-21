@@ -1,0 +1,21 @@
+# >>> multi-agent-flow >>>
+# Coordination runtime state. Taskwarrior holds the authoritative task list.
+# taskrc/taskdata hold an absolute local path and the task database itself;
+# neither is portable or meant to be shared via git.
+coordination/taskrc
+coordination/taskdata/
+coordination/inbox/*
+!coordination/inbox/.gitkeep
+coordination/locks/*
+!coordination/locks/.gitkeep
+coordination/exports/*
+!coordination/exports/.gitkeep
+
+# Written by `coord worktree` in each worktree it creates; points back at
+# this project's coordination/ dir, never meant to be committed.
+coord-env.sh
+
+# Knowledge graph build output
+graphify-out/
+vault/
+# <<< multi-agent-flow <<<
