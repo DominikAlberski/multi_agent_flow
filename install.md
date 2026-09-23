@@ -167,10 +167,11 @@ Report the generated files. Then give the user these instructions.
 >
 >     ./setup_agent hermes tester --dispatch
 >
-> This creates (or reuses) a worktree for that agent, sets `COORD_AGENT` and
-> `COORD_WORKER`, and launches the harness there with its role loaded. To run
-> several instances of one role, add a worker suffix: `backend-developer_1`,
-> `backend-developer_2`. Claims are atomic, so they will not collide.
+> This creates (or reuses) a worktree at `.worktrees/<role>-<worker_id>`,
+> sets `COORD_AGENT` and `COORD_WORKER`, and launches the harness there with
+> its role loaded. To run several instances of one role, add a worker suffix:
+> `backend-developer_1`, `backend-developer_2`. Claims are atomic, so they
+> will not collide.
 >
 > Hermes loads the role as a skill (`--skills <project>-<role>`); the skill
 > file at `~/.hermes/skills/<project>-<role>/SKILL.md` must have been generated
@@ -194,10 +195,11 @@ Report the generated files. Then give the user these instructions.
 - Take the `ollama` lock before a local model generation:
   `./coord with-lock ollama -- <command>`.
 - Give each agent its own worktree so file changes never collide:
-  `./coord worktree <role>` (creates `../<project>.worktrees/<role>` on branch `agent/<role>`).
-  In that worktree run `source coord-env.sh` first; it points `COORD_DIR` and
-  `TASKRC` at the main project, so every worktree shares one coordination/ dir
-  and one task board. `./setup_agent` does all of this for you.
+  `./coord worktree <role>` creates `.worktrees/<role>-<worker_id>` (inside the
+  project, gitignored) on branch `agent/<role>-<worker_id>`. In that worktree
+  run `source coord-env.sh` first; it points `COORD_DIR` and `TASKRC` at the
+  main project, so every worktree shares one coordination/ dir and one task
+  board. `./setup_agent` does all of this for you.
 - Claude Code does not auto-load `.claude/agents/<role>.md` into an interactive
   session (that file is a subagent definition, used via its Task tool, not the
   session's own persona). `./setup_agent claude <role>` works around this by

@@ -164,9 +164,9 @@ watcher, with its pid in `coordination/vault.pid` and its output in
    say "never edit" also get a restricted tool grant where the harness
    supports one.
 2. Work in a per-agent branch or git worktree (`coord worktree ROLE`, or
-   `setup_agent HARNESS ROLE` which also does this). Worktrees live under one
-   sibling folder, `<project>.worktrees/<role>`. In the worktree, run
-   `source coord-env.sh` so `COORD_DIR`/`TASKRC` point at the main project
+   `setup_agent HARNESS ROLE` which also does this). Worktrees live inside the
+   project at `.worktrees/<role>-<worker_id>` (gitignored). In the worktree,
+   run `source coord-env.sh` so `COORD_DIR`/`TASKRC` point at the main project
    and every worktree shares one coordination/ dir and board.
 3. Acquire the `ollama` lock before any local generation.
 4. Record decisions in `docs/decisions/`; append, never rewrite. `obsidian/` is
