@@ -20,7 +20,7 @@ This project uses a shared coordination layer for multiple coding agents
 ./coord annotate ID TEXT                      # task-scoped update
 ./coord status                                # per-role summary
 ./coord board                                 # regenerate Obsidian kanban
-./coord worktree ROLE [WORKER]                # git worktree in <project>.worktrees/ + branch
+./coord worktree ROLE [WORKER]                # git worktree in .worktrees/<role>-<worker> + branch
                                               # in it: `source coord-env.sh` to share this board
 ```
 
@@ -112,7 +112,7 @@ Only one local-model generation may run at a time on the shared Ollama host.
    `unclaim` a blocked task — that returns it to the pool for another worker
    to hit the same wall.
 6. The architect inspects a done task's diff and reruns its tests in the
-   worker's worktree (`git -C ../<project>.worktrees/<role>-<worker> diff`)
+   worker's worktree (`git -C .worktrees/<role>-<worker> diff`)
    before trusting it. A bad result gets a new fix task, not a silent
    re-close.
 7. Prefer the shared knowledge graph over grep when `graphify-out/` exists
@@ -127,13 +127,15 @@ Only one local-model generation may run at a time on the shared Ollama host.
 
 ### Shared memory
 
-- `./vault status` / `./vault stop` control the graphify watcher; `./vault export`
-  regenerates the Obsidian vault once. Bootstrap starts the watcher
-  automatically when `graphify` is on PATH.
+- The vault script controls the graphify watcher. It is named `./vault`,
+  or `./vault-daemon` if a `vault/` directory already existed at install
+  time. `status` / `stop` report or stop the watcher; `export` regenerates
+  the Obsidian vault once. Bootstrap starts the watcher automatically when
+  `graphify` is on PATH.
 - `obsidian/` is the Obsidian knowledge base: graphify's regenerated code graph
   plus any notes you add there. It is gitignored and rebuilt, so nothing you
   need to keep permanently belongs there. MCP is served by the separate
-  `graphify-mcp` process (`./vault mcp`), not by the watcher.
+  `graphify-mcp` process (vault script's `mcp` subcommand), not by the watcher.
 - `docs/decisions/` holds architecture decisions (ADRs) and is the durable,
   git-tracked record. Append, never rewrite history.
 - Containerized agents (e.g. `coi`) need `coordination/`, `coord`, and
