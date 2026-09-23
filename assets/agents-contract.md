@@ -10,7 +10,7 @@ This project uses a shared coordination layer for multiple coding agents
 ```
 ./coord init                                  # create coordination/ dirs
 ./coord add --agent ROLE --scope S --title T  # architect: add a task (prints id)
-./coord annotate ID "Goal: ... Inputs: ... Acceptance: ..."  # architect: add the task's spec, right after `add`
+./coord annotate ID "Goal: ... Inputs: ... Out of scope: ... Acceptance: ... Report format: ..."  # architect: add the task's spec, right after `add`
 ./coord next [ROLE] [--wait [--interval S]]   # list unclaimed tasks (or block until one appears)
 ./coord next --mine                           # list your in-progress tasks
 ./coord conflicts                             # list pending tasks with overlapping scopes
@@ -103,7 +103,8 @@ Only one local-model generation may run at a time on the shared Ollama host.
    supports one; other roles rely on scope discipline.
 3. Acquire the `ollama` lock before any local generation.
 4. Before you report, run the tests. Check the task's acceptance criteria.
-   Report with `coord annotate ID "STATUS: done or blocked. FILES: <paths>.
+   If the task spec has a Report format, use it. Otherwise report with
+   `coord annotate ID "STATUS: done or blocked. FILES: <paths>.
    TESTS: <one-line result>. NOTES: <assumptions or risks>"`. Ask other
    agents with `coord msg`.
 5. If you cannot finish a task, keep the claim. Annotate the blocker.

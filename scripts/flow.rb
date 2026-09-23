@@ -50,7 +50,7 @@ module Flow
     4. Do the work. Stay inside the task scope.
     5. Before any local model generation: `./coord with-lock ollama -- <command>`.
     6. Run the tests. Check the task's acceptance criteria.
-    7. Report:
+    7. Report. If the task spec has a Report format, use it. Otherwise use:
          ./coord annotate <id> "STATUS: done or blocked. FILES: <paths>. TESTS: <one-line result>. NOTES: <assumptions or risks>"
     8. Finish: `./coord done <id>`.
 
@@ -75,7 +75,7 @@ module Flow
     2. Decompose each goal into tasks. Keep scopes disjoint (one writer per path).
     3. Create each task, then add its spec:
          ./coord add --agent <role> --scope "<paths>" --title "<title>"
-         ./coord annotate <id> "Goal: <goal>. Inputs: <files or context>. Acceptance: <done condition>."
+         ./coord annotate <id> "Goal: <goal>. Inputs: <files or context>. Out of scope: <paths or work>. Acceptance: <done condition>. Report format: <what to annotate>."
     4. Watch progress: `./coord status`, `./coord conflicts`, `./coord inbox architect`.
     5. Answer worker questions. Resolve conflicts.
     6. Before you trust a done task, inspect its diff and rerun its tests in the
@@ -102,7 +102,7 @@ module Flow
     2. Decompose the request into tasks. Keep scopes disjoint (one writer per path).
     3. Create each task, then add its spec:
          ./coord add --agent <role> --scope "<paths>" --title "<title>"
-         ./coord annotate <id> "Goal: <goal>. Inputs: <files or context>. Acceptance: <done condition>."
+         ./coord annotate <id> "Goal: <goal>. Inputs: <files or context>. Out of scope: <paths or work>. Acceptance: <done condition>. Report format: <what to annotate>."
     4. Watch progress: `./coord status`, `./coord conflicts`.
     5. Answer worker questions. Resolve conflicts.
     6. Before you trust a done task, inspect its diff and rerun its tests in the
@@ -331,7 +331,7 @@ module Flow
     end
 
     def duties_block(data)
-      lines = data.fetch("duties").strip.lines.map { |line| "  #{line}" }
+      lines = data.fetch("duties").strip.lines.map { |line| line.strip.empty? ? line : "  #{line}" }
       "Duties:\n#{lines.join}"
     end
 
