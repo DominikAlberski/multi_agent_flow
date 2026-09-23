@@ -190,7 +190,17 @@ module Bootstrap
     end
 
     def plan_vault
-      plan_script("vault", VAULT_SIGNATURE)
+      @vault_script_name = File.directory?(File.join(@target, "vault")) ? "vault-daemon" : "vault"
+      dest = File.join(@target, @vault_script_name)
+      status = script_status(dest, "vault", VAULT_SIGNATURE)
+      label = if status == :refuse
+                "#{dest} (exists and is not ours; use --force)"
+              elsif @vault_script_name == "vault-daemon"
+                "#{dest} (vault/ is a directory; installing as vault-daemon instead)"
+              else
+                dest
+              end
+      action(status, dest, label, "vault")
     end
 
     def plan_script(name, signature)
@@ -202,6 +212,7 @@ module Bootstrap
 
     def script_status(dest, name, signature)
       return :create unless File.exist?(dest)
+      return :refuse if File.directory?(dest)
       return :refuse if !ours?(dest, signature) && !@force
       return :skip if ours?(dest, signature) && !changed_script?(dest, name)
 
@@ -319,20 +330,24 @@ module Bootstrap
     # the printed next steps cover installing it and running `./vault` later.
     def auto_start_vault(actions)
       return @vault_note = "skipped (VAULT_SKIP is set)" if ENV["VAULT_SKIP"]
-      return @vault_note = "run `./vault` after bootstrap (graphify not needed at install time, only to run it)" \
+      script = @vault_script_name || "vault"
+      return @vault_note = "run `./#{script}` after bootstrap (graphify not needed at install time, only to run it)" \
         unless vault_script_installed?(actions)
-      return @vault_note = "run `./vault` once graphify is installed" unless which("graphify")
+      return @vault_note = "run `./#{script}` once graphify is installed" unless which("graphify")
 
       start_vault
     end
 
     def vault_script_installed?(actions)
-      actions.any? { |a| a[:path] == File.join(@target, "vault") && a[:kind] != :refuse }
+      script = @vault_script_name || "vault"
+      actions.any? { |a| a[:path] == File.join(@target, script) && a[:kind] != :refuse }
     end
 
     def start_vault
-      ok = system(File.join(@target, "vault"), chdir: @target)
-      @vault_note = ok ? "started (`./vault status` / `./vault stop`)" : "failed to start; see coordination/vault.log"
+      script = @vault_script_name || "vault"
+      ok = system(File.join(@target, script), chdir: @target)
+      cmd = "./#{script}"
+      @vault_note = ok ? "started (`#{cmd} status` / `#{cmd} stop`)" : "failed to start; see coordination/vault.log"
       say("vault: #{@vault_note}")
     end
 

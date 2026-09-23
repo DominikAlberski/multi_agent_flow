@@ -119,7 +119,10 @@ module SetupAgent
     def self.require_dispatcher!
       return if File.exist?("dispatcher")
 
-      abort "setup_agent: ./dispatcher missing in #{Dir.pwd}. Commit it: git add dispatcher"
+      main = ENV["COORD_DIR"] ? File.dirname(File.expand_path(ENV["COORD_DIR"])) : nil
+      hint = main ? "\n  Fix:\n    cd #{main}\n    git add dispatcher && git commit -m 'Add dispatcher'\n  Then re-run setup_agent." \
+                  : " Commit dispatcher from your main project directory first, then re-run."
+      abort "setup_agent: dispatcher missing in this worktree (worktrees only contain committed files).#{hint}"
     end
   end
 
@@ -147,12 +150,12 @@ module SetupAgent
   end
 
   class Worktree
-    # All worktrees live under one sibling folder, <project>.worktrees/<slug>.
+    # All worktrees live inside the project under .worktrees/<slug>.
     # This must match Coord::Worktree.dir_for; scripts/check.rb enforces it.
-    WORKTREES_SUFFIX = ".worktrees"
+    WORKTREES_DIR = ".worktrees"
 
     def self.dir_for(root, slug)
-      File.join(File.dirname(root), "#{File.basename(root)}#{WORKTREES_SUFFIX}", slug)
+      File.join(root, WORKTREES_DIR, slug)
     end
 
     def self.ensure(role, worker_id)

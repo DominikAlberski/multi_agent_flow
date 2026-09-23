@@ -23,6 +23,30 @@ Any role can use either mode. Any harness can use either mode.
 
 ---
 
+## Quick install via an agent
+
+If you have any AI coding agent open in your **project** folder, you can
+install the flow without following the steps below manually.
+
+Say to the agent:
+
+```
+install workflow from /path/to/multi_agent_flow
+```
+
+Replace `/path/to/multi_agent_flow` with the real path to this repository.
+
+The agent reads `install.md` from that path and runs the generator for you.
+It asks you which harnesses and roles to use, then runs the generator,
+verifies the result, and tells you what to start next.
+
+This works in Claude Code, opencode, Codex, and any other agent that can
+read files and run shell commands.
+
+If you prefer to do the steps yourself, continue below.
+
+---
+
 ## 0. Prerequisites (one time)
 
 Check the tools:

@@ -33,8 +33,8 @@ module Check
     coord: File.join(ROOT, "assets", "coord"),
     setup_agent: File.join(ROOT, "assets", "setup_agent")
   }.freeze
-  WORKTREE_SUFFIX_DEF = 'WORKTREES_SUFFIX = ".worktrees"'
-  WORKTREE_DIR_EXPR = 'File.join(File.dirname(root), "#{File.basename(root)}#{WORKTREES_SUFFIX}", slug)'
+  WORKTREE_SUFFIX_DEF = 'WORKTREES_DIR = ".worktrees"'
+  WORKTREE_DIR_EXPR = 'File.join(root, WORKTREES_DIR, slug)'
 
   # bootstrap.rb decides whether an existing script is "ours" by these signature
   # strings. If a script's header drifts, bootstrap stops recognizing its own

@@ -833,15 +833,16 @@ module Coord
   # by symlinking tracked paths (a symlink would dirty the worktree and, if
   # committed, break the coordination dir on merge).
   #
-  # All worktrees live under one sibling folder, <project>.worktrees/<slug>,
-  # so they are grouped instead of scattered next to the project. setup_agent
-  # computes the same path; keep the two in sync (scripts/check.rb).
+  # All worktrees live inside the project under .worktrees/<slug>.
+  # .worktrees/ is gitignored, so agents stay within the project directory
+  # and need no cross-directory file access permissions. setup_agent computes
+  # the same path; keep the two in sync (scripts/check.rb).
   class Worktree
     ENV_FILE = "coord-env.sh"
-    WORKTREES_SUFFIX = ".worktrees"
+    WORKTREES_DIR = ".worktrees"
 
     def self.dir_for(root, slug)
-      File.join(File.dirname(root), "#{File.basename(root)}#{WORKTREES_SUFFIX}", slug)
+      File.join(root, WORKTREES_DIR, slug)
     end
 
     def initialize(project_root)

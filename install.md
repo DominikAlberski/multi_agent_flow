@@ -130,6 +130,21 @@ Check that each agent file exists:
   project; Hermes skills are global, so this keeps two projects with the
   same role from overwriting each other's skill)
 
+## Step 6b - Commit the installed files
+
+Worktrees contain only committed files. Commit before starting any agent.
+
+```sh
+cd "$PROJECT"
+git add coord setup_agent dispatcher AGENTS.md CLAUDE.md .gitignore \
+        .agent-flow.json .claude .opencode coordination
+git add vault vault-daemon 2>/dev/null; true
+git commit -m "Add multi-agent flow"
+```
+
+The `.gitignore` already excludes runtime state (task database, inboxes,
+sessions, logs).
+
 ## Step 7 - Report to the user
 
 Report the generated files. Then give the user these instructions.

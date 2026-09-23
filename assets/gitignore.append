@@ -14,6 +14,9 @@ coordination/events.log
 coordination/hooks/*.log
 coordination/sessions/
 
+# Agent worktrees live here; each is a git worktree, not committed source.
+.worktrees/
+
 # Written by `coord worktree` in each worktree it creates; points back at
 # this project's coordination/ dir, never meant to be committed.
 coord-env.sh
