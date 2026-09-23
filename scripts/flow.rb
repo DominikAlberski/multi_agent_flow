@@ -60,7 +60,7 @@ module Flow
     - Do not create tasks. Ask the architect: `./coord msg --from %{role} architect "<text>"`.
     - If you cannot finish, keep the claim. Annotate the blocker. Message the
       architect. Stop. Do not retry a failing approach.
-    - If no task is available, stop. The next-task hook will re-prompt you when tasks arrive.
+    %{no_task_instruction}
     - Record durable knowledge in the shared vault or `docs/decisions/`.
     - Never write ad-hoc verification scripts. The test suite is the verification.
     #{STE_RULE}
@@ -294,22 +294,28 @@ module Flow
         role: role,
         title: data.fetch("title"),
         description: data.fetch("description"),
-        prompt: build_prompt(role, data),
+        prompt: build_prompt(harness, role, data),
         model: model,
         can_edit: data.fetch("can_edit")
       )
     end
 
-    def build_prompt(role, data)
+    def build_prompt(harness, role, data)
       case role
       when "project-manager" then project_manager_prompt(data)
       when "architect" then architect_prompt(data)
-      else worker_prompt(role, data)
+      else worker_prompt(harness, role, data)
       end
     end
 
-    def worker_prompt(role, data)
-      "#{intro(data)}\n\n#{duties_block(data)}\n\n#{format(WORKER_LOOP, role: role)}"
+    def worker_prompt(harness, role, data)
+      "#{intro(data)}\n\n#{duties_block(data)}\n\n#{format(WORKER_LOOP, role: role, no_task_instruction: no_task_line(harness))}"
+    end
+
+    def no_task_line(harness)
+      harness == "opencode" \
+        ? "- If no task is available, run `./coord next --wait`. Do not poll by hand." \
+        : "- If no task is available, stop. The next-task hook will re-prompt you when tasks arrive."
     end
 
     def architect_prompt(data)
