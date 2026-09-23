@@ -60,7 +60,7 @@ module Flow
     - Do not create tasks. Ask the architect: `./coord msg --from %{role} architect "<text>"`.
     - If you cannot finish, keep the claim. Annotate the blocker. Message the
       architect. Stop. Do not retry a failing approach.
-    - If no task is available, run `./coord next --wait`. Do not poll by hand.
+    - If no task is available, stop. The next-task hook will re-prompt you when tasks arrive.
     - Record durable knowledge in the shared vault or `docs/decisions/`.
     - Never write ad-hoc verification scripts. The test suite is the verification.
     #{STE_RULE}
@@ -159,6 +159,7 @@ module Flow
       validate
       run_bootstrap
       results = generate
+      install_hooks unless @check
       write_manifest
       print_instructions(results)
     end
@@ -361,6 +362,81 @@ module Flow
       # an absolute home path that would leak into a committed manifest.
       data[:hermes_dir] = @hermes_dir unless @hermes_dir == DEFAULT_HERMES_DIR
       File.write(path, JSON.pretty_generate(data))
+    end
+
+    def install_hooks
+      harnesses = @agents.map { |a| a[:harness] }.uniq
+      harnesses.each { |h| install_harness_hooks(h) }
+    end
+
+    def install_harness_hooks(harness)
+      case harness
+      when "codex"  then install_codex_hooks
+      when "hermes" then install_hermes_hooks
+      end
+    end
+
+    def install_codex_hooks
+      hooks_dir = File.join(Dir.home, ".codex", "hooks")
+      FileUtils.mkdir_p(hooks_dir)
+      dest = File.join(hooks_dir, "next-task.rb")
+      src  = File.join(ASSETS, "hooks", "next-task.rb")
+      if !File.exist?(dest) || File.read(dest) != File.read(src)
+        FileUtils.cp(src, dest)
+        FileUtils.chmod("+x", dest)
+        puts "  hook install: #{dest}"
+      end
+      merge_codex_stop_hook(File.join(Dir.home, ".codex", "hooks.json"), dest)
+    end
+
+    def merge_codex_stop_hook(hooks_json, script_path)
+      data = File.exist?(hooks_json) ? (JSON.parse(File.read(hooks_json)) rescue {}) : {}
+      data["hooks"] ||= {}
+      data["hooks"]["Stop"] ||= []
+      return if data["hooks"]["Stop"].any? { |e| e.dig("hooks", 0, "command").to_s.include?("next-task.rb") }
+
+      data["hooks"]["Stop"] << {
+        "matcher" => "",
+        "hooks" => [{ "type" => "command", "command" => "ruby #{script_path}" }]
+      }
+      File.write(hooks_json, JSON.pretty_generate(data))
+      puts "  hook merge:   #{hooks_json} (Stop hook added)"
+    end
+
+    def install_hermes_hooks
+      hooks_dir = File.join(Dir.home, ".hermes", "agent-hooks")
+      FileUtils.mkdir_p(hooks_dir)
+      dest = File.join(hooks_dir, "next-task.sh")
+      src  = File.join(ASSETS, "hooks", "next-task-hermes.sh")
+      if !File.exist?(dest) || File.read(dest) != File.read(src)
+        FileUtils.cp(src, dest)
+        FileUtils.chmod("+x", dest)
+        puts "  hook install: #{dest}"
+      end
+      config_yaml = File.join(Dir.home, ".hermes", "config.yaml")
+      return if hermes_hook_configured?(config_yaml, dest)
+
+      puts
+      puts "  Hermes hook: add the following block to ~/.hermes/config.yaml:"
+      puts "  (If a hooks: key already exists, merge on_session_end into it.)"
+      puts
+      puts hermes_hook_yaml_snippet(dest).gsub(/^/, "  ")
+      @hermes_hook_pending = true
+    end
+
+    def hermes_hook_configured?(config_yaml, script_path)
+      return false unless File.exist?(config_yaml)
+      content = File.read(config_yaml)
+      content.include?(script_path) || content.include?("next-task.sh")
+    end
+
+    def hermes_hook_yaml_snippet(script_path)
+      <<~YAML
+        hooks:
+          on_session_end:
+            - command: "#{script_path}"
+              timeout: 30
+      YAML
     end
 
     def print_instructions(results)

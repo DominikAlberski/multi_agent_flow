@@ -11,6 +11,7 @@
 # re-running never duplicates blocks and never reinstalls what is present.
 # Ruby:     3.0+ (same as coord).
 require "fileutils"
+require "json"
 require "optparse"
 
 abort "bootstrap: Ruby 3.0+ required (current: #{RUBY_VERSION}). Install with " \
@@ -25,14 +26,19 @@ module Bootstrap
   VAULT_SIGNATURE = "vault - shared knowledge base watcher (graphify + Obsidian + MCP)."
   SUBDIRS = %w[inbox locks exports hooks].freeze
 
+  NEXT_TASK_HOOK_SIGNATURE = "next-task.rb - Stop hook for Claude Code and Codex."
+  NEXT_TASK_HERMES_SIGNATURE = "next-task-hermes.sh - on_session_end hook for Hermes Agent."
+
   PLAN_STEPS = %i[plan_coordination_dirs plan_gitkeeps plan_coord plan_setup_agent plan_dispatcher
-                  plan_vault plan_taskrc plan_contracts plan_gitignore].freeze
+                  plan_vault plan_taskrc plan_contracts plan_gitignore
+                  plan_hook_scripts plan_claude_stop_hook].freeze
 
   # Maps each writing action kind to the Installer method that performs it.
   # Every writer takes (path, source). :skip and :refuse write nothing.
   WRITERS = { mkdir: :make_dir, touch: :touch_file, create: :write_script, update: :write_script,
               create_taskrc: :write_taskrc, upgrade_taskrc: :upgrade_taskrc,
-              append: :append_marked, replace: :replace_marked }.freeze
+              append: :append_marked, replace: :replace_marked,
+              configure_claude_hook: :configure_claude_settings }.freeze
 
   REQUIRED_DEPS = {
     "task" => {
@@ -290,6 +296,62 @@ module Bootstrap
     def plan_gitignore
       path = File.join(@target, ".gitignore")
       action(block_status(path, :gitignore), path, "#{path} (ignore rules)", :gitignore)
+    end
+
+    def plan_hook_scripts
+      [
+        ["hooks/next-task.rb", File.join(@target, "coordination", "hooks", "next-task.rb"),
+         NEXT_TASK_HOOK_SIGNATURE],
+        ["hooks/next-task-hermes.sh", File.join(@target, "coordination", "hooks", "next-task-hermes.sh"),
+         NEXT_TASK_HERMES_SIGNATURE]
+      ].map do |src_name, dest, signature|
+        status = hook_script_status(dest, src_name, signature)
+        label = status == :refuse ? "#{dest} (exists and is not ours; use --force)" : dest
+        action(status, dest, label, src_name)
+      end
+    end
+
+    def hook_script_status(dest, src_name, signature)
+      return :create unless File.exist?(dest)
+      return :refuse if !ours?(dest, signature) && !@force
+      return :skip if ours?(dest, signature) && !changed_script?(dest, src_name)
+
+      :update
+    end
+
+    def plan_claude_stop_hook
+      return [] unless Dir.exist?(File.join(@target, ".claude"))
+
+      path = File.join(@target, ".claude", "settings.json")
+      status = claude_hook_status(path)
+      [action(status, path, "#{path} (Stop hook for next-task)", :claude_stop_hook)]
+    end
+
+    def claude_hook_status(path)
+      return :configure_claude_hook unless File.exist?(path)
+
+      settings = JSON.parse(File.read(path)) rescue {}
+      claude_hook_present?(settings) ? :skip : :configure_claude_hook
+    end
+
+    def claude_hook_present?(settings)
+      stops = settings.dig("hooks", "Stop") || []
+      stops.any? { |entry| entry.dig("hooks", 0, "command").to_s.include?("next-task.rb") }
+    end
+
+    def configure_claude_settings(path, _source = nil)
+      settings = File.exist?(path) ? (JSON.parse(File.read(path)) rescue {}) : {}
+      settings["hooks"] ||= {}
+      settings["hooks"]["Stop"] ||= []
+      return false if claude_hook_present?(settings)
+
+      settings["hooks"]["Stop"] << {
+        "matcher" => "",
+        "hooks" => [{ "type" => "command", "command" => "ruby coordination/hooks/next-task.rb" }]
+      }
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, JSON.pretty_generate(settings))
+      true
     end
 
     # A marked block is owned by this tool. When the shipped block changed
