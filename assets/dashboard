@@ -1,0 +1,358 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# dashboard - local observability web UI for multi-agent coordination.
+#
+# Usage: ./dashboard [--port N] [--coord DIR] [--interval S]
+#
+# Starts a local HTTP server at http://localhost:4567 (default).
+# The page auto-refreshes every S seconds (default: 5).
+# Run from the project root where coordination/ lives.
+#
+# >>> multi-agent-flow >>>
+# <<< multi-agent-flow <<<
+
+require "json"
+require "fileutils"
+require "time"
+require "optparse"
+begin
+  require "webrick"
+rescue LoadError
+  abort "dashboard: webrick is required. Install it with: gem install webrick"
+end
+
+abort "dashboard: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
+
+module Dashboard
+  DEFAULT_PORT     = 4567
+  DEFAULT_INTERVAL = 5
+  DEFAULT_COORD    = "coordination"
+  DEFAULT_LEASE    = 4 * 3600
+
+  class Config
+    attr_reader :port, :coord_dir, :interval
+
+    def initialize(argv)
+      @port     = DEFAULT_PORT
+      @coord_dir = DEFAULT_COORD
+      @interval  = DEFAULT_INTERVAL
+      OptionParser.new do |o|
+        o.on("--port N", Integer)    { |v| @port = v }
+        o.on("--coord DIR")          { |v| @coord_dir = v }
+        o.on("--interval S", Integer) { |v| @interval = v }
+      end.parse!(argv)
+    end
+
+    def taskrc       = File.join(coord_dir, "taskrc")
+    def log_path     = File.join(coord_dir, "events.log")
+    def inbox_dir    = File.join(coord_dir, "inbox")
+    def locks_dir    = File.join(coord_dir, "locks")
+    def manifest     = ".agent-flow.json"
+    def lease_ttl
+      v = Integer(ENV.fetch("COORD_LEASE_TTL", ""), exception: false)
+      v&.positive? ? v : DEFAULT_LEASE
+    end
+  end
+
+  class TaskReader
+    def initialize(taskrc)
+      @taskrc = taskrc
+    end
+
+    def read
+      return [] unless File.exist?(@taskrc)
+      env = ENV.to_h.merge("TASKRC" => @taskrc)
+      IO.popen([env, "task", "(", "status:pending", "or", "status:waiting", ")", "export",
+                { err: File::NULL }]) { |f| parse(f.read) }
+    rescue StandardError
+      []
+    end
+
+    private
+
+    def parse(raw)
+      raw.strip.empty? ? [] : JSON.parse(raw)
+    rescue JSON::ParserError
+      []
+    end
+  end
+
+  class Collector
+    def initialize(cfg)
+      @cfg = cfg
+    end
+
+    def collect
+      tasks = TaskReader.new(@cfg.taskrc).read
+      {
+        project:          File.basename(Dir.pwd),
+        generated_at:     Time.now.utc.iso8601,
+        refresh_interval: @cfg.interval,
+        lease_ttl:        @cfg.lease_ttl,
+        declared_roles:   declared_roles,
+        tasks:            task_summary(tasks),
+        events:           recent_events,
+        inboxes:          inbox_counts,
+        locks:            active_locks
+      }
+    end
+
+    private
+
+    def declared_roles
+      JSON.parse(File.read(@cfg.manifest)).fetch("agents", []).map { |a| a["role"] }.compact
+    rescue Errno::ENOENT, JSON::ParserError
+      []
+    end
+
+    def task_summary(tasks)
+      {
+        all:       tasks,
+        stale:     tasks.select { |t| stale?(t) },
+        orphaned:  orphaned(tasks),
+        conflicts: scope_conflicts(tasks)
+      }
+    end
+
+    def stale?(task)
+      start = task["start"].to_s
+      return false if start.empty?
+      Time.parse(start) + @cfg.lease_ttl <= Time.now
+    rescue ArgumentError
+      false
+    end
+
+    def orphaned(tasks)
+      roles = declared_roles
+      return [] if roles.empty?
+      tasks.select { |t| t["agent"] && !roles.include?(t["agent"]) }
+    end
+
+    def scope_conflicts(tasks)
+      tasks.combination(2)
+           .select { |a, b| scopes_overlap?(a["scope"], b["scope"]) }
+           .map { |a, b| [a["uuid"], b["uuid"]] }
+    end
+
+    def scopes_overlap?(a, b)
+      return false if a.to_s.empty? || b.to_s.empty?
+      pa = non_glob_parts(a)
+      pb = non_glob_parts(b)
+      return false if pa.empty? || pb.empty?
+      short, long = [pa, pb].sort_by(&:size)
+      short == long.first(short.size)
+    end
+
+    def non_glob_parts(scope)
+      scope.split("/").take_while { |p| p !~ /[*?{}]/ }
+    end
+
+    def recent_events(limit = 60)
+      path = @cfg.log_path
+      return [] unless File.exist?(path)
+      File.readlines(path).last(limit).filter_map { |line| parse_event(line.chomp) }
+    end
+
+    def parse_event(line)
+      ts, action, agent, detail = line.split("\t", 4)
+      return nil unless ts && action
+      { ts: ts, action: action, agent: agent, detail: detail }
+    end
+
+    def inbox_counts
+      dir = @cfg.inbox_dir
+      return {} unless Dir.exist?(dir)
+      Dir.children(dir).each_with_object({}) do |role, h|
+        rdir = File.join(dir, role)
+        h[role] = Dir.glob(File.join(rdir, "*.md")).size if File.directory?(rdir)
+      end
+    end
+
+    def active_locks
+      dir = @cfg.locks_dir
+      return [] unless Dir.exist?(dir)
+      Dir.glob(File.join(dir, "*.json")).filter_map { |p| read_lock(p) }
+    end
+
+    def read_lock(meta)
+      data = JSON.parse(File.read(meta))
+      name = File.basename(meta, ".json")
+      ts   = data["ts"].to_i
+      ttl  = data.fetch("ttl") { nil }&.to_i
+      return nil unless ttl&.positive?
+      { name: name, agent: data["agent"], acquired_at: Time.at(ts).utc.iso8601,
+        expires_at: Time.at(ts + ttl).utc.iso8601, stale: ts + ttl < Time.now.to_i }
+    rescue JSON::ParserError, Errno::ENOENT
+      nil
+    end
+  end
+
+  PAGE_HTML = <<~HTML
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <title>Flow Board</title>
+      <style>
+        :root{--bg:#0f1117;--surface:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#64748b;
+          --ok:#22c55e;--warn:#f59e0b;--danger:#ef4444;--info:#3b82f6}
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{background:var(--bg);color:var(--text);font:13px/1.5 'SF Mono',Consolas,monospace;padding:16px}
+        header{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+        h1{font-size:16px;font-weight:700}
+        .muted{color:var(--muted);font-size:11px}
+        #pbtn{margin-left:auto;background:var(--surface);border:1px solid var(--border);
+          color:var(--text);padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px}
+        .alerts{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+        .alert{padding:7px 12px;border-radius:5px;border-left:3px solid var(--danger);
+          background:#1f1a1a;font-size:12px}
+        .alert.warn{border-color:var(--warn);background:#1f1c16}
+        .stats{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+        .stat{background:var(--surface);border:1px solid var(--border);border-radius:7px;
+          padding:10px 14px;min-width:90px}
+        .sv{font-size:22px;font-weight:700}
+        .sl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+        .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
+          gap:10px;margin-bottom:14px}
+        .card{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:11px}
+        .card h3{font-size:11px;font-weight:700;margin-bottom:8px;color:var(--muted);
+          text-transform:uppercase;letter-spacing:.05em}
+        .row{padding:5px 0;border-bottom:1px solid var(--border);font-size:12px}
+        .row:last-child{border-bottom:none}
+        .meta{color:var(--muted);font-size:11px}
+        .b{display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;
+          text-transform:uppercase}
+        .b-ok{background:#052e0f;color:var(--ok)}
+        .b-warn{background:#2d1f02;color:var(--warn)}
+        .b-danger{background:#2d0909;color:var(--danger)}
+        .b-info{background:#0a1929;color:var(--info)}
+        .two{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+        .er{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px}
+        .er:last-child{border-bottom:none}
+        .ets{color:var(--muted);flex-shrink:0;font-size:11px;min-width:48px}
+        .ea{font-weight:600;min-width:62px}
+        .ac{color:var(--info)}.ad{color:var(--ok)}.au{color:var(--warn)}.am{color:#a78bfa}
+        @media(max-width:600px){.two{grid-template-columns:1fr}}
+      </style>
+    </head>
+    <body>
+      <header>
+        <h1 id="proj">Flow Board</h1>
+        <span class="muted" id="upd">Loading...</span>
+        <button id="pbtn" onclick="togglePause()">Pause</button>
+      </header>
+      <div id="alerts" class="alerts"></div>
+      <div id="stats" class="stats"></div>
+      <div id="agents" class="grid"></div>
+      <div class="two">
+        <div class="card"><h3>Recent Events</h3><div id="events"></div></div>
+        <div>
+          <div class="card" style="margin-bottom:10px"><h3>Inboxes</h3><div id="inboxes"></div></div>
+          <div class="card"><h3>Locks</h3><div id="locks"></div></div>
+        </div>
+      </div>
+      <script>
+        let paused=false,INTERVAL=5;
+        function togglePause(){paused=!paused;document.getElementById('pbtn').textContent=paused?'Resume':'Pause';if(!paused)refresh()}
+        function ago(iso){const s=Math.round((Date.now()-new Date(iso))/1000);return s<60?s+'s':s<3600?Math.floor(s/60)+'m':Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m'}
+        function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+        function b(t,l){return`<span class="b b-${l}">${t}</span>`}
+        function ac(a){return a==='done'?'ad':a==='claim'?'ac':a==='unclaim'?'au':a==='msg'||a==='broadcast'?'am':''}
+
+        function render(d){
+          INTERVAL=d.refresh_interval||5;
+          const ago_gen=ago(d.generated_at);
+          document.getElementById('proj').textContent=d.project+' — Flow Board';
+          document.getElementById('upd').textContent='Updated '+ago_gen+' | lease '+Math.round(d.lease_ttl/3600)+'h';
+
+          const stale=d.tasks.stale||[],orphaned=d.tasks.orphaned||[],conflicts=d.tasks.conflicts||[];
+          const alerts=[];
+          if(stale.length) alerts.push({l:'danger',m:stale.length+' claimed task(s) with expired lease — likely crashed worker'});
+          if(orphaned.length) alerts.push({l:'danger',m:orphaned.length+' task(s) assigned to roles nobody is running'});
+          if(conflicts.length) alerts.push({l:'warn',m:conflicts.length+' scope conflict(s) between pending tasks'});
+          Object.entries(d.inboxes||{}).forEach(([role,n])=>{if(n>0)alerts.push({l:'warn',m:role+' inbox: '+n+' unread message(s)'})});
+          (d.locks||[]).filter(l=>l.stale).forEach(l=>alerts.push({l:'danger',m:'Stale lock: '+esc(l.name)+' held by '+(l.agent||'?')+', expired'}));
+          document.getElementById('alerts').innerHTML=alerts.map(a=>`<div class="alert ${a.l==='warn'?'warn':''}">&#x26A0; ${esc(a.m)}</div>`).join('');
+
+          const tasks=d.tasks.all||[],now=new Date();
+          const claimed=tasks.filter(t=>t.start),backlog=tasks.filter(t=>!t.start&&!(t.wait&&new Date(t.wait)>now)),waiting=tasks.filter(t=>t.wait&&new Date(t.wait)>now);
+          document.getElementById('stats').innerHTML=[
+            {v:tasks.length,l:'Pending',c:''},{v:claimed.length,l:'In Progress',c:'info'},
+            {v:backlog.length,l:'Backlog',c:''},{v:waiting.length,l:'Waiting',c:''},
+            {v:stale.length,l:'Stale',c:stale.length?'danger':''},{v:(d.declared_roles||[]).length,l:'Roles',c:''}
+          ].map(s=>`<div class="stat"><div class="sv"${s.c?' style="color:var(--'+s.c+')"':''}>${s.v}</div><div class="sl">${s.l}</div></div>`).join('');
+
+          const byAgent={};
+          tasks.forEach(t=>{const a=t.agent||'unassigned';if(!byAgent[a])byAgent[a]={c:[],bl:[],w:[]};(t.wait&&new Date(t.wait)>now?byAgent[a].w:t.start?byAgent[a].c:byAgent[a].bl).push(t)});
+          const staleIds=new Set(stale.map(t=>t.uuid));
+          const roles=d.declared_roles||[];
+          document.getElementById('agents').innerHTML=Object.entries(byAgent).map(([agent,g])=>{
+            const isOrph=roles.length>0&&!roles.includes(agent);
+            const rows=[
+              ...g.c.map(t=>`<div class="row">${staleIds.has(t.uuid)?b('stale','danger'):b('claimed','info')} <strong>${esc(t.description)}</strong><div class="meta">${esc(t.worker||'')} &middot; ${ago(t.start)} ago${t.scope?' &middot; '+esc(t.scope):''}</div></div>`),
+              ...g.bl.map(t=>`<div class="row">${b('backlog','ok')} <strong>${esc(t.description)}</strong><div class="meta">${t.scope?esc(t.scope):''}</div></div>`),
+              ...g.w.map(t=>`<div class="row">${b('waiting','warn')} <strong>${esc(t.description)}</strong><div class="meta">${t.scope?esc(t.scope):''}</div></div>`)
+            ];
+            return`<div class="card"><h3>${esc(agent)}${isOrph?' '+b('no runner','danger'):''}</h3>${rows.join('')||'<div class="muted">no tasks</div>'}</div>`
+          }).join('');
+
+          const evts=(d.events||[]).slice().reverse().slice(0,25);
+          document.getElementById('events').innerHTML=evts.map(e=>`<div class="er"><span class="ets">${ago(e.ts)} ago</span><span class="ea ${ac(e.action)}">${esc(e.action)}</span><span>${esc(e.agent)} ${e.detail?'&mdash; '+esc(e.detail.slice(0,55)):''}</span></div>`).join('')||'<div class="muted">no events yet</div>';
+
+          const inboxes=Object.entries(d.inboxes||{});
+          document.getElementById('inboxes').innerHTML=inboxes.length?inboxes.map(([role,n])=>`<div class="row"><span>${esc(role)}</span> ${n>0?b(n+' unread','warn'):b('clear','ok')}</div>`).join(''):'<div class="muted">no inboxes</div>';
+
+          const lks=d.locks||[];
+          document.getElementById('locks').innerHTML=lks.length?lks.map(l=>`<div class="row"><span>${esc(l.name)}</span> ${l.stale?b('stale','danger'):b('held','info')} <span class="meta" style="margin-left:4px">${esc(l.agent||'')} &middot; expires ${ago(l.expires_at)}</span></div>`).join(''):'<div class="muted">no active locks</div>';
+        }
+
+        async function refresh(){
+          if(paused)return;
+          try{const d=await fetch('/data').then(r=>r.json());render(d)}
+          catch(e){document.getElementById('upd').textContent='Error: '+e.message}
+          setTimeout(refresh,INTERVAL*1000);
+        }
+        refresh();
+      </script>
+    </body>
+    </html>
+  HTML
+
+  class Server
+    def initialize(cfg)
+      @cfg       = cfg
+      @collector = Collector.new(cfg)
+    end
+
+    def run
+      server = build_server
+      server.mount_proc("/")     { |_, res| html(res) }
+      server.mount_proc("/data") { |_, res| json(res) }
+      trap("INT") { server.shutdown }
+      puts "dashboard: http://localhost:#{@cfg.port}  (ctrl-c to stop)"
+      server.start
+    end
+
+    private
+
+    def build_server
+      WEBrick::HTTPServer.new(BindAddress: "127.0.0.1",
+                              Port: @cfg.port,
+                              Logger: WEBrick::Log.new(File::NULL),
+                              AccessLog: [])
+    end
+
+    def html(res)
+      res.content_type = "text/html; charset=utf-8"
+      res.body = PAGE_HTML
+    end
+
+    def json(res)
+      res.content_type = "application/json"
+      res.body = JSON.generate(@collector.collect)
+    end
+  end
+end
+
+Dashboard::Server.new(Dashboard::Config.new(ARGV)).run

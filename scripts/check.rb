@@ -43,7 +43,8 @@ module Check
     "coord" => "coord - shared coordination layer",
     "setup_agent" => "setup_agent - create a worktree for one agent and launch its harness session.",
     "dispatcher" => "dispatcher - outside-of-agent message board monitor and agent spawner.",
-    "vault" => "vault - shared knowledge base watcher (graphify + Obsidian + MCP)."
+    "vault" => "vault - shared knowledge base watcher (graphify + Obsidian + MCP).",
+    "dashboard" => "dashboard - local observability web UI for multi-agent coordination."
   }.freeze
 
   module_function

@@ -24,13 +24,14 @@ module Bootstrap
   SETUP_AGENT_SIGNATURE = "setup_agent - create a worktree for one agent and launch its harness session."
   DISPATCHER_SIGNATURE = "dispatcher - outside-of-agent message board monitor and agent spawner."
   VAULT_SIGNATURE = "vault - shared knowledge base watcher (graphify + Obsidian + MCP)."
+  DASHBOARD_SIGNATURE = "dashboard - local observability web UI for multi-agent coordination."
   SUBDIRS = %w[inbox locks exports hooks].freeze
 
   NEXT_TASK_HOOK_SIGNATURE = "next-task.rb - Stop hook for Claude Code and Codex."
   NEXT_TASK_HERMES_SIGNATURE = "next-task-hermes.sh - on_session_end hook for Hermes Agent."
 
   PLAN_STEPS = %i[plan_coordination_dirs plan_gitkeeps plan_coord plan_setup_agent plan_dispatcher
-                  plan_vault plan_taskrc plan_contracts plan_gitignore
+                  plan_vault plan_dashboard plan_taskrc plan_contracts plan_gitignore
                   plan_hook_scripts plan_claude_stop_hook].freeze
 
   # Maps each writing action kind to the Installer method that performs it.
@@ -193,6 +194,10 @@ module Bootstrap
 
     def plan_dispatcher
       plan_script("dispatcher", DISPATCHER_SIGNATURE)
+    end
+
+    def plan_dashboard
+      plan_script("dashboard", DASHBOARD_SIGNATURE)
     end
 
     def plan_vault

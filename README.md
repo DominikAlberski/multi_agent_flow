@@ -113,7 +113,8 @@ You can also just hand `SKILL.md` plus `assets/` to any agent as context.
 ./coord with-lock ollama -- opencode run --agent backend-developer "..."
 ./coord worktree backend-developer  # git worktree + branch; then `source coord-env.sh` in it
 ./coord status
-./coord board        # coordination/exports/board.md (Obsidian kanban)
+./coord board        # coordination/exports/board.md — open in Obsidian (Kanban plugin); keep fresh with: watch -n 10 ./coord board
+./dashboard          # http://localhost:4567 — stuck-detection: stale leases, unread inboxes, locks, conflicts
 ./setup_agent hermes tester --dispatch  # worktree + dispatcher: agent runs only when there is work
 ```
 

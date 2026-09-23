@@ -299,6 +299,29 @@ ls coordination/sessions/         # one .session and one .handoff.md per dispatc
 ls coordination/inbox/*/failed/   # messages that failed 3 times (must be empty)
 ```
 
+### Obsidian kanban
+
+`coord board` writes `coordination/exports/board.md`. Open it in Obsidian
+with the Kanban plugin (mgmeyers/obsidian-kanban). Obsidian reloads the file
+automatically. Keep it current while agents run:
+
+```sh
+watch -n 10 ./coord board
+```
+
+### Web dashboard
+
+`./dashboard` starts a local web server at `http://localhost:4567`. The page
+auto-refreshes every 5 seconds. It shows everything `coord status` shows plus
+signals the kanban cannot: expired-lease claims (crashed workers), unread
+inbox messages, stale locks, orphaned tasks (assigned to a role nobody runs),
+and scope conflicts.
+
+```sh
+./dashboard           # default port 4567
+./dashboard --port N  # custom port
+```
+
 ## 13. Merge the results
 
 Each agent commits on its own branch. You merge the branches into main.

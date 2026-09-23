@@ -331,6 +331,8 @@ Show a summary by agent and state:
 ./coord status
 ```
 
+### Obsidian kanban (task board)
+
 Write the board file:
 
 ```sh
@@ -338,7 +340,31 @@ Write the board file:
 ```
 
 The board is at `coordination/exports/board.md`.
-Open it in Obsidian with the Kanban plugin.
+Open it in Obsidian with the Kanban plugin (mgmeyers/obsidian-kanban).
+Obsidian reloads the file automatically when it changes on disk.
+Keep it current with:
+
+```sh
+watch -n 10 ./coord board
+```
+
+The kanban shows Backlog / In Progress / Waiting columns per task.
+
+### Web dashboard (stuck-detection)
+
+The dashboard detects conditions the kanban cannot show: expired leases
+(crashed workers), unread inbox messages, stale locks, orphaned tasks, and
+scope conflicts.
+
+Run from the project root:
+
+```sh
+./dashboard
+```
+
+Open `http://localhost:4567` in a browser.
+The page auto-refreshes every 5 seconds.
+Stop with ctrl-c.
 
 Export the raw tasks:
 
