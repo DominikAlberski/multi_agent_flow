@@ -57,12 +57,28 @@ the task's prior holder gets a message in their inbox naming who took it.
 
 ```
 ./coord msg --from A TO "text"                # leave a message for another agent
+./coord broadcast --from A "text"            # send to every known role except the sender
 ./coord inbox [AGENT]                         # read your messages (marks them read)
 ./coord inbox --peek                          # read without marking read
 ./coord inbox --all                           # include already-read messages
+./coord log [N]                               # show last N coordination events
 ```
 
 Read messages move to `coordination/inbox/<agent>/read/`.
+`coord broadcast` reaches every role that owns a pending task or is listed in
+`.agent-flow.json`, except the sender.
+`coord msg` and `coord broadcast` fire a per-role hook at
+`coordination/hooks/<role>.sh` if one is installed. The hook is a plain shell
+script. It gets `COORD_AGENT`, `COORD_FROM`, and `COORD_MSG_FILE` in its
+environment, and the message file path as `$1`. It runs in the background and
+logs to `coordination/hooks/<role>.log`. Use it to poke a running agent
+session, start a one-shot run, or send a notification. `coord` does not know
+which harness the agent runs in.
+`coord log` shows claims, completions, unclaims, messages, and broadcasts from
+`coordination/events.log`. Any agent can read this shared history without
+opening individual inboxes.
+If a `./dispatcher` serves your role, the dispatcher gives you your messages
+in the prompt. Do not run `coord inbox` in that case.
 
 ### Resource locks
 
@@ -110,11 +126,13 @@ Only one local-model generation may run at a time on the shared Ollama host.
 
 ### Shared memory
 
-- `./vault status` / `./vault stop` control the graphify watcher; bootstrap
-  starts it automatically when `graphify` is on PATH.
-- `vault/` is the Obsidian knowledge base: graphify's regenerated code graph
+- `./vault status` / `./vault stop` control the graphify watcher; `./vault export`
+  regenerates the Obsidian vault once. Bootstrap starts the watcher
+  automatically when `graphify` is on PATH.
+- `obsidian/` is the Obsidian knowledge base: graphify's regenerated code graph
   plus any notes you add there. It is gitignored and rebuilt, so nothing you
-  need to keep permanently belongs there.
+  need to keep permanently belongs there. MCP is served by the separate
+  `graphify-mcp` process (`./vault mcp`), not by the watcher.
 - `docs/decisions/` holds architecture decisions (ADRs) and is the durable,
   git-tracked record. Append, never rewrite history.
 - Containerized agents (e.g. `coi`) need `coordination/`, `coord`, and

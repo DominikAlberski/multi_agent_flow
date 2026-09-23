@@ -216,6 +216,157 @@ class TaskwarriorTest < Minitest::Test
     end
     assert_match(/hi/, out)
   end
+
+  # Broadcast sends to every role that has a pending task, not just the
+  # sender's own role. The architect uses it for cross-cutting announcements.
+  def test_broadcast_delivers_to_all_roles_with_tasks
+    add("shared task")
+    Coord::CLI.new(["add", "--agent", "reviewer", "--scope", "test/**", "--title", "review task"], env: @env).run
+    out, = capture_io do
+      Coord::CLI.new(["broadcast", "--from", "architect", "scope change: all tests move to spec/"], env: @env).run
+    end
+    assert_match(/broadcast -> 2/, out)
+    # Both role inboxes should have a message.
+    refute_empty Dir.glob(File.join(@env["COORD_DIR"], "inbox", "backend-developer", "*.md"))
+    refute_empty Dir.glob(File.join(@env["COORD_DIR"], "inbox", "reviewer", "*.md"))
+  end
+
+  # The event log records claims and completions so any agent can see what
+  # happened without reading individual inboxes.
+  def test_log_records_claims_and_completions
+    id = add("logged task")
+    capture_io { Coord::CLI.new(["claim", id], env: @env).run }
+    capture_io { Coord::CLI.new(["done", id], env: @env).run }
+    out, = capture_io { Coord::CLI.new(["log"], env: @env).run }
+    assert_match(/claim\t.*#{id}/, out)
+    assert_match(/done\t.*#{id}/, out)
+  end
+
+  def test_log_with_no_events_says_so
+    out, = capture_io { Coord::CLI.new(["log"], env: @env).run }
+    assert_match(/no events yet/, out)
+  end
+
+  # `coord log N` must reject a non-numeric N instead of silently printing
+  # nothing (the old `&.to_i` turned garbage into 0).
+  def test_log_rejects_non_numeric_count
+    assert_raises(SystemExit) do
+      capture_io { Coord::CLI.new(["log", "abc"], env: @env).run }
+    end
+  end
+
+  # A hook at coordination/hooks/<role>.sh runs when a message is delivered
+  # to that role. The hook is a plain shell script — coord does not know or
+  # care what harness the agent runs in.
+  def test_msg_fires_hook_when_installed
+    hook_dir = File.join(@env["COORD_DIR"], "hooks")
+    FileUtils.mkdir_p(hook_dir)
+    hook = File.join(hook_dir, "backend-developer.sh")
+    File.write(hook, <<~SH)
+      #!/bin/sh
+      echo "hook fired: $COORD_AGENT from $COORD_FROM" > "#{hook}.out"
+    SH
+    FileUtils.chmod("+x", hook)
+
+    capture_io { Coord::CLI.new(["msg", "--from", "architect", "backend-developer", "hello"], env: @env).run }
+
+    assert wait_for_file("#{hook}.out"), "hook did not run"
+    assert_match(/hook fired: backend-developer from architect/, File.read("#{hook}.out"))
+  end
+
+  # A slow hook (one that starts a whole agent run) must not block the sender.
+  def test_msg_does_not_wait_for_hook
+    hook = install_hook("backend-developer", "sleep 5\n")
+    started = Time.now
+    capture_io { Coord::CLI.new(["msg", "--from", "architect", "backend-developer", "hi"], env: @env).run }
+    assert_operator Time.now - started, :<, 2
+    File.delete(hook)
+  end
+
+  # Hook output goes to coordination/hooks/<role>.log, not /dev/null, so a
+  # broken hook is debuggable.
+  def test_hook_output_goes_to_role_log
+    install_hook("backend-developer", "echo from-hook\n")
+    capture_io { Coord::CLI.new(["msg", "--from", "architect", "backend-developer", "hi"], env: @env).run }
+    log = File.join(@env["COORD_DIR"], "hooks", "backend-developer.log")
+    assert wait_for_file(log) { File.read(log).include?("from-hook") }, "hook log not written"
+  end
+
+  def test_broadcast_skips_the_sender
+    add("backend task")
+    Coord::CLI.new(["add", "--agent", "architect", "--scope", "docs/**", "--title", "plan"], env: @env).run
+    out, = capture_io { Coord::CLI.new(["broadcast", "--from", "architect", "heads up"], env: @env).run }
+    assert_match(/broadcast -> 1 agent\b/, out)
+    assert_empty Dir.glob(File.join(@env["COORD_DIR"], "inbox", "architect", "*.md"))
+  end
+
+  # Idle roles (no pending task) still hear a broadcast when the project
+  # manifest declares them.
+  def test_broadcast_reaches_roles_from_the_manifest
+    manifest = { agents: [{ harness: "claude", role: "tester" }] }
+    File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(manifest))
+    capture_io { Coord::CLI.new(["broadcast", "--from", "architect", "heads up"], env: @env).run }
+    refute_empty Dir.glob(File.join(@env["COORD_DIR"], "inbox", "tester", "*.md"))
+  end
+
+  def test_log_records_messages_on_one_line
+    text = "line one\nline\ttwo"
+    capture_io { Coord::CLI.new(["msg", "--from", "architect", "reviewer", text], env: @env).run }
+    lines = File.readlines(File.join(@env["COORD_DIR"], "events.log"))
+    assert_equal 1, lines.size
+    assert_equal 4, lines.first.chomp.split("\t").size
+    assert_match(/msg\tarchitect\tto reviewer: line one line two/, lines.first)
+  end
+
+  def install_hook(role, body)
+    hook = File.join(@env["COORD_DIR"], "hooks", "#{role}.sh")
+    File.write(hook, "#!/bin/sh\n#{body}")
+    FileUtils.chmod("+x", hook)
+    hook
+  end
+
+  def wait_for_file(path, timeout: 5)
+    deadline = Time.now + timeout
+    sleep 0.05 until (File.exist?(path) && (!block_given? || yield)) || Time.now > deadline
+    File.exist?(path) && (!block_given? || yield)
+  end
+
+  # No hook installed means coord is silent — the inbox file is still written,
+  # the agent picks it up on its next `coord inbox`.
+  def test_msg_silent_when_no_hook
+    # No hook directory or hook script — should not error.
+    out, = capture_io do
+      Coord::CLI.new(["msg", "--from", "architect", "backend-developer", "hello"], env: @env).run
+    end
+    assert_match(/msg ->/, out)
+    refute_match(/hook/, out)
+  end
+
+  # `coord hooks` lists installed hooks and their status.
+  def test_hooks_lists_installed_hooks
+    hook_dir = File.join(@env["COORD_DIR"], "hooks")
+    FileUtils.mkdir_p(hook_dir)
+    hook = File.join(hook_dir, "backend-developer.sh")
+    File.write(hook, "#!/bin/sh\necho hi\n")
+    FileUtils.chmod("+x", hook)
+
+    out, = capture_io { Coord::CLI.new(["hooks"], env: @env).run }
+    assert_match(/backend-developer\.sh/, out)
+    assert_match(/active/, out)
+  end
+
+  def test_hooks_filters_by_role
+    install_hook("backend-developer", "true\n")
+    install_hook("reviewer", "true\n")
+    out, = capture_io { Coord::CLI.new(["hooks", "reviewer"], env: @env).run }
+    assert_match(/reviewer\.sh/, out)
+    refute_match(/backend-developer\.sh/, out)
+  end
+
+  def test_hooks_with_no_hooks_says_so
+    out, = capture_io { Coord::CLI.new(["hooks"], env: @env).run }
+    assert_match(/no hooks/, out)
+  end
 end
 
 class TaskrcSafetyTest < Minitest::Test

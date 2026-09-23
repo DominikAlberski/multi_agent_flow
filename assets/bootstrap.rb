@@ -9,15 +9,30 @@
 #
 # Idempotent: every file change is marker-guarded or content-compared, so
 # re-running never duplicates blocks and never reinstalls what is present.
+# Ruby:     3.0+ (same as coord).
 require "fileutils"
 require "optparse"
 
+abort "bootstrap: Ruby 3.0+ required (current: #{RUBY_VERSION}). Install with " \
+      "mise/brew: `brew install mise && mise install ruby`." if RUBY_VERSION.split(".").first.to_i < 3
+
 module Bootstrap
   MARKER = ">>> multi-agent-flow >>>"
+  END_MARKER = "<<< multi-agent-flow <<<"
   COORD_SIGNATURE = "coord - shared coordination layer"
   SETUP_AGENT_SIGNATURE = "setup_agent - create a worktree for one agent and launch its harness session."
+  DISPATCHER_SIGNATURE = "dispatcher - outside-of-agent message board monitor and agent spawner."
   VAULT_SIGNATURE = "vault - shared knowledge base watcher (graphify + Obsidian + MCP)."
-  SUBDIRS = %w[inbox locks exports].freeze
+  SUBDIRS = %w[inbox locks exports hooks].freeze
+
+  PLAN_STEPS = %i[plan_coordination_dirs plan_gitkeeps plan_coord plan_setup_agent plan_dispatcher
+                  plan_vault plan_taskrc plan_contracts plan_gitignore].freeze
+
+  # Maps each writing action kind to the Installer method that performs it.
+  # Every writer takes (path, source). :skip and :refuse write nothing.
+  WRITERS = { mkdir: :make_dir, touch: :touch_file, create: :write_script, update: :write_script,
+              create_taskrc: :write_taskrc, upgrade_taskrc: :upgrade_taskrc,
+              append: :append_marked, replace: :replace_marked }.freeze
 
   REQUIRED_DEPS = {
     "task" => {
@@ -145,16 +160,7 @@ module Bootstrap
     end
 
     def plan
-      [
-        plan_coordination_dirs,
-        plan_gitkeeps,
-        plan_coord,
-        plan_setup_agent,
-        plan_vault,
-        plan_taskrc,
-        plan_contracts,
-        plan_gitignore
-      ].flatten
+      PLAN_STEPS.flat_map { |step| send(step) }
     end
 
     def plan_coordination_dirs
@@ -177,6 +183,10 @@ module Bootstrap
 
     def plan_setup_agent
       plan_script("setup_agent", SETUP_AGENT_SIGNATURE)
+    end
+
+    def plan_dispatcher
+      plan_script("dispatcher", DISPATCHER_SIGNATURE)
     end
 
     def plan_vault
@@ -263,12 +273,21 @@ module Bootstrap
     def plan_contracts
       files = [File.join(@target, "AGENTS.md")]
       files << File.join(@target, "CLAUDE.md") if File.exist?(File.join(@target, "CLAUDE.md"))
-      files.map { |f| action(marked?(f) ? :skip : :append, f, "#{f} (agent contract)", :contract) }
+      files.map { |f| action(block_status(f, :contract), f, "#{f} (agent contract)", :contract) }
     end
 
     def plan_gitignore
       path = File.join(@target, ".gitignore")
-      action(marked?(path) ? :skip : :append, path, "#{path} (ignore rules)", :gitignore)
+      action(block_status(path, :gitignore), path, "#{path} (ignore rules)", :gitignore)
+    end
+
+    # A marked block is owned by this tool. When the shipped block changed
+    # (new ignore rules, new commands in the contract), replace the old block
+    # in place so existing installs pick it up. Text outside the block stays.
+    def block_status(path, source)
+      return :append unless marked?(path)
+
+      MarkedBlock.new(File.read(path)).current?(append_content(source)) ? :skip : :replace
     end
 
     def action(kind, path, label = path, source = nil)
@@ -276,18 +295,22 @@ module Bootstrap
     end
 
     def apply(actions)
-      actions.each do |a|
-        case a[:kind]
-        when :skip   then say "skip   #{a[:label]}"
-        when :refuse then say "REFUSE #{a[:label]}"
-        when :mkdir  then FileUtils.mkdir_p(a[:path]) && say("done   #{a[:label]}")
-        when :touch  then FileUtils.touch(a[:path]) && say("done   #{a[:label]}")
-        when :create, :update then write_script(a[:path], a[:source]) && say("done   #{a[:label]}")
-        when :create_taskrc then write_taskrc(a[:path]) && say("done   #{a[:label]}")
-        when :upgrade_taskrc then upgrade_taskrc(a[:path]) && say("done   #{a[:label]}")
-        when :append then append_marked(a[:path], a[:source]) && say("done   #{a[:label]}")
-        end
-      end
+      actions.each { |a| apply_action(a) }
+    end
+
+    def apply_action(a)
+      writer = WRITERS[a[:kind]]
+      return say(format_action(a)) unless writer
+
+      send(writer, a[:path], a[:source]) && say("done   #{a[:label]}")
+    end
+
+    def make_dir(path, _source)
+      FileUtils.mkdir_p(path)
+    end
+
+    def touch_file(path, _source)
+      FileUtils.touch(path)
     end
 
     # Auto-start the vault watcher once the script is in place, so shared
@@ -295,6 +318,7 @@ module Bootstrap
     # case (graphify already installed). Skipped when graphify is missing;
     # the printed next steps cover installing it and running `./vault` later.
     def auto_start_vault(actions)
+      return @vault_note = "skipped (VAULT_SKIP is set)" if ENV["VAULT_SKIP"]
       return @vault_note = "run `./vault` after bootstrap (graphify not needed at install time, only to run it)" \
         unless vault_script_installed?(actions)
       return @vault_note = "run `./vault` once graphify is installed" unless which("graphify")
@@ -328,7 +352,7 @@ module Bootstrap
       true
     end
 
-    def write_taskrc(path)
+    def write_taskrc(path, _source = nil)
       FileUtils.mkdir_p(File.dirname(path))
       FileUtils.mkdir_p(taskdata_path)
       File.write(path, "data.location=#{taskdata_path}\n\n#{append_content(:taskrc)}")
@@ -338,7 +362,7 @@ module Bootstrap
     # Add the missing data.location to a taskrc this tool already owns,
     # without touching the rest of the file. An old marked taskrc without it
     # would otherwise fall back to the user's global ~/.task.
-    def upgrade_taskrc(path)
+    def upgrade_taskrc(path, _source = nil)
       FileUtils.mkdir_p(taskdata_path)
       File.open(path, "a") do |file|
         file.puts unless file.size.zero?
@@ -350,6 +374,11 @@ module Bootstrap
     def append_marked(path, source)
       FileUtils.touch(path)
       File.open(path, "a") { |file| file.puts; file.write(append_content(source)); file.puts }
+      true
+    end
+
+    def replace_marked(path, source)
+      File.write(path, MarkedBlock.new(File.read(path)).replace(append_content(source)))
       true
     end
 
@@ -375,6 +404,39 @@ module Bootstrap
     def print_next_steps
       puts
       puts format(NEXT_STEPS, project: @target, roles: @roles, vault_note: @vault_note)
+    end
+  end
+
+  # MarkedBlock finds the tool-owned block in a file: from the first line that
+  # contains MARKER to the next line that contains END_MARKER, inclusive. The
+  # comment syntax around the markers differs per file (`#` vs `<!-- -->`), so
+  # only the marker text is matched.
+  class MarkedBlock
+    def initialize(text)
+      @lines = text.lines
+    end
+
+    def current?(block)
+      range && @lines[range].join.strip == block.strip
+    end
+
+    def replace(block)
+      return @lines.join unless range
+
+      block = "#{block.chomp}\n"
+      (@lines[0...range.begin] + [block] + @lines[(range.end + 1)..]).join
+    end
+
+    private
+
+    def range
+      @range ||= find_range
+    end
+
+    def find_range
+      first = @lines.index { |line| line.include?(MARKER) }
+      last = first && @lines[first..].index { |line| line.include?(END_MARKER) }
+      last && (first..(first + last))
     end
   end
 end

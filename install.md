@@ -147,16 +147,19 @@ Report the generated files. Then give the user these instructions.
 >     ./setup_agent opencode frontend-developer_1
 >     ./setup_agent codex reviewer
 >
+> To run an agent unattended, add `--dispatch`. The agent then starts only
+> when there is work, and it exits when the work is done:
+>
+>     ./setup_agent hermes tester --dispatch
+>
 > This creates (or reuses) a worktree for that agent, sets `COORD_AGENT` and
 > `COORD_WORKER`, and launches the harness there with its role loaded. To run
 > several instances of one role, add a worker suffix: `backend-developer_1`,
 > `backend-developer_2`. Claims are atomic, so they will not collide.
 >
-> Hermes has no `setup_agent` launcher yet. Open its session by hand: set
-> `COORD_AGENT`/`COORD_WORKER`, then paste "Run `./coord inbox`. Then run
-> `./coord next --wait` to get a task as soon as one is available, claim it
-> with `./coord claim <id>`, do the work, and finish with `./coord done
-> <id>`. Repeat."
+> Hermes loads the role as a skill (`--skills <project>-<role>`); the skill
+> file at `~/.hermes/skills/<project>-<role>/SKILL.md` must have been generated
+> by `flow.rb` first.
 >
 > Talk to the project manager session, not the architect. For example: "Build a
 > task tracker app." The project manager sends the goal to the architect. The
@@ -186,4 +189,4 @@ Report the generated files. Then give the user these instructions.
   passing an initial prompt that tells the session to read and follow it.
 - The user can add or remove agents later. Run the generator again.
 - Codex and Hermes have no subagent files. Codex gets custom prompts. Hermes gets
-  skills. Both work the same way in this flow.
+  skills, loaded via `--skills <project>-<role>`. Both work the same way in this flow.

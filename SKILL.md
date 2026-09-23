@@ -26,7 +26,9 @@ Three pillars:
 
 ## Prerequisites
 
-- Ruby 3.x (the `coord` CLI and the installer are Ruby scripts).
+- Ruby 3.0+ (the `coord` CLI and the installer are Ruby scripts using endless
+  method definitions; they will not parse under Ruby 2.x).
+  macOS: `brew install mise && mise install ruby`.
 - `task` (Taskwarrior) on PATH. macOS: `brew install task`.
 - Optional: `graphify` for the knowledge base.
 - Git (worktrees recommended; one branch/worktree per agent).
@@ -80,6 +82,7 @@ cd /path/to/project
 ./setup_agent HARNESS ROLE[_WORKER] [model:PROVIDER/MODEL]
 ./setup_agent claude architect
 ./setup_agent opencode backend-developer_1 model:openrouter/deepseek-v3
+./setup_agent hermes tester --dispatch   # unattended: runs ./dispatcher in the worktree
 ```
 
 One command: creates or reuses the agent's worktree, exports
@@ -87,10 +90,10 @@ One command: creates or reuses the agent's worktree, exports
 there. For `opencode`/`codex` this loads the role file automatically via
 `--agent`/`.codex/prompts/<role>.md`; for `claude`, which does not auto-load
 `.claude/agents/<role>.md` into an interactive session, it passes an initial
-prompt telling the session to read and follow that file. `HARNESS:ROLE` must
+prompt telling the session to read and follow that file; for `hermes`, it
+loads the role as a skill via `--skills <project>-<role>`. `HARNESS:ROLE` must
 already be in `.agent-flow.json` (`scripts/flow.rb --agent HARNESS:ROLE`
-adds one); `WORKER` defaults to `1`. No launcher yet for `hermes` — open its
-session by hand (see Notes below).
+adds one); `WORKER` defaults to `1`.
 
 ## How agents use it
 
@@ -132,21 +135,27 @@ Locks are `mkdir`-based, so they work on macOS and Linux without `flock`.
 
 ```sh
 ./vault           # start (no-op if already running); bootstrap.rb runs this for you
+./vault export    # regenerate the Obsidian vault once
 ./vault status
 ./vault stop
+./vault mcp       # exec the stdio MCP server (for an MCP client config)
 ```
 
-It wraps `graphify . --obsidian --obsidian-dir vault --watch --mcp`, run as a
-detached background process, with its pid in `coordination/vault.pid` and its
-output in `coordination/vault.log`. If `graphify` was not installed yet, run
-`./vault` by hand once it is.
+It runs the current graphify subcommands — `graphify update .` (incremental,
+no LLM) and `graphify export obsidian --dir obsidian` — as a detached polling
+watcher, with its pid in `coordination/vault.pid` and its output in
+`coordination/vault.log`. graphify 0.9 removed the old
+`--obsidian`/`--obsidian-dir`/`--watch`/`--mcp` flags; MCP is now the separate
+`graphify-mcp` stdio binary that a client spawns, not a background flag. If
+`graphify` was not installed yet, run `./vault` by hand once it is.
 
 - Agents query the graph over MCP or `graphify query "..."` instead of grepping.
-- `vault/` is the human-facing Obsidian base (graph notes, the board). It is
+- `obsidian/` is the human-facing Obsidian base (graph notes, canvas). It is
   regenerated and gitignored — durable decisions belong in `docs/decisions/`,
   not here.
-- `./coord board` regenerates `coordination/exports/board.md`; open the vault to see
-  the task board and the code graph together.
+- `./coord board` regenerates `coordination/exports/board.md`. It is not part
+  of the graphify export and is outside `obsidian/`. Open `coordination/exports/`
+  as a second vault, or open the project root as the vault to see both.
 
 ## Operating rules (also written into the project contract)
 
@@ -160,7 +169,7 @@ output in `coordination/vault.log`. If `graphify` was not installed yet, run
    `source coord-env.sh` so `COORD_DIR`/`TASKRC` point at the main project
    and every worktree shares one coordination/ dir and board.
 3. Acquire the `ollama` lock before any local generation.
-4. Record decisions in `docs/decisions/`; append, never rewrite. `vault/` is
+4. Record decisions in `docs/decisions/`; append, never rewrite. `obsidian/` is
    regenerated graphify output, not a durable store.
 5. Report via `coord annotate`; coordinate via `coord msg`.
 6. If no task is available, use `coord next --wait` instead of polling by hand.
@@ -176,7 +185,5 @@ output in `coordination/vault.log`. If `graphify` was not installed yet, run
   `coordination/taskrc` mounted from the host — they share nothing across a
   container boundary on their own.
 - Multi-machine sync (Taskserver) is optional and out of scope here.
-- Hermes has no `setup_agent` launcher yet: open its session by hand, set
-  `COORD_AGENT`/`COORD_WORKER`, and paste the work loop from "How agents use it".
 - If a GUI is wanted later, point Obsidian (Kanban + Dataview) or `taskwarrior-tui`
   at the same data; no agent changes required.

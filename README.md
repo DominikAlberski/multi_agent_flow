@@ -15,7 +15,9 @@ The whole layer is **CLI + files**, so every harness can use it identically and
 nothing depends on a GUI or a vendor.
 
 New here? Read **[GETTING_STARTED.md](GETTING_STARTED.md)** — a step-by-step
-walkthrough for a first-time user.
+walkthrough for a first-time user. For the fastest path from a fresh clone to a
+running team with several harnesses and dispatched agents, read
+**[USER_MANUAL.md](USER_MANUAL.md)**.
 
 ## Fast path (agent-driven install)
 
@@ -39,6 +41,7 @@ multi_agent_flow/
   SKILL.md                    # portable skill: how an agent sets this up
   README.md                   # this file
   GETTING_STARTED.md          # first-time walkthrough
+  USER_MANUAL.md              # clone-to-running-team guide (3 harnesses, dispatch)
   scripts/
     flow.rb                   # generates harness-specific agent files
     check.rb                  # repo consistency checks
@@ -51,6 +54,7 @@ multi_agent_flow/
   assets/
     coord                     # the coordination CLI (Ruby)
     setup_agent               # worktree + harness launch, one command (Ruby)
+    dispatcher                # unattended agent: poll board, spin up, exit (Ruby)
     vault                     # graphify + Obsidian + MCP watcher control (Ruby)
     bootstrap.rb              # idempotent installer (Ruby)
     taskrc.append             # Taskwarrior UDA block
@@ -60,6 +64,7 @@ multi_agent_flow/
   test/
     coord_test.rb             # behavioral tests for the coord CLI
     installer_test.rb         # tests for bootstrap.rb, flow.rb, setup_agent
+    dispatcher_test.rb        # tests for the dispatcher
 ```
 
 ## Install into a project
@@ -68,8 +73,8 @@ multi_agent_flow/
 ./assets/bootstrap.rb /path/to/project --roles project-manager,architect,backend-developer,frontend-developer,reviewer,tester
 ```
 
-Prerequisites: Ruby 3.x and `task` (Taskwarrior). Optional: `graphify`.
-macOS: `brew install task`. No `jq` needed.
+Prerequisites: Ruby 3.0+ and `task` (Taskwarrior). Optional: `graphify`.
+macOS: `brew install mise && mise install ruby` for Ruby 3.0+; `brew install task` for Taskwarrior. No `jq` needed.
 
 Flags: `--check` (preview), `--install-deps` (install missing required tools),
 `--force` (overwrite a foreign `coord` or `setup_agent`).
@@ -102,11 +107,14 @@ You can also just hand `SKILL.md` plus `assets/` to any agent as context.
 ./coord unclaim <id>                # give it back without finishing it
 ./coord annotate <id> "started"
 ./coord msg --from backend-developer reviewer "review when free"
+./coord broadcast --from architect "scope change: all tests move to spec/"  # every known role except the sender
 ./coord inbox
+./coord log 20                    # last 20 coordination events
 ./coord with-lock ollama -- opencode run --agent backend-developer "..."
 ./coord worktree backend-developer  # git worktree + branch; then `source coord-env.sh` in it
 ./coord status
 ./coord board        # coordination/exports/board.md (Obsidian kanban)
+./setup_agent hermes tester --dispatch  # worktree + dispatcher: agent runs only when there is work
 ```
 
 A task left claimed with no activity for `COORD_LEASE_TTL` seconds (default 4
@@ -119,10 +127,18 @@ without `--force`. `coord unclaim` releases one immediately.
 `COORD_AGENT`/`COORD_WORKER`, role bootstrap) into one command:
 
 ```sh
-./setup_agent HARNESS ROLE[_WORKER] [model:PROVIDER/MODEL]
+./setup_agent HARNESS ROLE[_WORKER] [model:MODEL] [--model MODEL] [--dispatch [FLAGS...]]
 ./setup_agent claude backend-developer_1
-./setup_agent opencode reviewer_1 model:openrouter/deepseek-v3
+./setup_agent opencode reviewer_1 --model openrouter/deepseek-v3
+./setup_agent hermes tester --dispatch --model openrouter/deepseek-v3
 ```
+
+With `--dispatch`, `setup_agent` runs `./dispatcher` in the worktree instead
+of an interactive session (see "Run a dispatcher" below). Other flags after
+the positional arguments go to the dispatcher, for example
+`--cache-window 1500` or `--interval 30`. With `--dispatch`, `WORKER`
+defaults to `bot`, so a dispatched instance and an interactive instance of
+one role get separate worktrees.
 
 It creates or reuses the worktree, exports `COORD_DIR`/`TASKRC`/`COORD_AGENT`/
 `COORD_WORKER`, then execs the harness in that worktree. All worktrees live in
@@ -134,9 +150,145 @@ one sibling folder, `<project>.worktrees/<role>-<worker>`:
   interactive session (those files are subagent definitions, used via its
   Task tool). `setup_agent` instead passes an initial prompt telling the
   session to read and follow its role file.
+- `hermes`: Hermes loads roles as skills (`--skills <project>-<role>`).
+  `setup_agent hermes ROLE` launches `hermes chat --skills <project>-<role>`
+  with an initial work-loop prompt.
 
 `HARNESS:ROLE` must already exist in `.agent-flow.json` (add one with
-`scripts/flow.rb --agent HARNESS:ROLE`). `WORKER` defaults to `1` if omitted.
+`scripts/flow.rb --agent HARNESS:ROLE`). `WORKER` defaults to `1` if omitted
+(`bot` with `--dispatch`).
+
+## Run a dispatcher (unattended agent)
+
+`./dispatcher <role>` polls the role's inbox and the task board every 60
+seconds. When there is work, it starts the agent in one-shot mode. The agent
+exits when the work is done. Between runs, no agent is alive, so no tokens
+are spent.
+
+Start a dispatcher with `setup_agent --dispatch`. It creates the worktree,
+connects it to the task board, and runs `./dispatcher` there:
+
+```sh
+./setup_agent hermes tester --dispatch
+./setup_agent claude reviewer --dispatch --model sonnet --cache-window 3300
+```
+
+You can also run `./dispatcher` directly inside a prepared worktree:
+
+```sh
+# Built-in adapters: hermes (default), claude, codex, opencode
+./dispatcher tester
+./dispatcher reviewer --harness claude --model sonnet
+./dispatcher backend-developer --harness opencode --model openrouter/qwen3-coder
+./dispatcher reviewer --harness codex
+
+# Any other harness via a --command template (no session resume):
+./dispatcher reviewer --command 'my-agent --role %{role} %{prompt}'
+
+# One poll cycle, then exit (for testing or cron)
+./dispatcher reviewer --once
+```
+
+Each built-in adapter loads the role that `flow.rb` generated for it:
+
+| Harness | Role source | Resume flag |
+|---|---|---|
+| hermes | skill `<project>-<role>` | `--resume` |
+| claude | `.claude/agents/<role>.md` via `--agent` | `--resume` |
+| codex | `.codex/prompts/<role>.md`, sent at the start of a fresh session | `exec resume` |
+| opencode | `.opencode/agents/<role>.md` via `--agent` | `--session` |
+
+How the dispatcher handles work:
+
+- **Messages.** The dispatcher owns the role's inbox. It moves each unread
+  message to `inbox/<role>/processing/` and sends all of them to one agent
+  run. If the run succeeds, the messages move to `read/`. If the run fails,
+  the messages go back to the inbox. After 3 failed runs, a message moves to
+  `failed/`. The count is kept in the file name (`.retry2.md`), so it survives
+  a dispatcher restart. Do not run `coord inbox` for a role that a dispatcher serves.
+- **Tasks.** If `coord next <role>` lists unclaimed tasks, the dispatcher
+  starts one run. If the same tasks are still unclaimed after the run, the
+  dispatcher waits before the next run. The wait doubles each time, up to 1
+  hour. A new or changed task set starts a run at once.
+- **Timeout.** After `--timeout` seconds, the dispatcher kills the agent's
+  whole process group.
+- **Environment.** The agent gets `COORD_DIR`, `COORD_AGENT`,
+  `COORD_WORKER` (default `<role>-dispatcher`), and `TASKRC`. Its stdin is
+  closed.
+
+### Sessions and the prompt cache
+
+LLM providers cache the start of a conversation for a limited time after the
+last request. Claude Code uses a 1-hour cache. A resume inside that time is
+cheap, because the provider reads the old context from the cache. A resume
+after that time sends the whole old context again at full price.
+
+The dispatcher resumes a session only inside the cache window:
+
+1. After each successful run, the dispatcher saves the session ID to
+   `coordination/sessions/<worker>.session`. The file's time is the time of
+   the last run.
+2. Every run ends with a short handoff note (at most 300 words) in
+   `coordination/sessions/<worker>.handoff.md`. The agent writes the note while
+   its cache is still warm. If the agent writes no note, the dispatcher saves
+   the agent's final reply as the note.
+3. If the last run ended less than `--cache-window` seconds ago (default: 3300,
+   55 minutes), the dispatcher resumes the session.
+4. If the last run is older, the dispatcher starts a fresh session. The fresh
+   session gets the handoff note at the start of its prompt, not the old
+   context.
+
+Set `--cache-window` to your provider's cache time minus a margin. Use
+`--cache-window 0` to never resume. The rule uses time only, because the
+harnesses do not report the context size the same way. A small session also
+starts fresh after the window. That costs little, because the handoff note is
+short.
+
+If the harness reports an unknown session, the dispatcher starts a fresh
+session with the handoff note. Other failures keep the saved session. Runs
+with `--command` never resume, so they get the handoff note every time. Two
+dispatchers for one role need different `COORD_WORKER` values, so they keep
+separate sessions and notes.
+
+> **Warning:** every built-in adapter skips permission prompts: hermes
+> `--yolo`, claude `--permission-mode bypassPermissions`, codex
+> `--dangerously-bypass-approvals-and-sandbox`. The agent runs every tool call
+> without approval. Run each dispatcher only in its own worktree or a sandbox
+> that you trust the agent with.
+
+Flags: `--harness` (hermes, claude, codex, opencode; default: hermes),
+`--command` (template with `%{prompt}`, `%{role}`, `%{skill}`, `%{model}`,
+each shell-escaped), `--model` (in the harness CLI's own format), `--skill`
+(hermes; default: `<project>-<role>` if `flow.rb` generated that skill),
+`--no-skill`, `--interval` (default: 60s), `--max-turns` (hermes; default: 50),
+`--timeout` (default: 300s), `--cache-window` (default: 3300s),
+`--no-poll-tasks`, `--once`, `--verbose`.
+
+## Message hooks (harness-agnostic)
+
+`coord msg` and `coord broadcast` fire a per-role hook at
+`coordination/hooks/<role>.sh` when a message is delivered. The hook is a
+plain shell script. `coord` does not know which harness the agent runs in.
+The hook can poke a running tmux session, start a one-shot run, send a
+notification, or do nothing. If there is no hook, `coord` only writes the
+inbox file. The agent reads it on its next `coord inbox`.
+
+```sh
+# coordination/hooks/backend-developer.sh
+#!/bin/sh
+# Poke a running tmux session to check its inbox
+tmux send-keys -t backend './coord inbox' Enter
+```
+
+The hook gets these values:
+
+- `COORD_AGENT`: the receiving role.
+- `COORD_FROM`: the sender.
+- `COORD_MSG_FILE` and `$1`: the message file path.
+
+The hook runs in the background, so a slow hook does not block the sender.
+Its output goes to `coordination/hooks/<role>.log`. `coord hooks [ROLE]`
+lists installed hooks and their status.
 
 ## Consistency check
 

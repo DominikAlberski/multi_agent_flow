@@ -6,6 +6,8 @@
 # Storage:  coordination/ (Taskwarrior board, inbox, locks, exports)
 # Locking:  mkdir-based (portable on macOS and Linux; no flock required)
 # Deps:     task (Taskwarrior). Ruby parses the JSON itself; no jq needed.
+# Ruby:     3.0+ (uses endless method defs: `def x = expr`). This file will
+#           not parse under Ruby 2.x; ensure `ruby` on PATH is 3.0+.
 #
 # Agents should use this wrapper, not raw `task`, so the protocol stays stable.
 require "json"
@@ -48,7 +50,10 @@ module Coord
       coord done ID
       coord annotate ID TEXT...
       coord msg [--from A] TO TEXT...
+      coord broadcast [--from A] TEXT...         send to every known role except the sender
       coord inbox [AGENT] [--peek] [--all] [--wait [--interval S] [--timeout S]]
+      coord hooks [ROLE]                          show hooks for a role or all
+      coord log [N]                               show last N coordination events
       coord lock NAME [--ttl SECONDS] [--agent A]
       coord unlock NAME
       coord with-lock NAME [--ttl SECONDS] -- CMD...
@@ -64,8 +69,9 @@ module Coord
       "conflicts" => :cmd_conflicts,
       "claim" => :cmd_claim, "unclaim" => :cmd_unclaim,
       "done" => :cmd_done, "annotate" => :cmd_annotate,
-    "msg" => :cmd_msg, "inbox" => :cmd_inbox, "lock" => :cmd_lock,
-    "unlock" => :cmd_unlock, "with-lock" => :cmd_with_lock,
+    "msg" => :cmd_msg, "inbox" => :cmd_inbox, "broadcast" => :cmd_broadcast,
+    "log" => :cmd_log, "hooks" => :cmd_hooks,
+    "lock" => :cmd_lock, "unlock" => :cmd_unlock, "with-lock" => :cmd_with_lock,
     "worktree" => :cmd_worktree,
     "status" => :cmd_status, "board" => :cmd_board, "export" => :cmd_export,
     "help" => :cmd_help
@@ -83,6 +89,8 @@ module Coord
     def locks = @locks ||= Locks.new(paths)
     def messages = @messages ||= Messages.new(paths, @agent)
     def board = @board ||= Board.new(tasks, paths)
+    def event_log = @event_log ||= EventLog.new(paths)
+    def hooks = @hooks ||= Hooks.new(paths)
   end
 
   # Paths resolves every coordination path from one root.
@@ -94,6 +102,8 @@ module Coord
     end
 
     def inbox_dir(agent) = File.join(coord_dir, "inbox", agent.to_s)
+    def hooks_dir = File.join(coord_dir, "hooks")
+    def hook_path(role) = File.join(hooks_dir, "#{role}.sh")
     def locks_dir = File.join(coord_dir, "locks")
     def exports_dir = File.join(coord_dir, "exports")
     def lock_dir(name) = File.join(locks_dir, "#{name}.d")
@@ -101,6 +111,9 @@ module Coord
     def export_path = File.join(exports_dir, "tasks.json")
     def board_path = File.join(exports_dir, "board.md")
     def taskdata_dir = File.join(coord_dir, "taskdata")
+    def log_path = File.join(coord_dir, "events.log")
+    def hook_log(role) = File.join(hooks_dir, "#{role}.log")
+    def manifest_path = File.join(File.dirname(File.expand_path(coord_dir)), ".agent-flow.json")
   end
 
   # Setup creates the coordination directories and the Taskwarrior UDAs.
@@ -108,7 +121,7 @@ module Coord
   # user's global ~/.task, so two projects never share one board. An explicit
   # TASKRC env var still overrides this (see CLI#initialize).
   class Setup
-    SUBDIRS = %w[inbox locks exports].freeze
+    SUBDIRS = %w[inbox locks exports hooks].freeze
 
     def initialize(paths, taskrc)
       @paths = paths
@@ -572,11 +585,10 @@ module Coord
     end
 
     def send_message(to, from, text)
-      dir = @paths.inbox_dir(to)
-      FileUtils.mkdir_p(dir)
-      path = File.join(dir, "#{stamp}-#{Process.pid}.md")
+      path = new_message_path(to)
       File.write(path, body(to, from, text))
       puts "msg -> #{path}"
+      path
     end
 
     def inbox(agent, peek: false, all: false)
@@ -593,7 +605,21 @@ module Coord
       Dir.glob(File.join(dir, all ? "**" : "", "*.md")).sort
     end
 
+    # Broadcast sends one message to each role in ROLES. Returns the list of
+    # [role, path] pairs so the caller can fire hooks for each.
+    def broadcast(from, text, roles)
+      results = roles.map { |role| [role, send_message(role, from, text)] }
+      puts "broadcast -> #{roles.size} agent#{"s" if roles.size != 1}"
+      results
+    end
+
     private
+
+    def new_message_path(to)
+      dir = @paths.inbox_dir(to)
+      FileUtils.mkdir_p(dir)
+      File.join(dir, "#{stamp}-#{Process.pid}.md")
+    end
 
     def body(to, from, text)
       "# to: #{to}\n# from: #{from}\n# at: #{Time.now.utc.iso8601}\n\n#{text}\n"
@@ -614,6 +640,103 @@ module Coord
       dir = File.join(File.dirname(file), "read")
       FileUtils.mkdir_p(dir)
       FileUtils.mv(file, File.join(dir, File.basename(file)))
+    end
+  end
+
+  # Hooks runs a per-role shell script when a message is delivered. The hook
+  # is a plain user-authored script at coordination/hooks/<role>.sh — coord
+  # does not know or care what harness the agent runs in. It pokes a running
+  # session (tmux send-keys), starts a fresh one-shot, sends a notification,
+  # or does nothing at all. The hook receives COORD_AGENT, COORD_FROM, and
+  # COORD_MSG_FILE in its environment, and the message file path as $1. If the
+  # hook is absent, coord is silent — it just writes the inbox file, and the
+  # agent picks it up on its next `coord inbox`.
+  #
+  # The hook runs detached in its own process group, so a slow hook (one that
+  # starts a whole agent run) never blocks the sender. Its stdout and stderr
+  # go to coordination/hooks/<role>.log.
+  class Hooks
+    def initialize(paths)
+      @paths = paths
+    end
+
+    def run(role, from:, message_path:)
+      hook = @paths.hook_path(role)
+      return false unless File.executable?(hook)
+
+      Process.detach(spawn_hook(hook, role, from, message_path))
+      true
+    end
+
+    private
+
+    def spawn_hook(hook, role, from, message_path)
+      env = { "COORD_AGENT" => role.to_s, "COORD_FROM" => from.to_s, "COORD_MSG_FILE" => message_path }
+      log = @paths.hook_log(role)
+      Process.spawn(env, hook, message_path, out: [log, "a"], err: [:child, :out], pgroup: true)
+    end
+  end
+
+  # EventLog is a shared, append-only log in coordination/events.log. Every
+  # claim, completion, unclaim, message, and broadcast appends one line so any
+  # agent can see the history of coordination without reading individual inbox
+  # files. The log is not the source of truth (Taskwarrior is); it is a
+  # convenience projection for "what happened while I was working."
+  class EventLog
+    DETAIL_LIMIT = 80
+
+    def initialize(paths)
+      @paths = paths
+    end
+
+    def append(action, agent, detail)
+      FileUtils.mkdir_p(@paths.coord_dir)
+      line = [Time.now.utc.iso8601, action, agent, clean(detail)].join("\t")
+      File.open(@paths.log_path, "a") { |file| file.puts(line) }
+    end
+
+    def read(lines = nil)
+      path = @paths.log_path
+      return puts("no events yet") unless File.exist?(path)
+
+      all = File.readlines(path)
+      recent = lines ? all.last(lines) : all
+      recent.each { |line| print line }
+    end
+
+    private
+
+    # Tabs separate fields and newlines separate events, so neither may
+    # appear inside a field.
+    def clean(detail)
+      detail.to_s.gsub(/\s+/, " ").strip.slice(0, DETAIL_LIMIT)
+    end
+  end
+
+  # Roster lists every role coord knows about: roles that own a pending task,
+  # plus roles declared in the project's .agent-flow.json (written by
+  # scripts/flow.rb). The manifest sits next to coordination/, so a worktree
+  # that points COORD_DIR at the main checkout still finds it.
+  class Roster
+    def initialize(paths, tasks)
+      @paths = paths
+      @tasks = tasks
+    end
+
+    def roles
+      (task_roles + manifest_roles).uniq.sort
+    end
+
+    private
+
+    def task_roles
+      @tasks.pending.map { |task| task["agent"] }.compact
+    end
+
+    def manifest_roles
+      JSON.parse(File.read(@paths.manifest_path)).fetch("agents", []).map { |agent| agent["role"] }.compact
+    rescue Errno::ENOENT, JSON::ParserError
+      []
     end
   end
 
@@ -677,8 +800,14 @@ module Coord
       task["start"] ? "in-progress" : "backlog"
     end
 
+    # The `kanban-plugin: basic` frontmatter is what the Obsidian Kanban
+    # community plugin (mgmeyers/obsidian-kanban) checks for to render this
+    # file as a board instead of a plain markdown note. Without it, `##`
+    # headings and `- [ ]` items still read fine as an outline, but Obsidian
+    # never offers the drag-and-drop board view for the file.
     def board_body
-      SECTIONS.map { |title, pick| section(title, @tasks.pending.select(&pick)) }.join
+      frontmatter = "---\nkanban-plugin: basic\n---\n\n"
+      frontmatter + SECTIONS.map { |title, pick| section(title, @tasks.pending.select(&pick)) }.join
     end
 
     def section(title, list)
@@ -929,18 +1058,21 @@ module Coord
       require_agent!(@worker, "claim ID (needs COORD_WORKER or COORD_AGENT)")
       holder = locks.with_mutex("task-#{id}", agent: @worker) { tasks.claim(id, @worker, force: force) }
       notify_prior_holder(id, holder) if holder && holder.worker != @worker
+      event_log.append("claim", @worker, id)
       puts "claimed #{id} by #{@worker}"
     end
 
     def cmd_unclaim
       id = @args.require_arg("unclaim", "ID")
       tasks.unclaim(id)
+      event_log.append("unclaim", @worker, id)
       puts "unclaimed #{id}"
     end
 
     def cmd_done
       id = @args.require_arg("done", "ID")
       tasks.done(id)
+      event_log.append("done", @worker, id)
       puts "done #{id}"
     end
 
@@ -952,7 +1084,10 @@ module Coord
 
     def cmd_msg
       from = require_agent!(@args.value_of("--from") || @agent, "msg --from A, or export COORD_AGENT")
-      messages.send_message(@args.require_arg("msg", "TO"), from, @args.require_text("msg"))
+      to = @args.require_arg("msg", "TO")
+      text = @args.require_text("msg")
+      deliver(to, from, text)
+      event_log.append("msg", from, "to #{to}: #{text}")
     end
 
     def cmd_inbox
@@ -987,6 +1122,39 @@ module Coord
       locks.with_lock(name, ttl: @args.ttl, command: command, agent: @agent)
     end
 
+    # Broadcast sends a message to every known role except the sender (see
+    # Roster). The architect uses this for scope changes or blockers that
+    # affect everyone, instead of messaging each role individually.
+    def cmd_broadcast
+      from = require_agent!(@args.value_of("--from") || @agent, "broadcast --from A, or export COORD_AGENT")
+      text = @args.require_text("broadcast")
+      roles = Roster.new(paths, tasks).roles - [from]
+      abort "coord: no other roles to broadcast to" if roles.empty?
+
+      deliver_broadcast(from, text, roles)
+    end
+
+    # Log shows the shared coordination history: claims, completions, unclaims,
+    # and broadcasts, newest last. Optional N limits to the last N entries.
+    def cmd_log
+      raw = @args.shift
+      count = raw && Integer(raw, exception: false)
+      abort "coord: log N (positive integer)" if raw && (count.nil? || count < 1)
+      event_log.read(count)
+    end
+
+    # Hooks shows which role hooks are installed. With a ROLE argument, shows
+    # just that role's hook. The hooks themselves are plain shell scripts at
+    # coordination/hooks/<role>.sh, fired by `coord msg` and `coord broadcast`.
+    def cmd_hooks
+      return puts("no hooks directory (run ./coord init)") unless Dir.exist?(paths.hooks_dir)
+
+      found = hook_files(@args.shift)
+      return puts("no hooks installed") if found.empty?
+
+      found.each { |path| puts hook_line(path) }
+    end
+
     def cmd_worktree
       role = @args.require_arg("worktree", "ROLE")
       worker = @args.shift
@@ -1009,6 +1177,27 @@ module Coord
       return value unless value.nil? || value.empty? || value == "unknown"
 
       abort "coord: no role set. Pass one explicitly or `export COORD_AGENT=<role>` (usage: #{usage})"
+    end
+
+    def deliver(to, from, text)
+      path = messages.send_message(to, from, text)
+      hooks.run(to, from: from, message_path: path)
+    end
+
+    def deliver_broadcast(from, text, roles)
+      results = messages.broadcast(from, text, roles)
+      results.each { |role, path| hooks.run(role, from: from, message_path: path) }
+      event_log.append("broadcast", from, text)
+    end
+
+    def hook_files(role)
+      found = Dir.glob(File.join(paths.hooks_dir, "*.sh")).sort
+      role ? found.select { |path| File.basename(path, ".sh") == role } : found
+    end
+
+    def hook_line(path)
+      status = File.executable?(path) ? "active" : "inactive (chmod +x)"
+      "#{File.basename(path)}\t#{status}\t#{path}"
     end
 
     def notify_prior_holder(id, holder)

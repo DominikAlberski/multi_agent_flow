@@ -3,14 +3,28 @@
 
 # setup_agent - create a worktree for one agent and launch its harness session.
 #
-# Usage: ./setup_agent HARNESS ROLE[_WORKER] [model:PROVIDER/MODEL]
+# Usage: ./setup_agent HARNESS ROLE[_WORKER] [model:MODEL] [--model MODEL]
+#                      [--dispatch [DISPATCHER FLAGS...]]
 #   ./setup_agent claude backend-developer_1
-#   ./setup_agent opencode reviewer model:openrouter/deepseek-v3
+#   ./setup_agent opencode reviewer --model openrouter/deepseek-v3
+#   ./setup_agent hermes tester --dispatch --model openrouter/deepseek-v3
+#   ./setup_agent claude reviewer --dispatch --cache-window 1500
+#
+# Without --dispatch, the harness starts as an interactive session. With
+# --dispatch, the worktree runs ./dispatcher instead: the agent starts only
+# when there is work and exits when the work is done. Other flags after the
+# positional arguments go to the dispatcher (for example --interval,
+# --timeout, --cache-window). WORKER defaults to 1, or to "bot" with
+# --dispatch, so a dispatched and an interactive instance of one role get
+# separate worktrees.
 #
 # HARNESS:ROLE must already exist in .agent-flow.json (run scripts/flow.rb
 # in multi_agent_flow first to add a new one). Run from the project root.
 
 require "json"
+require "rbconfig"
+
+abort "setup_agent: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
 
 module SetupAgent
   MANIFEST = ".agent-flow.json"
@@ -34,27 +48,78 @@ module SetupAgent
     ENV["COORD_AGENT"] = args.role
     ENV["COORD_WORKER"] = args.worker
     model = args.model || manifest.model_for(args.harness, args.role)
+    return Dispatch.launch(args, model) if args.dispatch
+
     Launcher.for(args.harness).launch(args.role, args.worker, model)
   end
 
+  # Args reads the positional arguments (HARNESS ROLE[_WORKER] [model:M]),
+  # then the flags. --dispatch and --model M are setup_agent's own flags; all
+  # other flags go to the dispatcher and need --dispatch.
   class Args
-    Parsed = Struct.new(:harness, :role, :worker_id, :worker, :model)
+    Parsed = Struct.new(:harness, :role, :worker_id, :worker, :model, :dispatch, :dispatcher_args,
+                        keyword_init: true)
 
     def self.parse(argv)
-      harness, role_spec, model_arg = argv
-      abort_usage if harness.nil? || role_spec.nil?
-      role, worker_id = split_role(role_spec)
-      model = model_arg&.sub(/\Amodel:/, "")
-      Parsed.new(harness, role, worker_id, "#{role}-#{worker_id}", model)
+      dispatch, positional, flags = split(argv)
+      model = take_model(flags)
+      reject_stray(flags, dispatch)
+      Parsed.new(**identity(positional, model, dispatch), dispatch: dispatch, dispatcher_args: flags)
     end
 
-    def self.split_role(spec)
+    def self.split(argv)
+      rest = argv.reject { |arg| arg == "--dispatch" }
+      index = rest.index { |arg| arg.start_with?("--") } || rest.size
+      [rest.size != argv.size, rest[0...index], rest[index..-1]]
+    end
+
+    def self.identity(positional, model, dispatch)
+      harness, role_spec, model_arg = positional
+      abort_usage if harness.nil? || role_spec.nil?
+      role, worker_id = split_role(role_spec, dispatch ? "bot" : "1")
+      { harness: harness, role: role, worker_id: worker_id, worker: "#{role}-#{worker_id}",
+        model: model || model_arg&.sub(/\Amodel:/, "") }
+    end
+
+    def self.take_model(flags)
+      index = flags.index("--model")
+      value = index && flags.slice!(index, 2)[1]
+      abort "setup_agent: --model needs a value" if index && (value.nil? || value.start_with?("--"))
+      value
+    end
+
+    def self.reject_stray(flags, dispatch)
+      return if flags.empty? || dispatch
+
+      abort "setup_agent: #{flags.join(" ")} works only with --dispatch"
+    end
+
+    def self.split_role(spec, default_id = "1")
       role, _sep, worker_id = spec.rpartition("_")
-      role.empty? ? [spec, "1"] : [role, worker_id]
+      role.empty? ? [spec, default_id] : [role, worker_id]
     end
 
     def self.abort_usage
-      abort "usage: ./setup_agent HARNESS ROLE[_WORKER] [model:PROVIDER/MODEL]"
+      abort "usage: ./setup_agent HARNESS ROLE[_WORKER] [model:MODEL] [--model MODEL] [--dispatch [FLAGS...]]"
+    end
+  end
+
+  # Dispatch runs ./dispatcher in the worktree instead of an interactive
+  # session. The worktree's own copy of the dispatcher is used, so the
+  # project must have committed it. The current Ruby runs it, so an old
+  # system Ruby on the shebang path never parses it.
+  module Dispatch
+    def self.launch(args, model)
+      require_dispatcher!
+      cmd = [RbConfig.ruby, "./dispatcher", args.role, "--harness", args.harness]
+      cmd += ["--model", model] if model
+      Launcher.exec_or_die(cmd + args.dispatcher_args)
+    end
+
+    def self.require_dispatcher!
+      return if File.exist?("dispatcher")
+
+      abort "setup_agent: ./dispatcher missing in #{Dir.pwd}. Commit it: git add dispatcher"
     end
   end
 
@@ -139,6 +204,7 @@ module SetupAgent
       REGISTRY["claude"] = Claude
       REGISTRY["opencode"] = Opencode
       REGISTRY["codex"] = Codex
+      REGISTRY["hermes"] = Hermes
     end
 
     def self.exec_or_die(cmd)
@@ -173,6 +239,60 @@ module SetupAgent
         cmd += ["--model", model] if model
         Launcher.exec_or_die(cmd + [File.read(prompt_file)])
       end
+    end
+
+    # Hermes loads role files as skills from <hermes_dir>/<project>-<role>/.
+    # flow.rb writes the skill there; --skills <project>-<role> loads it.
+    # Hermes has no --agent flag; the skill's SKILL.md is the role definition.
+    # `-q` on a TTY seeds an interactive session with the prompt.
+    module Hermes
+      PROMPT = "Follow the multi-agent coordination rules in AGENTS.md as role %<role>s. " \
+               "Run ./coord inbox, then ./coord next --wait. Claim a task, do the work, finish it. Repeat."
+
+      def self.launch(role, _worker, model)
+        cmd = %w[hermes chat]
+        cmd += ["--skills", HermesSkill.name(role)] if HermesSkill.installed?(role)
+        cmd += ["--model", model] if model
+        Launcher.exec_or_die(cmd + ["-q", format(PROMPT, role: role)])
+      end
+    end
+  end
+
+  # Project finds the main checkout from any worktree. `git rev-parse
+  # --git-common-dir` returns the main repo's .git dir (relative at the root,
+  # absolute in a worktree), so its parent is the main checkout.
+  # NOTE: dispatcher carries the same logic; both run standalone.
+  module Project
+    def self.root
+      common = IO.popen(%w[git rev-parse --git-common-dir], err: File::NULL, &:read).to_s.strip
+      common.empty? ? Dir.pwd : File.dirname(File.expand_path(common))
+    end
+
+    def self.manifest
+      JSON.parse(File.read(File.join(root, MANIFEST)))
+    rescue Errno::ENOENT, JSON::ParserError
+      {}
+    end
+  end
+
+  # HermesSkill resolves the skill flow.rb generated for a role: the name is
+  # <project>-<role>, and the dir is the manifest's hermes_dir (set by
+  # `flow.rb --hermes-dir`) or flow.rb's default ~/.hermes/skills.
+  module HermesSkill
+    DEFAULT_DIR = File.join(Dir.home, ".hermes", "skills")
+
+    # Plain defs, not endless ones: this file must still parse on Ruby 2.x so
+    # the version check above can print its message.
+    def self.name(role)
+      "#{File.basename(Project.root)}-#{role}"
+    end
+
+    def self.dir
+      Project.manifest.fetch("hermes_dir", DEFAULT_DIR)
+    end
+
+    def self.installed?(role)
+      File.exist?(File.join(dir, name(role), "SKILL.md"))
     end
   end
 end

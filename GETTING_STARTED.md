@@ -51,9 +51,15 @@ The flow stores all shared state in a folder named `coordination/`.
 You need:
 
 - A Mac or a Linux machine.
-- Ruby 3.x.
+- Ruby 3.0+.
 - Taskwarrior.
 - A git project.
+
+Install Ruby 3.0+ on macOS:
+
+```sh
+brew install mise && mise install ruby
+```
 
 Install Taskwarrior on macOS:
 
@@ -360,16 +366,24 @@ bootstrap), start it by hand:
 ./vault
 ```
 
-This runs `graphify . --obsidian --obsidian-dir vault --watch --mcp` as a
-background process. Now agents query the knowledge graph instead of grepping
-the code.
+This starts a small watcher in the background. It runs the current graphify
+subcommands, because graphify 0.9 removed the old `--obsidian`/`--watch`/`--mcp`
+flags:
 
-- `--obsidian` writes the vault.
-- `--watch` rebuilds the graph when files change.
-- `--mcp` serves the graph to agents.
-- `./vault stop` stops it.
+- `graphify update .` re-extracts code and rebuilds the graph when files change (no LLM).
+- `graphify export obsidian --dir obsidian` writes the Obsidian notes and canvas.
+- The watcher repeats both at `VAULT_POLL` seconds (default 30).
+- `./vault export` regenerates the Obsidian vault once, on demand.
+- `./vault stop` stops the watcher.
 
-Open the `vault/` folder in Obsidian. You now see the task board and the code graph together.
+MCP is no longer a background flag. graphify serves the graph through a separate
+`graphify-mcp` process that an MCP client spawns. `./vault mcp` execs that
+server on stdio. Set `./vault mcp` as the command in your MCP client config.
+
+Open the `obsidian/` folder in Obsidian. You now see the code graph.
+`coordination/exports/board.md` is outside `obsidian/`. To see it as a board,
+open `coordination/exports/` as a second Obsidian vault with the Kanban plugin,
+or open the project root as the vault to see both.
 
 ---
 
@@ -467,12 +481,15 @@ You watch from any terminal:
 | `./coord done ID` | Complete a task. |
 | `./coord annotate ID TEXT` | Add a note to a task. |
 | `./coord msg --from A TO TEXT` | Send a message to an agent. |
+| `./coord broadcast --from A TEXT` | Send a message to every known role except the sender. |
 | `./coord inbox [AGENT]` | Read messages (marks them read; `--peek` keeps them; `--wait` blocks until one arrives). |
+| `./coord log [N]` | Show the last N coordination events (claims, completions, messages, broadcasts). |
 | `./coord lock NAME --ttl S` | Take an advisory lock. |
 | `./coord unlock NAME` | Release a lock. |
 | `./coord with-lock NAME -- CMD` | Run a command under a lock. |
 | `./coord worktree ROLE [WORKER]` | Create a git worktree + branch for a role. In it, run `source coord-env.sh` to share this project's coordination state. |
 | `./setup_agent HARNESS ROLE[_WORKER] [model:M]` | Worktree + env + `COORD_AGENT`/`COORD_WORKER` + launch the harness, in one command. |
+| `./setup_agent HARNESS ROLE --dispatch [FLAGS]` | Same worktree setup, then run `./dispatcher`: the agent starts only when there is work. |
 | `./coord status` | Show tasks by agent and state. |
 | `./coord board` | Write the Obsidian board file. |
 | `./coord export` | Write the raw tasks JSON. |
@@ -528,3 +545,9 @@ Setting `COORD_AGENT` does not make Claude Code assume that role by itself.
 when dispatched through its own Task tool, not into a plain interactive
 session. Tell the session directly: "Read .claude/agents/ROLE.md and follow
 it exactly." `./setup_agent claude ROLE[_WORKER]` does this for you.
+
+**A Hermes session says the skill is unknown.**
+`hermes chat --skills <project>-<role>` fails if the skill directory does not
+exist. Run `scripts/flow.rb --agent hermes:ROLE` first to generate the skill
+file at `~/.hermes/skills/<project>-<role>/SKILL.md`. `./setup_agent hermes
+ROLE[_WORKER]` checks for the skill and only passes `--skills` when it exists.

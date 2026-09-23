@@ -10,6 +10,9 @@ coordination/locks/*
 !coordination/locks/.gitkeep
 coordination/exports/*
 !coordination/exports/.gitkeep
+coordination/events.log
+coordination/hooks/*.log
+coordination/sessions/
 
 # Written by `coord worktree` in each worktree it creates; points back at
 # this project's coordination/ dir, never meant to be committed.
@@ -19,7 +22,7 @@ coord-env.sh
 coordination/vault.pid
 coordination/vault.log
 
-# Knowledge graph build output
+# Knowledge graph build output and the generated Obsidian vault
 graphify-out/
-vault/
+obsidian/
 # <<< multi-agent-flow <<<

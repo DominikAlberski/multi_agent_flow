@@ -19,6 +19,8 @@ require "optparse"
 require "rbconfig"
 require "time"
 
+abort "flow: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
+
 module Flow
   ROOT = File.expand_path("..", __dir__)
   TEMPLATES = File.join(ROOT, "templates")
@@ -81,6 +83,8 @@ module Flow
        If something is wrong, open a new task for the fix.
     7. Report back: `./coord msg --from architect project-manager "<summary>"`.
     8. Record decisions in `docs/decisions/`.
+    9. Use `./coord broadcast --from architect "<text>"` for scope changes or
+       blockers that affect every worker. Use `./coord log` to see what happened.
 
     Available roles:
     %{roles}
@@ -106,6 +110,8 @@ module Flow
        If something is wrong, open a new task for the fix.
     7. Report the outcome to the user in this session.
     8. Record decisions in `docs/decisions/`.
+    9. Use `./coord broadcast --from architect "<text>"` for scope changes or
+       blockers that affect every worker. Use `./coord log` to see what happened.
 
     Available roles:
     %{roles}

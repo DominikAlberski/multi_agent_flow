@@ -1,0 +1,657 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# dispatcher - outside-of-agent message board monitor and agent spawner.
+#
+# The dispatcher solves two problems:
+# 1. A long-lived interactive agent session burns tokens while idle. The
+#    dispatcher starts an agent only when there is work, and the agent exits
+#    when the work is done (one-shot mode).
+# 2. An agent that stops has no external watcher to restart it. The
+#    dispatcher polls the inbox and the task board on a fixed interval.
+#
+# Usage:
+#   ./dispatcher ROLE [--harness NAME | --command TEMPLATE] [--model M]
+#                     [--skill NAME | --no-skill] [--interval S] [--max-turns N]
+#                     [--timeout S] [--cache-window S] [--no-poll-tasks]
+#                     [--once] [--verbose]
+#
+#   ./dispatcher tester                            # hermes (default)
+#   ./dispatcher reviewer --harness claude --model sonnet
+#   ./dispatcher backend-developer --harness opencode --model openrouter/qwen3-coder
+#   ./dispatcher reviewer --harness codex
+#   ./dispatcher reviewer --once                   # one poll cycle, then exit
+#
+# Flags:
+#   --harness NAME     Built-in adapter: hermes (default), claude, codex, or
+#                      opencode. Each one resumes sessions.
+#   --command TEMPLATE Any other harness. A shell command with %{prompt},
+#                      %{role}, %{skill}, and %{model} placeholders, each
+#                      shell-escaped. The command must exit when done.
+#                      Sessions are not resumed for custom commands.
+#   --model M          Model for the agent, in the harness CLI's own format.
+#   --skill NAME       Hermes skill to preload. Default: <project>-<role> when
+#                      flow.rb generated it.
+#   --no-skill         Do not preload a skill.
+#   --interval S       Poll interval in seconds (default: 60).
+#   --max-turns N      Hermes max tool-calling turns per run (default: 50).
+#   --timeout S        Max wall-clock seconds per run (default: 300). The
+#                      dispatcher kills the agent's process group after it.
+#   --cache-window S   Resume a session only if its last run ended less than
+#                      S seconds ago (default: 3300, 55 minutes). 0 means
+#                      never resume.
+#   --no-poll-tasks    Dispatch on inbox messages only.
+#   --once             Run one poll cycle, then exit (tests, cron).
+#   --verbose          Log idle cycles too.
+#
+# Messages: the dispatcher owns the role's inbox. It moves each unread
+# message into inbox/<role>/processing/ (an atomic rename, so two dispatchers
+# never take the same message), bundles all of them into one prompt, and runs
+# the agent once. On success the messages move to read/. On failure they go
+# back to the inbox, and after MAX_ATTEMPTS failures to failed/.
+#
+# Tasks: when `coord next ROLE` lists unclaimed tasks, the dispatcher runs the
+# agent once. If the same task set is still unclaimed afterwards, it waits
+# with a doubling backoff (capped at MAX_BACKOFF) before it tries again. A
+# changed task set dispatches at once.
+#
+# Sessions and the prompt cache: the session ID is saved to
+# coordination/sessions/<worker>.session and resumed on the next run, so the
+# agent keeps its context without staying alive. LLM providers cache the
+# session prefix for a limited time after the last request (1 hour for
+# Claude Code). A resume after that time resends the whole context at full
+# price. So the dispatcher resumes only inside --cache-window. Outside it,
+# the dispatcher starts a fresh session. Every run ends by writing a short
+# handoff note to coordination/sessions/<worker>.handoff.md, and a fresh
+# session starts with that note. If the harness reports an unknown session,
+# the dispatcher also starts fresh. Other failures keep the session.
+#
+# The agent runs with COORD_DIR, COORD_AGENT, COORD_WORKER (default:
+# <role>-dispatcher), and TASKRC set, and with stdin closed. Every built-in
+# adapter skips permission prompts (hermes --yolo, claude bypassPermissions,
+# codex --dangerously-bypass-approvals-and-sandbox): the agent runs every
+# tool call without approval. Run it only in a worktree or sandbox you trust
+# it with. Two dispatchers for one role need different COORD_WORKER values.
+#
+# Environment:
+#   COORD_DIR       Path to coordination/ (default: ./coordination).
+#   COORD_WORKER    Worker ID for the agent (default: <role>-dispatcher).
+#   DISPATCHER_LOG  Append log lines to this file (default: stderr).
+#
+# Ruby: 3.0+ (endless method defs, same as coord).
+
+require "json"
+require "fileutils"
+require "optparse"
+require "rbconfig"
+require "shellwords"
+
+module Dispatcher
+  MANIFEST = ".agent-flow.json"
+  MAX_ATTEMPTS = 3
+  MAX_BACKOFF = 3600
+
+  Config = Struct.new(:role, :harness, :command, :model, :skill, :no_skill, :interval, :max_turns,
+                      :timeout, :cache_window, :once, :poll_tasks, :worker, :coord_dir, :verbose, keyword_init: true)
+
+  module Log
+    def self.line(message)
+      text = "[#{Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")}] dispatcher: #{message}"
+      path = ENV["DISPATCHER_LOG"]
+      path ? File.open(path, "a") { |file| file.puts(text) } : warn(text)
+    end
+  end
+
+  # Project finds the main checkout from any worktree. `git rev-parse
+  # --git-common-dir` returns the main repo's .git dir (relative at the root,
+  # absolute in a worktree), so its parent is the main checkout.
+  # NOTE: setup_agent carries the same logic; both run standalone.
+  module Project
+    def self.root
+      common = IO.popen(%w[git rev-parse --git-common-dir], err: File::NULL, &:read).to_s.strip
+      common.empty? ? Dir.pwd : File.dirname(File.expand_path(common))
+    end
+
+    def self.manifest
+      JSON.parse(File.read(File.join(root, MANIFEST)))
+    rescue Errno::ENOENT, JSON::ParserError
+      {}
+    end
+  end
+
+  # HermesSkill resolves the skill flow.rb generated for a role: the name is
+  # <project>-<role>, and the dir is the manifest's hermes_dir (set by
+  # `flow.rb --hermes-dir`) or flow.rb's default ~/.hermes/skills.
+  module HermesSkill
+    DEFAULT_DIR = File.join(Dir.home, ".hermes", "skills")
+
+    def self.name(role) = "#{File.basename(Project.root)}-#{role}"
+    def self.dir = Project.manifest.fetch("hermes_dir", DEFAULT_DIR)
+    def self.installed?(role) = File.exist?(File.join(dir, name(role), "SKILL.md"))
+  end
+
+  # Session persists the agent's session ID across runs, per worker: two
+  # dispatchers for one role (different COORD_WORKER values) never share a
+  # session or a handoff note. The session file's mtime is the time of the
+  # last successful run in that session, so it tells whether the LLM prompt
+  # cache is still warm. A failed run does not update it, so the next run
+  # treats the cache as colder than it may be. That errs on the cheap side.
+  class Session
+    attr_reader :path, :handoff_path
+
+    def initialize(coord_dir, worker)
+      dir = File.join(coord_dir, "sessions")
+      @path = File.join(dir, "#{worker}.session")
+      @handoff_path = File.join(dir, "#{worker}.handoff.md")
+    end
+
+    def id
+      value = File.exist?(@path) ? File.read(@path).strip : ""
+      value.empty? ? nil : value
+    end
+
+    def save(session_id)
+      FileUtils.mkdir_p(File.dirname(@path))
+      File.write(@path, session_id)
+    end
+
+    def clear = FileUtils.rm_f(@path)
+    def idle_seconds = File.exist?(@path) ? Time.now - File.mtime(@path) : Float::INFINITY
+    def handoff = File.exist?(@handoff_path) ? File.read(@handoff_path).strip : ""
+    def handoff_written_since?(time) = File.exist?(@handoff_path) && File.mtime(@handoff_path) >= time
+    def write_handoff(text) = FileUtils.mkdir_p(File.dirname(@handoff_path)) && File.write(@handoff_path, text)
+  end
+
+  Message = Struct.new(:path, :from, :text)
+
+  # Mailbox owns a role's inbox: take moves unread messages into processing/,
+  # ack moves them to read/, release moves them back (or to failed/).
+  class Mailbox
+    def initialize(coord_dir, role)
+      @dir = File.join(coord_dir, "inbox", role)
+    end
+
+    # A crash mid-run leaves messages in processing/. Return them to the inbox.
+    def recover = Dir.glob(File.join(@dir, "processing", "*.md")).each { |path| move(path, @dir) }
+
+    def take
+      Dir.glob(File.join(@dir, "*.md")).sort.filter_map { |path| claim(path) }
+    end
+
+    def ack(messages) = messages.each { |message| move(message.path, File.join(@dir, "read")) }
+
+    def release(messages) = messages.each { |message| move(message.path, *retry_target(message.path)) }
+
+    private
+
+    def claim(path)
+      target = move(path, File.join(@dir, "processing"))
+      target && parse(target)
+    end
+
+    def parse(path)
+      header, _blank, body = File.read(path).partition(/\n\n/)
+      Message.new(path, header[/^# from: (.+)$/, 1].to_s.strip, body.strip)
+    end
+
+    # The attempt count lives in the file name (<stamp>.retry2.md), so it
+    # survives a dispatcher restart. The stamp prefix keeps the sort order.
+    def retry_target(path)
+      attempts = path[/\.retry(\d+)\.md\z/, 1].to_i + 1
+      name = File.basename(path).sub(/(\.retry\d+)?\.md\z/, ".retry#{attempts}.md")
+      [attempts >= MAX_ATTEMPTS ? File.join(@dir, "failed") : @dir, name]
+    end
+
+    # Returns the new path, or nil when another process moved the file first.
+    def move(path, dir, name = File.basename(path))
+      FileUtils.mkdir_p(dir)
+      target = File.join(dir, name)
+      File.rename(path, target) && target
+    rescue Errno::ENOENT
+      nil
+    end
+  end
+
+  # TaskWatch decides when unclaimed tasks justify another agent run. A new
+  # task set dispatches at once; an unchanged one waits a doubling backoff.
+  # A set that vanishes and comes back unchanged keeps its old backoff.
+  class TaskWatch
+    def initialize(interval)
+      @interval = interval
+      @ids = []
+      @attempts = 0
+      @next_at = Time.at(0)
+    end
+
+    def due?(ids, now = Time.now) = !ids.empty? && (ids.sort != @ids || now >= @next_at)
+
+    def dispatched(ids, now = Time.now)
+      @attempts = ids.sort == @ids ? @attempts + 1 : 0
+      @ids = ids.sort
+      @next_at = now + [@interval * (2**(@attempts + 1)), MAX_BACKOFF].min
+    end
+  end
+
+  # Poller lists the role's unclaimed task IDs via `coord next`.
+  class Poller
+    def initialize(env, role)
+      @env = env
+      @role = role
+    end
+
+    def unclaimed_task_ids
+      output = IO.popen(@env, coord_command + ["next", @role], err: File::NULL, &:read)
+      $?.success? ? output.scan(/^([0-9a-f-]{36})\b/).flatten : []
+    rescue Errno::ENOENT
+      []
+    end
+
+    private
+
+    # Run coord with this Ruby, so an old system Ruby on the shebang path
+    # never parses it.
+    def coord_command
+      local = File.expand_path("coord")
+      [RbConfig.ruby, File.executable?(local) ? local : File.join(Project.root, "coord")]
+    end
+  end
+
+  Result = Struct.new(:output, :success, :timed_out)
+
+  # Spawn runs a command in its own process group with a wall-clock limit. On
+  # timeout it kills the whole group (TERM, then KILL), which also stops the
+  # children of an `sh -c` template.
+  module Spawn
+    GRACE = 5
+
+    def self.run(cmd, env:, timeout:)
+      reader, writer = IO.pipe
+      pid = Process.spawn(env, *cmd, in: File::NULL, out: writer, err: writer, pgroup: true)
+      collect(pid, reader.tap { writer.close }, timeout)
+    rescue Errno::ENOENT => e
+      Result.new(e.message, false, false)
+    end
+
+    def self.collect(pid, reader, timeout)
+      output = Thread.new { reader.read }
+      waiter = Process.detach(pid)
+      timed_out = waiter.join(timeout).nil? && stop(pid, waiter)
+      Result.new(drain(output, reader), waiter.value.success?, timed_out)
+    end
+
+    def self.stop(pid, waiter)
+      Process.kill("TERM", -pid)
+      Process.kill("KILL", -pid) unless waiter.join(GRACE)
+      true
+    rescue Errno::ESRCH
+      true
+    end
+
+    # A background grandchild can hold the pipe open after the agent exits.
+    # Then the reader thread is still blocked: kill it before closing the pipe,
+    # so it never dies with an IOError and never lingers.
+    def self.drain(output, reader)
+      text = output.join(GRACE)&.value
+      output.kill
+      reader.close
+      text.to_s
+    end
+  end
+
+  # Events reads the JSON event lines of a harness run. Each adapter takes
+  # its session ID from one specific event, never from free text, so a
+  # prompt or a handoff note that the agent echoes cannot supply a false ID.
+  module Events
+    def self.all(output) = output.lines.filter_map { |line| parse(line.strip) }
+
+    def self.last(output, &match) = all(output).reverse.find(&match) || {}
+
+    def self.parse(line)
+      event = line.start_with?("{") ? JSON.parse(line) : nil
+      event.is_a?(Hash) ? event : nil
+    rescue JSON::ParserError
+      nil
+    end
+  end
+
+  module Harness
+    # Adapter is the part every built-in adapter shares. Each adapter sets
+    # STALE_SESSION to the error its CLI prints for an unknown session ID.
+    module Adapter
+      def stale_session?(output) = output.include?(self::STALE_SESSION)
+      def resume(session_id, *flag) = session_id ? [*flag, session_id] : []
+      def present(value) = value.to_s.empty? ? nil : value
+    end
+
+    # Hermes: `hermes chat --oneshot`, JSONL output, skill preload.
+    module Hermes
+      extend Adapter
+      STALE_SESSION = "Session not found"
+
+      def self.build_command(config, prompt, session_id)
+        cmd = %w[hermes chat --oneshot --yolo --format stream-json -Q]
+        cmd += ["--skills", config.skill] if config.skill
+        cmd += ["--model", config.model] if config.model
+        cmd += ["--max-turns", config.max_turns.to_s, "--run-budget", run_budget(config).to_s]
+        cmd + resume(session_id, "--resume") + ["-q", prompt]
+      end
+
+      # Stop Hermes before the dispatcher's kill, so it can still write its result event.
+      def self.run_budget(config) = [config.timeout - Spawn::GRACE, 1].max
+      def self.result_event(output) = Events.last(output) { |event| event["type"] == "result" }
+      def self.result_text(output) = result_event(output)["text"]
+      def self.session_id(output) = present(result_event(output)["session_id"])
+    end
+
+    # Claude Code: `claude -p` prints one JSON object with session_id and
+    # result. `--agent` loads .claude/agents/<role>.md as the session's role.
+    module Claude
+      extend Adapter
+      STALE_SESSION = "No conversation found with session ID"
+
+      def self.build_command(config, prompt, session_id)
+        cmd = %w[claude -p --output-format json --permission-mode bypassPermissions --agent] + [config.role]
+        cmd += ["--model", config.model] if config.model
+        cmd + resume(session_id, "--resume") + [prompt]
+      end
+
+      def self.result_event(output) = Events.last(output) { |event| event.key?("result") }
+      def self.result_text(output) = result_event(output)["result"]
+      def self.session_id(output) = present(result_event(output)["session_id"])
+    end
+
+    # Codex: `codex exec` (or `codex exec resume ID`) with JSONL events. Codex
+    # has no agent flag, so a fresh session gets .codex/prompts/<role>.md
+    # in front of the prompt. A resumed session already has it.
+    module Codex
+      extend Adapter
+      STALE_SESSION = "no rollout found for thread id"
+
+      def self.build_command(config, prompt, session_id)
+        cmd = %w[codex exec] + (session_id ? ["resume"] : [])
+        cmd += %w[--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox]
+        cmd += ["-m", config.model] if config.model
+        cmd + resume(session_id) + [session_id ? prompt : role_prompt(config.role) + prompt]
+      end
+
+      def self.role_prompt(role)
+        path = File.join(".codex", "prompts", "#{role}.md")
+        File.exist?(path) ? "#{File.read(path)}\n\n" : ""
+      end
+
+      def self.result_text(output)
+        Events.last(output) { |event| event.dig("item", "type") == "agent_message" }.dig("item", "text")
+      end
+
+      def self.session_id(output)
+        present(Events.last(output) { |event| event["type"] == "thread.started" }["thread_id"])
+      end
+    end
+
+    # opencode: `opencode run --format json`. `--agent` loads
+    # .opencode/agents/<role>.md. The result event shape is not verified, so
+    # the log shows no result text. opencode prints terminal escape codes and
+    # can glue two JSON objects onto one line, so the session ID is matched on
+    # the start of an event object (captured from a real run), not by parsing
+    # whole lines.
+    module Opencode
+      extend Adapter
+      STALE_SESSION = "Session not found"
+      EVENT_SESSION = /\{"type":"[\w.-]+","timestamp":\d+,"sessionID":"([^"]+)"/
+
+      def self.session_id(output) = output.scan(EVENT_SESSION).flatten.last
+
+      def self.build_command(config, prompt, session_id)
+        cmd = %w[opencode run --format json --agent] + [config.role]
+        cmd += ["-m", config.model] if config.model
+        cmd + resume(session_id, "--session") + [prompt]
+      end
+
+      def self.result_text(_output) = nil
+    end
+
+    # Generic: a user-provided shell template. No session resume, no parsing.
+    module Generic
+      PLACEHOLDERS = %i[prompt role skill model].freeze
+
+      def self.build_command(config, prompt, _session_id)
+        values = { prompt: prompt, role: config.role, skill: config.skill, model: config.model }
+        line = PLACEHOLDERS.reduce(config.command) { |cmd, key| cmd.gsub("%{#{key}}", values[key].to_s.shellescape) }
+        ["sh", "-c", line]
+      end
+
+      def self.stale_session?(_output) = false
+      def self.session_id(_output) = nil
+      def self.result_text(_output) = nil
+    end
+
+    REGISTRY = { "hermes" => Hermes, "claude" => Claude, "codex" => Codex, "opencode" => Opencode }.freeze
+
+    def self.for(config)
+      return Generic if config.command
+
+      REGISTRY.fetch(config.harness) { abort "dispatcher: unknown harness '#{config.harness}'. Use --command." }
+    end
+  end
+
+  # Runner runs one agent dispatch. It resumes the saved session only while
+  # the LLM prompt cache is still warm (see --cache-window). A cold session
+  # would resend the whole context at full price, so the dispatcher starts a
+  # fresh session and hands it the handoff note instead. It also starts
+  # fresh when the harness reports that the saved session no longer exists.
+  class Runner
+    def initialize(config, harness, env)
+      @config = config
+      @harness = harness
+      @env = env
+      @session = Session.new(config.coord_dir, config.worker)
+    end
+
+    def dispatch(prompt)
+      session_id = warm_session_id
+      result = attempt(prompt, session_id)
+      result = retry_fresh(prompt) if session_id && @harness.stale_session?(result.output)
+      report(result)
+    end
+
+    private
+
+    def warm_session_id
+      id = @session.id
+      return id unless id && @session.idle_seconds > @config.cache_window
+
+      expire(id)
+    end
+
+    def expire(id)
+      minutes = (@session.idle_seconds / 60).round
+      Log.line("session #{id} idle #{minutes}m, past the cache window; starting fresh with the handoff note")
+      @session.clear
+      nil
+    end
+
+    def attempt(prompt, session_id)
+      @started_at = Time.now
+      Log.line("dispatching #{@config.role} (session: #{session_id || "new"})")
+      cmd = @harness.build_command(@config, Prompt.with_handoff(prompt, @session, session_id), session_id)
+      Spawn.run(cmd, env: @env, timeout: @config.timeout)
+    end
+
+    def retry_fresh(prompt)
+      Log.line("session #{@session.id} not found; starting a fresh session")
+      @session.clear
+      attempt(prompt, nil)
+    end
+
+    def report(result)
+      return failed(result) unless result.success
+
+      @harness.session_id(result.output)&.then { |id| @session.save(id) }
+      finished(@harness.result_text(result.output).to_s)
+    end
+
+    def finished(text)
+      keep_handoff(text)
+      Log.line("agent finished: #{text.slice(0, 80)}")
+      true
+    end
+
+    # Some models skip the handoff instruction. Then the agent's final reply
+    # becomes the note, so a later fresh session still gets some context.
+    def keep_handoff(text)
+      return if text.empty? || @session.handoff_written_since?(@started_at)
+
+      @session.write_handoff(text)
+    end
+
+    def failed(result)
+      reason = result.timed_out ? "timed out after #{@config.timeout}s" : "failed"
+      Log.line("agent #{reason}: #{result.output.lines.last(5).join.strip}")
+      false
+    end
+  end
+
+  # Prompt builds the one-shot work prompt. The coordination rules live in
+  # AGENTS.md (installed by bootstrap), so the prompt only adds what is
+  # specific to a dispatched run.
+  module Prompt
+    ONE_SHOT = <<~TEXT
+      You run as role %<role>s in one-shot mode. Follow the multi-agent coordination rules in AGENTS.md.
+      Do not use --wait: nobody is waiting on this session. Run ./coord next, claim a task, do the work,
+      annotate it, and finish it with ./coord done. When no task is left, stop.
+    TEXT
+
+    def self.messages(messages, role)
+      bodies = messages.map { |message| "--- message from #{message.from} ---\n#{message.text}\n" }
+      "The dispatcher took these messages from your inbox:\n\n#{bodies.join("\n")}\n#{format(ONE_SHOT, role: role)}"
+    end
+
+    def self.tasks(role) = "Unclaimed tasks exist for your role.\n\n#{format(ONE_SHOT, role: role)}"
+
+    HANDOFF = <<~TEXT
+      Before you stop, overwrite %<path>s with a handoff note for your next session.
+      Write at most 300 words: current state, decisions, open questions, and the next step.
+    TEXT
+
+    # A fresh session starts with the previous session's handoff note. A
+    # resumed session already has that context. Every run writes a new note
+    # while its cache is still warm, which is cheap.
+    def self.with_handoff(prompt, session, session_id)
+      note = session.handoff
+      intro = session_id || note.empty? ? "" : "Handoff note from your previous session:\n#{note}\n\n"
+      "#{intro}#{prompt}\n#{format(HANDOFF, path: session.handoff_path)}"
+    end
+  end
+
+  # Main runs the poll + dispatch loop.
+  class Main
+    def initialize(config)
+      @config = config
+      @runner = Runner.new(config, Harness.for(config), Main.agent_env(config))
+      @mailbox = Mailbox.new(config.coord_dir, config.role)
+      @poller = Poller.new(Main.agent_env(config), config.role)
+      @watch = TaskWatch.new(config.interval)
+    end
+
+    def self.agent_env(config)
+      env = { "COORD_DIR" => config.coord_dir, "COORD_AGENT" => config.role, "COORD_WORKER" => config.worker }
+      taskrc = File.join(config.coord_dir, "taskrc")
+      File.exist?(taskrc) ? env.merge("TASKRC" => taskrc) : env
+    end
+
+    def run
+      Log.line("started: role=#{@config.role} #{harness_label} #{timing_label}")
+      @mailbox.recover
+      cycle_forever
+    rescue Interrupt
+      Log.line("stopped (interrupted)")
+    end
+
+    # At most one agent run per cycle: the message prompt already tells the
+    # agent to work through `coord next`.
+    def cycle
+      worked = dispatch_messages || (@config.poll_tasks && dispatch_tasks)
+      Log.line("no work this cycle") if @config.verbose && !worked
+    end
+
+    private
+
+    def timing_label = "interval=#{@config.interval}s cache_window=#{@config.cache_window}s"
+    def harness_label = @config.command ? "command=#{@config.command.inspect}" : "harness=#{@config.harness}"
+
+    # sleep returns the seconds slept, which is always truthy.
+    def cycle_forever
+      cycle
+      cycle while !@config.once && sleep(@config.interval)
+    end
+
+    def dispatch_messages
+      messages = @mailbox.take
+      return false if messages.empty?
+
+      settle(messages, @runner.dispatch(Prompt.messages(messages, @config.role)))
+    end
+
+    # Tasks still unclaimed after a message run count as dispatched, so the
+    # next cycle backs off instead of starting another run for them.
+    def settle(messages, success)
+      success ? @mailbox.ack(messages) : @mailbox.release(messages)
+      @watch.dispatched(@poller.unclaimed_task_ids) if @config.poll_tasks
+      true
+    end
+
+    def dispatch_tasks
+      ids = @poller.unclaimed_task_ids
+      return false unless @watch.due?(ids)
+
+      @runner.dispatch(Prompt.tasks(@config.role))
+      @watch.dispatched(ids)
+      true
+    end
+  end
+
+  # Options parses the command line into a Config.
+  module Options
+    VALUES = { "--harness NAME" => [:harness, String], "--command TEMPLATE" => [:command, String],
+               "--model M" => [:model, String], "--skill NAME" => [:skill, String],
+               "--interval S" => [:interval, Integer], "--max-turns N" => [:max_turns, Integer],
+               "--timeout S" => [:timeout, Integer], "--cache-window S" => [:cache_window, Integer] }.freeze
+    SWITCHES = { "--no-skill" => [:no_skill, true], "--no-poll-tasks" => [:poll_tasks, false],
+                 "--once" => [:once, true], "--verbose" => [:verbose, true] }.freeze
+    DEFAULTS = { harness: "hermes", interval: 60, max_turns: 50, timeout: 300, cache_window: 3300, poll_tasks: true,
+                 no_skill: false, once: false, verbose: false }.freeze
+
+    def self.parse(argv, env = ENV)
+      config = Config.new(**DEFAULTS)
+      parser(config).parse!(argv)
+      config.role = argv.shift || abort("dispatcher: role is required (usage: ./dispatcher ROLE)")
+      finish(validate(config), env)
+    end
+
+    def self.validate(config)
+      abort "dispatcher: role must not be empty" if config.role.strip.empty?
+      positive = config.interval.positive? && config.timeout.positive?
+      abort "dispatcher: --interval and --timeout must be positive" unless positive
+      abort "dispatcher: --cache-window must be 0 or more" if config.cache_window.negative?
+      config
+    end
+
+    def self.parser(config)
+      OptionParser.new("Usage: ./dispatcher ROLE [options]") do |o|
+        VALUES.each { |flag, (key, type)| o.on(flag, type) { |v| config[key] = v } }
+        SWITCHES.each { |flag, (key, value)| o.on(flag) { config[key] = value } }
+        o.on("-h", "--help") { puts(o) || exit }
+      end
+    end
+
+    def self.finish(config, env)
+      config.coord_dir = File.expand_path(env.fetch("COORD_DIR", "coordination"))
+      config.worker = env.fetch("COORD_WORKER", "#{config.role}-dispatcher")
+      config.skill = nil if config.no_skill
+      config.skill ||= HermesSkill.name(config.role) if !config.no_skill && HermesSkill.installed?(config.role)
+      config
+    end
+  end
+end
+
+Dispatcher::Main.new(Dispatcher::Options.parse(ARGV)).run if __FILE__ == $PROGRAM_NAME

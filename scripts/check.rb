@@ -11,6 +11,8 @@
 # Taskwarrior description suffix (which happened once with `worker`).
 require "fileutils"
 
+abort "check: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
+
 module Check
   ROOT = File.expand_path("..", __dir__)
   MARKER = ">>> multi-agent-flow >>>"
@@ -40,6 +42,7 @@ module Check
   SCRIPTS = {
     "coord" => "coord - shared coordination layer",
     "setup_agent" => "setup_agent - create a worktree for one agent and launch its harness session.",
+    "dispatcher" => "dispatcher - outside-of-agent message board monitor and agent spawner.",
     "vault" => "vault - shared knowledge base watcher (graphify + Obsidian + MCP)."
   }.freeze
 
