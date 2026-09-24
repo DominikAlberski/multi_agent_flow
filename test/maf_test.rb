@@ -237,3 +237,85 @@ q
     assert_includes out, "maf add opencode:tester"
   end
 end
+
+# maf start execs the harness. A mock opencode program on PATH records its
+# directory, arguments, and environment, so the test sees what maf started.
+class MafStartTest < Minitest::Test
+  MOCK = <<~MOCK
+    #!%<ruby>s
+    File.write(ENV.fetch("MOCK_LOG"), [Dir.pwd, ENV["COORD_ROLE"], ENV["COORD_WORKER"], *ARGV].join("\\n"))
+  MOCK
+
+  def setup
+    skip "git not installed" unless system("git", "--version", out: File::NULL)
+    @dir = File.realpath(Dir.mktmpdir("maf-start-test"))
+    @log = File.join(@dir, "mock.log")
+    install_mock
+    install_project
+  end
+
+  def teardown
+    FileUtils.remove_entry(@dir) if @dir
+  end
+
+  def install_mock
+    bin = File.join(@dir, "mock-bin")
+    FileUtils.mkdir_p(bin)
+    File.write(File.join(bin, "opencode"), format(MOCK, ruby: RbConfig.ruby))
+    FileUtils.chmod("+x", File.join(bin, "opencode"))
+    @env = { "VAULT_SKIP" => "1", "MOCK_LOG" => @log, "PATH" => "#{bin}:#{ENV.fetch("PATH")}" }
+  end
+
+  def install_project
+    @project = File.join(@dir, "project")
+    FileUtils.mkdir_p(@project)
+    git("init", "-q")
+    maf("add", "opencode:architect")
+    git("add", "-A")
+    git("commit", "-q", "-m", "install")
+  end
+
+  def git(*args)
+    system("git", "-c", "user.name=test", "-c", "user.email=test@example.com", *args,
+           chdir: @project, exception: true, out: File::NULL)
+  end
+
+  def maf(*args, input: "")
+    output = IO.popen(@env, [RbConfig.ruby, MAF, *args], "r+", chdir: @project, err: [:child, :out]) do |io|
+      io.write(input)
+      io.close_write
+      io.read
+    end
+    [output, $?.exitstatus]
+  end
+
+  def mock_call = File.read(@log).lines(chomp: true)
+
+  def assert_started(worker)
+    dir, role, coord_worker, *args = mock_call
+    assert_equal File.join(@project, ".worktrees", worker), dir
+    assert_equal ["architect", worker], [role, coord_worker]
+    assert_equal ["."] + %w[--agent architect --prompt] + ["Start your work loop now."], args
+  end
+
+  def test_start_launches_the_harness_in_the_worktree
+    out, status = maf("start", "opencode", "architect")
+
+    assert_equal 0, status, out
+    assert_started("architect-1")
+  end
+
+  def test_start_uses_the_worker_id
+    out, status = maf("start", "opencode", "architect_2")
+
+    assert_equal 0, status, out
+    assert_started("architect-2")
+  end
+
+  def test_menu_starts_the_chosen_agent
+    out, status = maf("menu", input: "3\n1\n\nn\n")
+
+    assert_equal 0, status, out
+    assert_started("architect-1")
+  end
+end
