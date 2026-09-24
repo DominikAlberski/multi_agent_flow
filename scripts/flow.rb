@@ -28,6 +28,10 @@ module Flow
   HARNESSES = %w[opencode claude codex hermes].freeze
   DEFAULT_HERMES_DIR = File.join(Dir.home, ".hermes", "skills")
 
+  # Model a harness gets when neither --agent nor --model names one.
+  # Other harnesses have no safe default, so their CLI picks the model.
+  DEFAULT_MODELS = { "claude" => "claude-opus-5-5" }.freeze
+
   # Roles that dispatch or coordinate instead of implementing. They are never
   # advertised as dispatch targets in the architect prompt.
   DISPATCH_EXCLUDE = %w[architect project-manager].freeze
@@ -40,6 +44,14 @@ module Flow
     - Write `coord msg`, `coord annotate`, and task titles in Simplified
       Technical English: one instruction per sentence, active voice, name the
       subject, max 20 words per sentence, no idioms.
+  TEXT
+
+  # Current Claude models start subagents readily and verify their own work
+  # without a prompt. Each subagent adds cost and time, so keep the use small.
+  SUBAGENT_RULE = <<~TEXT.strip
+    - Do the work yourself. Start a subagent only for a large, independent
+      search that you cannot finish in a few tool calls.
+    - Do not use subagents to verify your work.
   TEXT
 
   WORKER_LOOP = <<~LOOP
@@ -58,12 +70,15 @@ module Flow
     - You are one worker in a role pool. COORD_WORKER identifies you.
     - One writer per path. Never edit outside the task scope.
     - Do not create tasks. Ask the architect: `./coord msg --from %{role} architect "<text>"`.
-    - If you cannot finish, keep the claim. Annotate the blocker. Message the
-      architect. Stop. Do not retry a failing approach.
+    - Finish the whole task. Report done only when each acceptance criterion passes.
+    - If you cannot finish, do the parts you can. Keep the claim. Annotate the
+      blocker and the missing parts. Message the architect. Stop. Do not retry
+      a failing approach.
     %{no_task_instruction}
     - Record durable knowledge in the shared vault or `docs/decisions/`.
     - Never write ad-hoc verification scripts. The test suite is the verification.
     #{STE_RULE}
+    #{SUBAGENT_RULE}
   LOOP
 
   # The architect takes goals from the project manager when that role exists,
@@ -94,6 +109,7 @@ module Flow
     - Take goals only from the project manager. Never take requests directly from the user.
     - Take the `ollama` lock only if you run a local model yourself.
     #{STE_RULE}
+    #{SUBAGENT_RULE}
   LOOP
 
   ARCHITECT_LOOP_DIRECT = <<~LOOP
@@ -121,6 +137,7 @@ module Flow
     - Take requests from the user directly. This project has no project manager.
     - Take the `ollama` lock only if you run a local model yourself.
     #{STE_RULE}
+    #{SUBAGENT_RULE}
   LOOP
 
   PM_LOOP = <<~LOOP
@@ -137,6 +154,7 @@ module Flow
     - Send goals to the architect only. Never dispatch work to other roles directly.
     - If no report has arrived yet, tell the user and check again with `./coord inbox project-manager`.
     #{STE_RULE}
+    #{SUBAGENT_RULE}
   LOOP
 
   class Generator
@@ -270,10 +288,14 @@ module Flow
 
     def generate_agent(agent)
       role = agent[:role]
-      model = agent[:model] || @models[role]
+      model = model_for(agent)
       dest = destination(agent[:harness], role)
       content = render(agent[:harness], role, @roles.fetch(role), model)
       { agent: agent, dest: dest, status: write(dest, content), model: model }
+    end
+
+    def model_for(agent)
+      agent[:model] || @models[agent[:role]] || DEFAULT_MODELS[agent[:harness]]
     end
 
     def destination(harness, role)
@@ -362,7 +384,7 @@ module Flow
       path = File.join(@project, ".agent-flow.json")
       data = {
         generated_at: Time.now.utc.iso8601,
-        agents: @agents.map { |a| { harness: a[:harness], role: a[:role], model: a[:model] || @models[a[:role]] } }
+        agents: @agents.map { |a| { harness: a[:harness], role: a[:role], model: model_for(a) } }
       }
       # Only record hermes_dir when it differs from the default: the default is
       # an absolute home path that would leak into a committed manifest.

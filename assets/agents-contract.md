@@ -108,8 +108,9 @@ Only one local-model generation may run at a time on the shared Ollama host.
    `coord annotate ID "STATUS: done or blocked. FILES: <paths>.
    TESTS: <one-line result>. NOTES: <assumptions or risks>"`. Ask other
    agents with `coord msg`.
-5. If you cannot finish a task, keep the claim. Annotate the blocker.
-   Message the architect. Stop. Do not retry a failing approach. Do not
+5. Finish the whole task. Report done only when each acceptance criterion
+   passes. If you cannot finish a task, do the parts you can. Keep the claim.
+   Annotate the blocker and the missing parts. Message the architect. Stop. Do not retry a failing approach. Do not
    `unclaim` a blocked task — that returns it to the pool for another worker
    to hit the same wall.
 6. The architect inspects a done task's diff and reruns its tests in the
@@ -125,6 +126,9 @@ Only one local-model generation may run at a time on the shared Ollama host.
    subject, max 20 words per sentence, no idioms.
 10. Never write ad-hoc verification scripts. The test suite is the
     verification.
+11. Do the work yourself. Start a subagent only for a large, independent
+    search that you cannot finish in a few tool calls. Do not use subagents
+    to verify your work.
 
 ### Shared memory
 

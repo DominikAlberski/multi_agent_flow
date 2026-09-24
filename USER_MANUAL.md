@@ -114,8 +114,11 @@ Nothing is written.
 Add `--model ROLE=MODEL` to pin a model per role. Use the model name the harness
 CLI accepts:
 
-- Claude Code: `opus` or `sonnet`
+- Claude Code: a full model ID (e.g., `claude-opus-5-5`) or an alias (`opus`, `sonnet`)
 - opencode and Hermes: `provider/model` (e.g., `openrouter/deepseek-v3`)
+
+If you do not pin a model, every `claude` role gets `claude-opus-5-5`.
+The other harnesses have no default. Their CLI picks the model.
 
 ### 5. Install
 

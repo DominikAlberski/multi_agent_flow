@@ -1,7 +1,8 @@
 # Role definitions for the multi-agent flow.
 #
-# `model_hint` is only a recommendation shown to the user. The user always
-# chooses the model; flow.rb accepts it via --model ROLE=MODEL.
+# `model_hint` is only a recommendation shown to the user. The user chooses
+# the model with --model ROLE=MODEL. If the user does not choose a model,
+# claude roles get flow.rb's DEFAULT_MODELS entry (claude-opus-5-5).
 #
 # `description` is also the routing line in the architect's "Available roles"
 # list. Keep it short and specific to the role.
@@ -11,6 +12,8 @@
 # concrete checks, not claims of expertise: expert personas do not improve
 # coding accuracy. Give a short reason for each rule that is not obvious.
 # Do not use CRITICAL, MUST, or other shouting. Current models over-apply it.
+# Do not add "double-check" or "verify with a subagent" rules. Claude Opus 5.x
+# verifies its own work, and these rules cause extra, redundant work.
 roles:
   project-manager:
     title: Project Manager
@@ -33,7 +36,7 @@ roles:
       - Task lists. The architect creates tasks.
       - Process detail in reports. The user needs outcomes and decisions.
       - Optimistic status. Report blockers and failed checks as they are.
-    model_hint: "Strongest reasoning and long context, conversational. Cloud: Claude Opus/Sonnet, GPT-5.x."
+    model_hint: "Strongest reasoning and long context, conversational. Cloud: Claude Opus 5.5 (default for the claude harness), GPT-5.x."
     can_edit: false
 
   architect:
@@ -67,7 +70,7 @@ roles:
       - ADRs for small choices. Record only decisions that are hard to reverse.
       - ScheduleWakeup calls with `stop:false` and no `prompt`. The call fails
         without a `prompt`. Poll worker status through the task tool instead.
-    model_hint: "Strongest reasoning and long context. Cloud: Claude Opus/Sonnet, GPT-5.x, deepseek-v4."
+    model_hint: "Strongest reasoning and long context. Cloud: Claude Opus 5.5 (default for the claude harness), GPT-5.x, deepseek-v4."
     can_edit: false
 
   backend-developer:
