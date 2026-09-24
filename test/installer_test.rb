@@ -529,6 +529,16 @@ class SetupAgentTest < Minitest::Test
     assert_raises(SystemExit) { capture_io { manifest.verify!("opencode", "nope") } }
   end
 
+  # flow.rb lives in multi_agent_flow, not in the project. flow.rb also
+  # rewrites the whole manifest, so the hint must keep the current agents.
+  def test_manifest_rejection_prints_the_full_flow_command
+    manifest = SetupAgent::Manifest.new([{ "harness" => "claude", "role" => "reviewer" }])
+
+    _out, err = capture_io { assert_raises(SystemExit) { manifest.verify!("opencode", "frontend-developer") } }
+    assert_includes err, 'ruby "$FLOW/scripts/flow.rb" --project "$PWD"'
+    assert_includes err, "--agent claude:reviewer --agent opencode:frontend-developer"
+  end
+
   def test_hermes_launcher_is_registered
     SetupAgent::Launcher.register_defaults
     assert_kind_of Module, SetupAgent::Launcher.for("hermes")

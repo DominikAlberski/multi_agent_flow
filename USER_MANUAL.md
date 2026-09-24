@@ -463,8 +463,10 @@ git worktree remove .worktrees/<name>
 
 ## Change the setup later
 
-Run `scripts/flow.rb` again with the new `--agent` list. The generator skips
-unchanged files and updates changed files in place. Then commit.
+Run `ruby "$FLOW/scripts/flow.rb" --project "$PROJECT"` again with the new
+`--agent` list. Include all current agents in the list. `flow.rb` rewrites
+`.agent-flow.json` from the list, so an agent that is not in the list is removed.
+The generator skips unchanged files and updates changed files in place. Then commit.
 
 ---
 

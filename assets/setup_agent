@@ -128,9 +128,15 @@ module SetupAgent
 
   class Manifest
     def self.load(path)
-      abort "setup_agent: #{path} missing. Run scripts/flow.rb first." unless File.exist?(path)
+      abort_missing(path) unless File.exist?(path)
 
       new(JSON.parse(File.read(path))["agents"])
+    end
+
+    def self.abort_missing(path)
+      abort "setup_agent: #{path} missing. Run from the project root:\n" \
+            "  ruby \"$FLOW/scripts/flow.rb\" --project \"$PWD\" --agent HARNESS:ROLE ...\n" \
+            "  (FLOW is the multi_agent_flow checkout.)"
     end
 
     def initialize(agents)
@@ -140,7 +146,15 @@ module SetupAgent
     def verify!(harness, role)
       return if @agents.any? { |a| a["harness"] == harness && a["role"] == role }
 
-      abort "setup_agent: no #{harness}:#{role} in .agent-flow.json. Add it via scripts/flow.rb."
+      abort "setup_agent: no #{harness}:#{role} in .agent-flow.json.\n#{add_hint("#{harness}:#{role}")}"
+    end
+
+    # flow.rb rewrites the whole manifest, so the hint repeats every current
+    # agent. $FLOW is the multi_agent_flow checkout, not this project.
+    def add_hint(missing)
+      agents = @agents.map { |a| "#{a['harness']}:#{a['role']}" } + [missing]
+      "  Fix (from the project root, with FLOW=<path to multi_agent_flow>):\n" \
+        "    ruby \"$FLOW/scripts/flow.rb\" --project \"$PWD\" #{agents.map { |a| "--agent #{a}" }.join(' ')}"
     end
 
     def model_for(harness, role)
