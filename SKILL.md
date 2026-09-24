@@ -66,6 +66,17 @@ blocks. Dependencies are detected, not blindly installed. If it finds an
 older, global `~/.taskrc` install, it prints a one-time migration note instead
 of silently stranding those tasks.
 
+## Uninstall
+
+```sh
+ruby scripts/uninstall.rb --project /path/to/project --check   # preview
+ruby scripts/uninstall.rb --project /path/to/project           # asks, then removes
+```
+
+Removes only files that carry the flow signature or marker. Keeps
+`graphify-out/`, `obsidian/`, `worker/*` branches, and dirty worktrees
+(`--force` removes those worktrees).
+
 ## Verify
 
 ```sh

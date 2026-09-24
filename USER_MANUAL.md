@@ -458,6 +458,46 @@ unchanged files and updates changed files in place. Then commit.
 
 ---
 
+## Uninstall
+
+Stop the team first (see above). Then preview what the uninstaller removes:
+
+```sh
+ruby "$FLOW/scripts/uninstall.rb" --project "$PROJECT" --check
+```
+
+Remove it. The uninstaller shows the list and asks for confirmation. Add
+`--yes` to skip the question.
+
+```sh
+ruby "$FLOW/scripts/uninstall.rb" --project "$PROJECT"
+```
+
+The uninstaller removes:
+
+- `coord`, `setup_agent`, `dispatcher`, `dashboard`, `vault` (or `vault-daemon`).
+- `coordination/`, with the task board, messages, locks, and message hooks.
+- Clean worktrees in `.worktrees/`.
+- Generated role files in `.claude/agents/`, `.opencode/agents/`, `.codex/prompts/`,
+  and the project's Hermes skills.
+- The flow hooks in `.claude/settings.json`.
+- The marked blocks in `AGENTS.md`, `CLAUDE.md`, and `.gitignore`.
+- `.agent-flow.json`.
+
+The uninstaller keeps:
+
+- `graphify-out/` and `obsidian/`. A rebuild costs many agent runs. Delete them
+  by hand. `.gitignore` keeps their ignore rules.
+- Files that do not carry the flow signature or marker, and text outside the
+  marked blocks.
+- `worker/*` branches. Merge or delete them with `git branch -D`.
+- Worktrees with uncommitted changes. Add `--force` to remove them.
+- The global Codex and Hermes hooks. Other projects can use them.
+
+Commit the result.
+
+---
+
 ## Upgrade from a version before GLOSSARY.md
 
 This version renames terms (see [GLOSSARY.md](GLOSSARY.md)). It does not read

@@ -505,4 +505,4 @@ module Flow
   end
 end
 
-Flow::Generator.new(ARGV).run
+Flow::Generator.new(ARGV).run if __FILE__ == $PROGRAM_NAME

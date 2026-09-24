@@ -532,6 +532,12 @@ module Bootstrap
       (@lines[0...range.begin] + [block] + @lines[(range.end + 1)..]).join
     end
 
+    def remove
+      return @lines.join unless range
+
+      (@lines[0...range.begin] + @lines[(range.end + 1)..]).join
+    end
+
     private
 
     def range
@@ -546,4 +552,4 @@ module Bootstrap
   end
 end
 
-Bootstrap::Installer.new(ARGV).run
+Bootstrap::Installer.new(ARGV).run if __FILE__ == $PROGRAM_NAME

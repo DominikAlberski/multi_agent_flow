@@ -54,6 +54,7 @@ multi_agent_flow/
   USER_MANUAL.md              # full team setup reference
   scripts/
     flow.rb                   # generates harness-specific role files + installs coordination layer
+    uninstall.rb              # removes the flow from a project; keeps graphify-out/ and obsidian/
     check.rb                  # repo consistency check (UDA sync, marker blocks, worktree formula)
   templates/
     roles.yml                 # role definitions + model hints
@@ -77,6 +78,7 @@ multi_agent_flow/
     coord_test.rb             # behavioral tests for the coord CLI
     installer_test.rb         # tests for bootstrap.rb, flow.rb, setup_agent
     dispatcher_test.rb        # tests for the dispatcher
+    uninstaller_test.rb       # tests for uninstall.rb
 ```
 
 ---
@@ -113,6 +115,7 @@ blocks are present in all generated files; worktree path formula is identical in
 ```sh
 ruby test/coord_test.rb      # covers the coord CLI
 ruby test/installer_test.rb  # covers bootstrap.rb, flow.rb, setup_agent
+ruby test/uninstaller_test.rb  # covers scripts/uninstall.rb
 ```
 
 Minitest, stdlib only. Tests that require `task` or `git` skip (exit 0) when
