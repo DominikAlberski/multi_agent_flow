@@ -93,7 +93,7 @@ module Dashboard
         declared_roles:   declared_roles,
         tasks:            task_summary(tasks),
         events:           recent_events,
-        inboxes:          inbox_counts,
+        inboxes:          inbox_messages,
         locks:            active_locks
       }
     end
@@ -160,13 +160,22 @@ module Dashboard
       { ts: ts, action: action, agent: agent, detail: detail }
     end
 
-    def inbox_counts
+    def inbox_messages
       dir = @cfg.inbox_dir
       return {} unless Dir.exist?(dir)
       Dir.children(dir).each_with_object({}) do |role, h|
         rdir = File.join(dir, role)
-        h[role] = Dir.glob(File.join(rdir, "*.md")).size if File.directory?(rdir)
+        next unless File.directory?(rdir)
+        h[role] = Dir.glob(File.join(rdir, "*.md")).sort.filter_map { |p| read_message(p) }
       end
+    end
+
+    def read_message(path)
+      header, body = File.read(path).split("\n\n", 2)
+      { from: header[/^# from: (.+)$/, 1], at: header[/^# at: (.+)$/, 1],
+        preview: body.to_s.strip.slice(0, 140) }
+    rescue Errno::ENOENT
+      nil
     end
 
     def active_locks
@@ -271,7 +280,7 @@ module Dashboard
           if(stale.length) alerts.push({l:'danger',m:stale.length+' claimed task(s) with expired lease — likely crashed worker'});
           if(orphaned.length) alerts.push({l:'danger',m:orphaned.length+' task(s) assigned to roles nobody is running'});
           if(conflicts.length) alerts.push({l:'warn',m:conflicts.length+' scope conflict(s) between pending tasks'});
-          Object.entries(d.inboxes||{}).forEach(([role,n])=>{if(n>0)alerts.push({l:'warn',m:role+' inbox: '+n+' unread message(s)'})});
+          Object.entries(d.inboxes||{}).forEach(([role,msgs])=>{if(msgs.length)alerts.push({l:'warn',m:role+' inbox: '+msgs.length+' unread message(s)'})});
           (d.locks||[]).filter(l=>l.stale).forEach(l=>alerts.push({l:'danger',m:'Stale lock: '+esc(l.name)+' held by '+(l.agent||'?')+', expired'}));
           document.getElementById('alerts').innerHTML=alerts.map(a=>`<div class="alert ${a.l==='warn'?'warn':''}">&#x26A0; ${esc(a.m)}</div>`).join('');
 
@@ -301,7 +310,11 @@ module Dashboard
           document.getElementById('events').innerHTML=evts.map(e=>`<div class="er"><span class="ets">${ago(e.ts)} ago</span><span class="ea ${ac(e.action)}">${esc(e.action)}</span><span>${esc(e.agent)} ${e.detail?'&mdash; '+esc(e.detail.slice(0,55)):''}</span></div>`).join('')||'<div class="muted">no events yet</div>';
 
           const inboxes=Object.entries(d.inboxes||{});
-          document.getElementById('inboxes').innerHTML=inboxes.length?inboxes.map(([role,n])=>`<div class="row"><span>${esc(role)}</span> ${n>0?b(n+' unread','warn'):b('clear','ok')}</div>`).join(''):'<div class="muted">no inboxes</div>';
+          document.getElementById('inboxes').innerHTML=inboxes.length?inboxes.map(([role,msgs])=>{
+            const head=`<div class="row"><span>${esc(role)}</span> ${msgs.length?b(msgs.length+' unread','warn'):b('clear','ok')}</div>`;
+            const body=msgs.map(m=>`<div class="row" style="padding-left:10px"><span class="meta">${esc(m.from||'?')}${m.at?' &middot; '+ago(m.at)+' ago':''}</span><div>${esc(m.preview)}</div></div>`).join('');
+            return head+body;
+          }).join(''):'<div class="muted">no inboxes</div>';
 
           const lks=d.locks||[];
           document.getElementById('locks').innerHTML=lks.length?lks.map(l=>`<div class="row"><span>${esc(l.name)}</span> ${l.stale?b('stale','danger'):b('held','info')} <span class="meta" style="margin-left:4px">${esc(l.agent||'')} &middot; expires ${ago(l.expires_at)}</span></div>`).join(''):'<div class="muted">no active locks</div>';

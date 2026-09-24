@@ -67,7 +67,7 @@
 # the dispatcher also starts fresh. Other failures keep the session.
 #
 # The agent runs with COORD_DIR, COORD_AGENT, COORD_WORKER (default:
-# <role>-dispatcher), and TASKRC set, and with stdin closed. Every built-in
+# <role>-dispatcher), TASKRC, and COORD_DISPATCHED=1 set, and with stdin closed. Every built-in
 # adapter skips permission prompts (hermes --yolo, claude bypassPermissions,
 # codex --dangerously-bypass-approvals-and-sandbox): the agent runs every
 # tool call without approval. Run it only in a worktree or sandbox you trust
@@ -554,7 +554,8 @@ module Dispatcher
     end
 
     def self.agent_env(config)
-      env = { "COORD_DIR" => config.coord_dir, "COORD_AGENT" => config.role, "COORD_WORKER" => config.worker }
+      env = { "COORD_DIR" => config.coord_dir, "COORD_AGENT" => config.role, "COORD_WORKER" => config.worker,
+              "COORD_DISPATCHED" => "1" }
       taskrc = File.join(config.coord_dir, "taskrc")
       File.exist?(taskrc) ? env.merge("TASKRC" => taskrc) : env
     end

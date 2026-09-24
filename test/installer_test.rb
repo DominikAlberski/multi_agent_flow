@@ -170,6 +170,20 @@ class BootstrapTest < InstallerTestCase
     assert_includes out, "skipped (VAULT_SKIP is set)"
     refute File.exist?(File.join(@dir, "coordination", "vault.pid"))
   end
+
+  def test_adds_board_watch_hooks_to_claude_settings_once
+    settings_path = File.join(@dir, ".claude", "settings.json")
+    FileUtils.mkdir_p(File.dirname(settings_path))
+    File.write(settings_path, JSON.generate(hooks: { Stop: [{ matcher: "", hooks: [{ type: "command",
+                                                     command: "ruby coordination/hooks/next-task.rb" }] }] }))
+    2.times { assert_equal 0, bootstrap.last }
+
+    hooks = JSON.parse(File.read(settings_path))["hooks"]
+    watch = hooks["SessionStart"].map { |entry| entry["hooks"][0] }
+    assert_equal [true], watch.map { |hook| hook["asyncRewake"] }
+    assert_equal 2, hooks["Stop"].size
+    assert File.exist?(File.join(@dir, "coordination", "hooks", "board-watch.rb"))
+  end
 end
 
 class FlowTest < InstallerTestCase

@@ -29,6 +29,17 @@ module Bootstrap
 
   NEXT_TASK_HOOK_SIGNATURE = "next-task.rb - Stop hook for Claude Code and Codex."
   NEXT_TASK_HERMES_SIGNATURE = "next-task-hermes.sh - on_session_end hook for Hermes Agent."
+  BOARD_WATCH_SIGNATURE = "board-watch.rb - background board watcher for Claude Code sessions."
+
+  # Claude Code hooks: [event, script, hook]. The sync next-task hook continues
+  # a session at Stop. The asyncRewake board-watch hook wakes an idle session.
+  CLAUDE_HOOKS = [
+    ["Stop", "next-task.rb", { "type" => "command", "command" => "ruby coordination/hooks/next-task.rb" }],
+    *%w[SessionStart Stop].map do |event|
+      [event, "board-watch.rb", { "type" => "command", "command" => "ruby coordination/hooks/board-watch.rb",
+                                  "async" => true, "asyncRewake" => true, "timeout" => 604_800 }]
+    end
+  ].freeze
 
   PLAN_STEPS = %i[plan_coordination_dirs plan_gitkeeps plan_coord plan_setup_agent plan_dispatcher
                   plan_vault plan_dashboard plan_taskrc plan_contracts plan_gitignore
@@ -308,7 +319,9 @@ module Bootstrap
         ["hooks/next-task.rb", File.join(@target, "coordination", "hooks", "next-task.rb"),
          NEXT_TASK_HOOK_SIGNATURE],
         ["hooks/next-task-hermes.sh", File.join(@target, "coordination", "hooks", "next-task-hermes.sh"),
-         NEXT_TASK_HERMES_SIGNATURE]
+         NEXT_TASK_HERMES_SIGNATURE],
+        ["hooks/board-watch.rb", File.join(@target, "coordination", "hooks", "board-watch.rb"),
+         BOARD_WATCH_SIGNATURE]
       ].map do |src_name, dest, signature|
         status = hook_script_status(dest, src_name, signature)
         label = status == :refuse ? "#{dest} (exists and is not ours; use --force)" : dest
@@ -329,7 +342,7 @@ module Bootstrap
 
       path = File.join(@target, ".claude", "settings.json")
       status = claude_hook_status(path)
-      [action(status, path, "#{path} (Stop hook for next-task)", :claude_stop_hook)]
+      [action(status, path, "#{path} (next-task + board-watch hooks)", :claude_stop_hook)]
     end
 
     def claude_hook_status(path)
@@ -340,23 +353,33 @@ module Bootstrap
     end
 
     def claude_hook_present?(settings)
-      stops = settings.dig("hooks", "Stop") || []
-      stops.any? { |entry| entry.dig("hooks", 0, "command").to_s.include?("next-task.rb") }
+      missing_claude_hooks(settings).empty?
+    end
+
+    def missing_claude_hooks(settings)
+      CLAUDE_HOOKS.reject { |event, script, _hook| claude_hook_entry?(settings, event, script) }
+    end
+
+    def claude_hook_entry?(settings, event, script)
+      (settings.dig("hooks", event) || []).any? { |entry| entry.dig("hooks", 0, "command").to_s.include?(script) }
     end
 
     def configure_claude_settings(path, _source = nil)
       settings = File.exist?(path) ? (JSON.parse(File.read(path)) rescue {}) : {}
-      settings["hooks"] ||= {}
-      settings["hooks"]["Stop"] ||= []
-      return false if claude_hook_present?(settings)
+      missing = missing_claude_hooks(settings)
+      missing.each { |event, _script, hook| add_claude_hook(settings, event, hook) }
+      write_json(path, settings) unless missing.empty?
+      !missing.empty?
+    end
 
-      settings["hooks"]["Stop"] << {
-        "matcher" => "",
-        "hooks" => [{ "type" => "command", "command" => "ruby coordination/hooks/next-task.rb" }]
-      }
+    def add_claude_hook(settings, event, hook)
+      settings["hooks"] ||= {}
+      (settings["hooks"][event] ||= []) << { "matcher" => "", "hooks" => [hook] }
+    end
+
+    def write_json(path, data)
       FileUtils.mkdir_p(File.dirname(path))
-      File.write(path, JSON.pretty_generate(settings))
-      true
+      File.write(path, JSON.pretty_generate(data))
     end
 
     # A marked block is owned by this tool. When the shipped block changed

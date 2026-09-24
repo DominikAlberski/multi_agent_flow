@@ -194,6 +194,35 @@ Harness-specific notes:
 `WORKER` defaults to `1`. To run two instances of one role, start
 `backend-developer_2` too. Claims are atomic; two workers never take the same task.
 
+### Keep interactive Claude Code agents awake
+
+An idle Claude Code session does not poll the board by itself. `bootstrap.rb`
+adds two hooks to `.claude/settings.json`:
+
+- `next-task.rb` (sync `Stop` hook): if unclaimed tasks exist when the agent
+  stops, the hook continues the session at once.
+- `board-watch.rb` (`asyncRewake` hook on `SessionStart` and `Stop`): the hook
+  runs in the background and checks the board every 60 seconds.
+
+`board-watch.rb` uses these rules:
+
+1. If the session transcript changed in the last 120 seconds, the agent is
+   running. The watcher does nothing.
+2. If the agent is idle and the board has work for the role, the watcher pokes
+   the agent. Work is unclaimed tasks, tasks that this worker claimed, and
+   unread inbox messages. The poke wakes the session with a work prompt.
+3. If the work did not change since the last poke, the next poke waits twice
+   as long, up to 1 hour.
+
+One watcher runs per worker. The lock is `coordination/locks/board-watch-<worker>.d`.
+The watcher stops when its Claude Code process stops. The watcher does nothing
+for the user's own sessions (no `COORD_AGENT`) and for dispatched agents
+(`COORD_DISPATCHED=1`). To change the timing, set `BOARD_WATCH_INTERVAL` and
+`BOARD_WATCH_IDLE` (seconds) before you run `setup_agent`.
+
+Codex, Hermes, and opencode have no `asyncRewake` hook. For these harnesses,
+use `--dispatch` to restart idle agents.
+
 ---
 
 ## Start the dispatched agents
