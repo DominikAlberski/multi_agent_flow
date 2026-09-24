@@ -136,8 +136,9 @@ Worktrees contain only committed files. Commit before starting any agent.
 
 ```sh
 cd "$PROJECT"
-git add coord setup_agent dispatcher AGENTS.md CLAUDE.md .gitignore \
+git add coord setup_agent dispatcher AGENTS.md .gitignore \
         .agent-flow.json .claude .opencode coordination
+git rm --cached -q --ignore-unmatch CLAUDE.md .claude/CLAUDE.md   # bootstrap moved it into AGENTS.md
 git add vault vault-daemon 2>/dev/null; true
 git commit -m "Add multi-agent flow"
 ```

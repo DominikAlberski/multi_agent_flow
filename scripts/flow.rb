@@ -247,22 +247,10 @@ module Flow
       return unless @bootstrap
       return if @check
 
-      ensure_claude_md
       args = [RbConfig.ruby, File.join(ASSETS, "bootstrap.rb"), @project, "--roles", roles_arg]
       args << "--force" if @force
       ok = system(*args)
       abort "flow: coordination bootstrap failed" unless ok
-    end
-
-    # bootstrap.rb only appends the contract to an existing CLAUDE.md (it
-    # doesn't know which harnesses were requested, so it never creates one
-    # unprompted). If this run actually asked for the claude harness, create
-    # an empty CLAUDE.md first so bootstrap has something to append to.
-    def ensure_claude_md
-      return unless @agents.any? { |a| a[:harness] == "claude" }
-
-      path = File.join(@project, "CLAUDE.md")
-      FileUtils.touch(path) unless File.exist?(path)
     end
 
     def roles_arg

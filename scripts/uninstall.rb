@@ -184,11 +184,11 @@ module Uninstall
     def ours?(hook) = COMMANDS.include?(hook["command"])
   end
 
-  # Removes the marked block from AGENTS.md, CLAUDE.md and .gitignore. Text
+  # Removes the marked block from AGENTS.md and .gitignore. Text
   # outside the block stays. A file with nothing left goes. .gitignore keeps
   # the ignore rules for the kept graphify-out/ and obsidian/ dirs.
   class MarkedFiles
-    FILES = %w[AGENTS.md CLAUDE.md .gitignore].freeze
+    FILES = %w[AGENTS.md .gitignore].freeze
 
     def initialize(project) = @project = project
 

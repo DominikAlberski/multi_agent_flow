@@ -42,14 +42,17 @@ module Bootstrap
   ].freeze
 
   PLAN_STEPS = %i[plan_coordination_dirs plan_gitkeeps plan_coord plan_setup_agent plan_dispatcher
-                  plan_vault plan_dashboard plan_taskrc plan_contracts plan_gitignore
+                  plan_vault plan_dashboard plan_taskrc plan_claude_md plan_contracts plan_gitignore
                   plan_hook_scripts plan_claude_stop_hook].freeze
+
+  # Project instruction files that stop Claude Code from reading AGENTS.md.
+  CLAUDE_MD_FILES = ["CLAUDE.md", File.join(".claude", "CLAUDE.md")].freeze
 
   # Maps each writing action kind to the Installer method that performs it.
   # Every writer takes (path, source). :skip and :refuse write nothing.
   WRITERS = { mkdir: :make_dir, touch: :touch_file, create: :write_script, update: :write_script,
               create_taskrc: :write_taskrc, upgrade_taskrc: :upgrade_taskrc,
-              append: :append_marked, replace: :replace_marked,
+              append: :append_marked, replace: :replace_marked, move_claude_md: :move_claude_md,
               configure_claude_hook: :configure_claude_settings }.freeze
 
   REQUIRED_DEPS = {
@@ -299,14 +302,17 @@ module Bootstrap
       File.exist?(a) && File.exist?(b) && File.identical?(a, b)
     end
 
-    # AGENTS.md is harness-agnostic and always created. CLAUDE.md is
-    # Claude-Code-specific: only touch it if it already exists (a Claude Code
-    # user, or `flow.rb`, created it first). Don't add a file irrelevant to a
-    # project that isn't using Claude Code.
+    # Claude Code reads AGENTS.md only when the project has no CLAUDE.md.
+    # Move each CLAUDE.md into AGENTS.md, so every harness reads one file.
+    def plan_claude_md
+      CLAUDE_MD_FILES.map { |name| File.join(@target, name) }.select { |path| File.file?(path) }
+                     .map { |path| action(:move_claude_md, path, "#{path} (move into AGENTS.md)") }
+    end
+
+    # AGENTS.md is the only instruction file. Every harness reads it.
     def plan_contracts
-      files = [File.join(@target, "AGENTS.md")]
-      files << File.join(@target, "CLAUDE.md") if File.exist?(File.join(@target, "CLAUDE.md"))
-      files.map { |f| action(block_status(f, :contract), f, "#{f} (agent contract)", :contract) }
+      path = File.join(@target, "AGENTS.md")
+      [action(block_status(path, :contract), path, "#{path} (agent contract)", :contract)]
     end
 
     def plan_gitignore
@@ -480,6 +486,19 @@ module Bootstrap
       FileUtils.touch(path)
       File.open(path, "a") { |file| file.puts; file.write(append_content(source)); file.puts }
       true
+    end
+
+    # Drops the old contract block and any `@AGENTS.md` import: AGENTS.md
+    # gets its own contract, and a self-import is a loop.
+    def move_claude_md(path, _source = nil)
+      text = MarkedBlock.new(File.read(path)).remove.lines.reject { |line| line.strip == "@AGENTS.md" }.join.strip
+      append_text(File.join(@target, "AGENTS.md"), text) unless text.empty?
+      FileUtils.rm(path)
+    end
+
+    def append_text(path, text)
+      old = File.exist?(path) ? File.read(path).rstrip : ""
+      File.write(path, [old, text].reject(&:empty?).join("\n\n") + "\n")
     end
 
     def replace_marked(path, source)

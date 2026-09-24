@@ -131,8 +131,10 @@ Expected output:
   - `.opencode/agents/<role>.md`
   - `~/.hermes/skills/my-app-tester/SKILL.md`
 - New files in the project: `coord`, `setup_agent`, `dispatcher`, `vault`,
-  `dashboard`, `AGENTS.md`, `CLAUDE.md`, `.gitignore`, `.agent-flow.json`,
-  `coordination/`.
+  `dashboard`, `AGENTS.md`, `.gitignore`, `.agent-flow.json`, `coordination/`.
+- If the project had a `CLAUDE.md` or `.claude/CLAUDE.md`, bootstrap moves its
+  text into `AGENTS.md` and deletes the file. Claude Code reads `AGENTS.md`
+  only when no `CLAUDE.md` exists.
 
 ### 6. Commit the installed files
 
@@ -141,8 +143,9 @@ files, so commit before starting any agent.
 
 ```sh
 cd "$PROJECT"
-git add coord setup_agent dispatcher vault dashboard AGENTS.md CLAUDE.md \
+git add coord setup_agent dispatcher vault dashboard AGENTS.md \
         .gitignore .agent-flow.json .claude .opencode coordination
+git rm --cached -q --ignore-unmatch CLAUDE.md .claude/CLAUDE.md   # bootstrap moved it into AGENTS.md
 git add vault-daemon 2>/dev/null; true   # if bootstrap.rb used vault-daemon instead of vault
 git commit -m "Add multi-agent flow"
 ```
@@ -484,7 +487,7 @@ The uninstaller removes:
 - Generated role files in `.claude/agents/`, `.opencode/agents/`, `.codex/prompts/`,
   and the project's Hermes skills.
 - The flow hooks in `.claude/settings.json`.
-- The marked blocks in `AGENTS.md`, `CLAUDE.md`, and `.gitignore`.
+- The marked blocks in `AGENTS.md` and `.gitignore`.
 - `.agent-flow.json`.
 
 The uninstaller keeps:

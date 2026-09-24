@@ -60,7 +60,7 @@ class UninstallRemovesTest < UninstallerTestCase
 
     assert_equal 0, status, out
     %w[coord setup_agent dispatcher dashboard vault coordination .agent-flow.json
-       AGENTS.md CLAUDE.md .gitignore .claude .opencode].each { |rel| refute File.exist?(path(rel)), "#{rel} still exists" }
+       AGENTS.md .gitignore .claude .opencode].each { |rel| refute File.exist?(path(rel)), "#{rel} still exists" }
     refute Dir.exist?(File.join(@hermes, "#{File.basename(@dir)}-reviewer"))
   end
 

@@ -70,7 +70,7 @@ multi_agent_flow/
     dashboard                 # web dashboard: stuck-detection UI (Ruby/Sinatra)
     bootstrap.rb              # idempotent coordination layer installer (Ruby)
     taskrc.append             # Taskwarrior UDA block
-    agents-contract.md        # contract appended to AGENTS.md / CLAUDE.md
+    agents-contract.md        # contract appended to AGENTS.md
     gitignore.append          # marker-guarded ignore entries
     coordination/             # inbox / locks / exports skeleton
     harness-hooks/            # next-task + board-watch scripts run by harnesses

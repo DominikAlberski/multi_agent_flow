@@ -186,6 +186,46 @@ class BootstrapTest < InstallerTestCase
     assert File.exist?(File.join(@dir, "coordination", "harness-hooks", "board-watch.rb"))
     assert Dir.exist?(File.join(@dir, "coordination", "message-hooks"))
   end
+
+  # Claude Code reads AGENTS.md only when no project CLAUDE.md exists, so the
+  # user's CLAUDE.md text moves into AGENTS.md and CLAUDE.md goes.
+  def test_moves_claude_md_into_agents_md
+    File.write(File.join(@dir, "AGENTS.md"), "# Agents rules\n")
+    File.write(File.join(@dir, "CLAUDE.md"), "# Claude rules\n@AGENTS.md\n")
+
+    out, status = bootstrap
+
+    assert_equal 0, status, out
+    refute File.exist?(File.join(@dir, "CLAUDE.md"))
+    agents = File.read(File.join(@dir, "AGENTS.md"))
+    assert agents.start_with?("# Agents rules\n\n# Claude rules\n")
+    refute_includes agents, "@AGENTS.md"
+    assert_equal 1, agents.scan(">>> multi-agent-flow >>>").size
+  end
+
+  def test_moves_dot_claude_claude_md_and_drops_its_old_contract
+    path = File.join(@dir, ".claude", "CLAUDE.md")
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, "# Mine\n\n<!-- >>> multi-agent-flow >>> -->\nold\n<!-- <<< multi-agent-flow <<< -->\n")
+
+    out, status = bootstrap
+
+    assert_equal 0, status, out
+    refute File.exist?(path)
+    agents = File.read(File.join(@dir, "AGENTS.md"))
+    assert agents.start_with?("# Mine\n")
+    refute_match(/^old$/, agents)
+    assert_equal 1, agents.scan(">>> multi-agent-flow >>>").size
+  end
+
+  def test_check_does_not_move_claude_md
+    File.write(File.join(@dir, "CLAUDE.md"), "# Claude rules\n")
+
+    out, = bootstrap("--check")
+
+    assert_includes out, "CLAUDE.md (move into AGENTS.md)"
+    assert_equal "# Claude rules\n", File.read(File.join(@dir, "CLAUDE.md"))
+  end
 end
 
 class FlowTest < InstallerTestCase

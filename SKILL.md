@@ -54,9 +54,10 @@ It creates and never destroys:
 - `coordination/taskrc`: a project-local Taskwarrior config (own database,
   under `coordination/taskdata`) plus the UDA block — never the user's
   global `~/.taskrc`, so two projects never share one board
-- a "Multi-agent coordination" contract appended to `AGENTS.md`, and to
-  `CLAUDE.md` if that file exists (`scripts/flow.rb` creates it first when a
-  `claude` agent was requested; bootstrap alone never invents it)
+- a "Multi-agent coordination" contract appended to `AGENTS.md`, the only
+  instruction file; bootstrap moves the text of an existing `CLAUDE.md` or
+  `.claude/CLAUDE.md` into `AGENTS.md` and deletes that file, because Claude
+  Code reads `AGENTS.md` only when no `CLAUDE.md` exists
 - `.gitignore` entries (marker-guarded)
 
 Re-running is safe: the installer is idempotent. It compares file contents and
