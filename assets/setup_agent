@@ -158,18 +158,11 @@ module SetupAgent
       File.join(root, WORKTREES_DIR, slug)
     end
 
+    # `coord worktree` is idempotent. Run it also for an existing worktree,
+    # so the worktree gets runtime files that were added after it was created.
     def self.ensure(role, worker_id)
-      slug = "#{role}-#{worker_id}"
-      dir = dir_for(Dir.pwd, slug)
-      return new(dir) if Dir.exist?(dir)
-
-      create(role, worker_id, dir)
-    end
-
-    def self.create(role, worker_id, dir)
-      ok = system("./coord", "worktree", role, worker_id)
-      abort "setup_agent: ./coord worktree failed" unless ok
-
+      dir = dir_for(Dir.pwd, "#{role}-#{worker_id}")
+      abort "setup_agent: ./coord worktree failed" unless system("./coord", "worktree", role, worker_id)
       new(dir)
     end
 

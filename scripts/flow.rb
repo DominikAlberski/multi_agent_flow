@@ -54,6 +54,12 @@ module Flow
     - Do not use subagents to verify your work.
   TEXT
 
+  NO_TASK_STOP = "- If no task and no message is available, stop. The board watcher wakes you when work arrives."
+  NO_TASK_WAIT = <<~TEXT.strip
+    - If no task is available, run `./coord next --wait --timeout 540`. It returns
+      when a task or a message arrives. If it times out, run it again. Do not poll by hand.
+  TEXT
+
   WORKER_LOOP = <<~LOOP
     Work loop:
     1. Read messages: `./coord inbox`.
@@ -247,6 +253,9 @@ module Flow
       return unless @bootstrap
       return if @check
 
+      # Bootstrap adds the Claude Code hooks only if .claude/ exists. Flow
+      # writes .claude/agents/ after bootstrap, so create .claude/ first.
+      FileUtils.mkdir_p(File.join(@project, ".claude")) if @agents.any? { |a| a[:harness] == "claude" }
       args = [RbConfig.ruby, File.join(ASSETS, "bootstrap.rb"), @project, "--roles", roles_arg]
       args << "--force" if @force
       ok = system(*args)
@@ -322,10 +331,10 @@ module Flow
       "#{intro(data)}\n\n#{duties_block(data)}\n\n#{format(WORKER_LOOP, role: role, no_task_instruction: no_task_line(harness))}"
     end
 
+    # Only Claude Code can wake an idle session (the board-watch hook). Other
+    # harnesses block in `coord next --wait`, which also returns on a message.
     def no_task_line(harness)
-      harness == "opencode" \
-        ? "- If no task is available, run `./coord next --wait`. Do not poll by hand." \
-        : "- If no task is available, stop. The next-task hook will re-prompt you when tasks arrive."
+      harness == "claude" ? NO_TASK_STOP : NO_TASK_WAIT
     end
 
     def architect_prompt(data)

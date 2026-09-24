@@ -322,6 +322,46 @@ class FlowTest < InstallerTestCase
     assert_includes content, "no project manager"
     refute_includes content, "coord msg --from architect project-manager"
   end
+
+  # Regression: bootstrap ran before flow wrote .claude/agents/. Bootstrap saw
+  # no .claude/ directory and skipped the Claude hooks, so idle Claude agents
+  # had no board watcher and never woke up.
+  def test_claude_agent_gets_board_watch_hooks_on_a_fresh_project
+    out, status = run_ruby(FLOW, "--project", @dir, "--agent", "claude:backend-developer")
+
+    assert_equal 0, status, out
+    settings = JSON.parse(File.read(File.join(@dir, ".claude", "settings.json")))
+    commands = settings["hooks"]["SessionStart"].map { |entry| entry["hooks"][0]["command"] }
+    assert_includes commands, "ruby coordination/harness-hooks/board-watch.rb"
+  end
+
+  def test_claude_worker_stops_and_the_board_watcher_wakes_it
+    out, status = flow("--agent", "claude:backend-developer")
+
+    assert_equal 0, status, out
+    content = File.read(File.join(@dir, ".claude", "agents", "backend-developer.md"))
+    assert_includes content, "The board watcher wakes you"
+    refute_includes content, "coord next --wait"
+  end
+
+  # Only Claude Code can wake an idle session. Other harnesses must block in
+  # `coord next --wait`, which returns on a new task or a new message.
+  def test_codex_worker_blocks_on_the_board_instead_of_stopping
+    out, status = flow_with_home("--agent", "codex:backend-developer")
+
+    assert_equal 0, status, out
+    content = File.read(File.join(@dir, ".codex", "prompts", "backend-developer.md"))
+    assert_includes content, "./coord next --wait --timeout 540"
+    refute_includes content, "next-task hook will re-prompt"
+  end
+
+  # Codex hooks install into HOME, so keep HOME inside the test directory.
+  def flow_with_home(*args)
+    env = { "VAULT_SKIP" => "1", "HOME" => @dir }
+    output = IO.popen(env, [RbConfig.ruby, FLOW, "--project", @dir, "--no-bootstrap", *args],
+                      err: [:child, :out], &:read)
+    [output, $?.exitstatus]
+  end
 end
 
 class VaultTest < Minitest::Test

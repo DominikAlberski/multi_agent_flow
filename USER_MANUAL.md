@@ -226,8 +226,10 @@ for the user's own sessions (no `COORD_ROLE`) and for dispatched agents
 (`COORD_DISPATCHED=1`). To change the timing, set `BOARD_WATCH_INTERVAL` and
 `BOARD_WATCH_IDLE` (seconds) before you run `setup_agent`.
 
-Codex, Hermes, and opencode have no `asyncRewake` hook. For these harnesses,
-use `--dispatch` to restart idle agents.
+Codex, Hermes, and opencode have no `asyncRewake` hook. Their role files tell
+the agent to block in `./coord next --wait --timeout 540` when it has no work.
+The command returns when a task or a message arrives. Use `--dispatch` to run
+these agents unattended.
 
 ---
 
@@ -411,12 +413,14 @@ root as the Obsidian vault.
 `coord msg` and `coord broadcast` fire a per-role hook at
 `coordination/message-hooks/<role>.sh` when a message is delivered. The hook is a plain
 shell script. If there is no hook, `coord` only writes the inbox file.
+An agent does not need a hook to get a message. The board watcher (Claude Code)
+and `coord next --wait` (other harnesses) wake the agent on an unread message.
 
 ```sh
 # coordination/message-hooks/backend-developer.sh
 #!/bin/sh
-# Poke a running tmux session to check its inbox
-tmux send-keys -t backend './coord inbox' Enter
+# Show a desktop notification (macOS)
+osascript -e "display notification \"$COORD_FROM wrote to $COORD_ROLE\" with title \"coord\""
 ```
 
 Hook environment variables:
@@ -542,7 +546,7 @@ Do these steps in the project:
 | `./coord init` | Create the `coordination/` folders. |
 | `./coord add --role ROLE --scope S --title T` | Create a task for a role. Prints the ID. |
 | `./coord next [ROLE]` | List unclaimed tasks for a role (defaults to `$COORD_ROLE`). |
-| `./coord next --wait` | Block (polls every 60s) until a task appears. |
+| `./coord next --wait` | Block (polls every 60s) until a task or an unread message appears. |
 | `./coord next --mine` | List the tasks this worker has claimed. |
 | `./coord conflicts` | List pending tasks whose scopes overlap. |
 | `./coord claim ID` | Atomically claim a task for `$COORD_WORKER`. Refuses to steal an active claim. |

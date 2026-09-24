@@ -227,7 +227,7 @@ refused. Use `--force` only to take over a task on purpose.
 If the task is unclaimed but no agent is working on it:
 
 ```sh
-./coord next --wait   # block until one appears (polls every 60s)
+./coord next --wait   # block until a task or a message appears (polls every 60s)
 ```
 
 If a worker crashes mid-task, its claim is not stuck forever. After

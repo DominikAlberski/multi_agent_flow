@@ -11,7 +11,7 @@ This project uses a shared coordination layer for multiple coding agents
 ./coord init                                  # create coordination/ dirs
 ./coord add --role ROLE --scope S --title T   # architect: add a task (prints id)
 ./coord annotate ID "Goal: ... Inputs: ... Out of scope: ... Acceptance: ... Report format: ..."  # architect: add the task's spec, right after `add`
-./coord next [ROLE] [--wait [--interval S]]   # list unclaimed tasks (or block until one appears)
+./coord next [ROLE] [--wait [--interval S]]   # list unclaimed tasks (or block until a task or message appears)
 ./coord next --mine                           # list your in-progress tasks
 ./coord conflicts                             # list pending tasks with overlapping scopes
 ./coord claim ID [--force]                    # atomically claim for COORD_WORKER
@@ -72,8 +72,8 @@ Read messages move to `coordination/inbox/<agent>/read/`.
 `coordination/message-hooks/<role>.sh` if one is installed. The hook is a plain shell
 script. It gets `COORD_ROLE`, `COORD_FROM`, and `COORD_MSG_FILE` in its
 environment, and the message file path as `$1`. It runs in the background and
-logs to `coordination/message-hooks/<role>.log`. Use it to poke a running agent
-session, start a one-shot run, or send a notification. `coord` does not know
+logs to `coordination/message-hooks/<role>.log`. Use it to start a one-shot run
+or to send a notification. `coord` does not know
 which harness the agent runs in.
 `coord log` shows claims, completions, unclaims, messages, and broadcasts from
 `coordination/events.log`. Any agent can read this shared history without

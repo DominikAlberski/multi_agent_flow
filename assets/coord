@@ -645,12 +645,11 @@ module Coord
 
   # Hooks runs a per-role shell script when a message is delivered. The hook
   # is a plain user-authored script at coordination/message-hooks/<role>.sh — coord
-  # does not know or care what harness the agent runs in. It pokes a running
-  # session (tmux send-keys), starts a fresh one-shot, sends a notification,
-  # or does nothing at all. The hook receives COORD_ROLE, COORD_FROM, and
-  # COORD_MSG_FILE in its environment, and the message file path as $1. If the
-  # hook is absent, coord is silent — it just writes the inbox file, and the
-  # agent picks it up on its next `coord inbox`.
+  # does not know or care what harness the agent runs in. It starts a fresh
+  # one-shot, sends a notification, or does nothing at all. The hook receives
+  # COORD_ROLE, COORD_FROM, and COORD_MSG_FILE in its environment, and the
+  # message file path as $1. If the hook is absent, coord is silent — it just
+  # writes the inbox file, and the agent picks it up on its next `coord inbox`.
   #
   # The hook runs detached in its own process group, so a slow hook (one that
   # starts a whole agent run) never blocks the sender. Its stdout and stderr
@@ -840,6 +839,8 @@ module Coord
   class Worktree
     ENV_FILE = "coord-env.sh"
     WORKTREES_DIR = ".worktrees"
+    RUNTIME_FILES = %w[coord .claude/settings.json coordination/harness-hooks/next-task.rb
+                       coordination/harness-hooks/board-watch.rb].freeze
 
     def self.dir_for(root, slug)
       File.join(root, WORKTREES_DIR, slug)
@@ -891,7 +892,7 @@ module Coord
     end
 
     def finish(dir, branch, message)
-      ensure_coord(dir)
+      ensure_runtime_files(dir)
       exclude_env_file(dir)
       write_env_file(dir)
       warn_uncommitted_coord
@@ -899,18 +900,20 @@ module Coord
       puts "In that worktree, run: source #{ENV_FILE}   (shares this project's coordination/ and task board)"
     end
 
-    # `coord` is normally committed, so a fresh worktree checks out its own
-    # copy. If it is not committed yet, the checkout has none and ./coord would
-    # not exist; copy the main worktree's copy so the agent can still run it.
-    def ensure_coord(dir)
-      dest = File.join(dir, "coord")
-      return if File.exist?(dest)
+    # These files are normally committed, so a fresh worktree checks out its
+    # own copy. If one is not committed yet, the checkout has none: ./coord
+    # would not exist, and Claude Code would run without the board-watch hook.
+    # Copy the main worktree's copy of each missing file. A reused worktree
+    # gets files that were added after it was created.
+    def ensure_runtime_files(dir)
+      RUNTIME_FILES.each { |path| copy_missing(File.join(@root, path), File.join(dir, path)) }
+    end
 
-      src = File.join(@root, "coord")
-      return unless File.exist?(src)
+    def copy_missing(src, dest)
+      return if File.exist?(dest) || !File.exist?(src)
 
-      FileUtils.cp(src, dest)
-      FileUtils.chmod("+x", dest)
+      FileUtils.mkdir_p(File.dirname(dest))
+      FileUtils.cp(src, dest, preserve: true)
     end
 
     # coord-env.sh holds absolute host paths and must never be committed. Git
@@ -1048,7 +1051,16 @@ module Coord
       # `coord board` run only shells out to `task` once), but reusing the
       # single Wiring-memoized instance across poll iterations would freeze
       # the result at the first, possibly-empty, snapshot forever.
-      wait_for(interval, timeout, -> { Tasks.new.next_for(role) }) { board.next_tasks(role) }
+      # A message ends the wait too: an agent blocked here must not miss it.
+      wait_for(interval, timeout, -> { Tasks.new.next_for(role) + messages.files(role) }) do
+        board.next_tasks(role)
+        announce_messages(role)
+      end
+    end
+
+    def announce_messages(role)
+      count = messages.files(role).size
+      puts "#{count} unread message#{"s" if count != 1}. Run ./coord inbox." if count.positive?
     end
 
     def cmd_conflicts = conflicts.report

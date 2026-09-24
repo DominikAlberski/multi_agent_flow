@@ -217,6 +217,17 @@ class TaskwarriorTest < Minitest::Test
     assert_equal 1, error.status
   end
 
+  # An agent that waits for tasks must also wake up for a message. Before,
+  # `next --wait` watched tasks only, so a message never reached the agent.
+  def test_next_wait_returns_when_a_message_arrives
+    Thread.new { sleep 0.3; Coord::CLI.new(["msg", "--from", "architect", "backend-developer", "hi"], env: @env).run }
+    out, = capture_io do
+      Coord::CLI.new(["next", "--wait", "--interval", "1", "--timeout", "5"], env: @env).run
+    end
+    assert_match(/1 unread message/, out)
+    assert_match(%r{\./coord inbox}, out)
+  end
+
   # Regression: a failed `task add` used to return nil, so `coord add` printed
   # a blank line and exited 0 while creating nothing.
   def test_add_raises_when_taskwarrior_cannot_create_the_task
@@ -600,5 +611,31 @@ class WorktreeFirstRunTest < Minitest::Test
     assert File.exist?(File.join(@worktree_dir, "coord"))
     status = `git -C #{@worktree_dir} status --porcelain`
     refute_includes status, "coord-env.sh"
+  end
+
+  CLAUDE_HOOK_FILES = %w[.claude/settings.json coordination/harness-hooks/board-watch.rb
+                         coordination/harness-hooks/next-task.rb].freeze
+
+  # Regression: an uncommitted .claude/settings.json never reached the
+  # worktree, so Claude agents there ran without the board-watch hook.
+  def test_worktree_copies_uncommitted_claude_hooks
+    CLAUDE_HOOK_FILES.each { |path| write(path) }
+    Coord::Worktree.new(@root).create("tester", nil)
+
+    CLAUDE_HOOK_FILES.each { |path| assert File.exist?(File.join(@worktree_dir, path)), path }
+  end
+
+  def test_reused_worktree_gets_hooks_added_after_it_was_created
+    Coord::Worktree.new(@root).create("tester", nil)
+    CLAUDE_HOOK_FILES.each { |path| write(path) }
+    Coord::Worktree.new(@root).create("tester", nil)
+
+    CLAUDE_HOOK_FILES.each { |path| assert File.exist?(File.join(@worktree_dir, path)), path }
+  end
+
+  def write(path)
+    full = File.join(@root, path)
+    FileUtils.mkdir_p(File.dirname(full))
+    File.write(full, "x\n")
   end
 end
