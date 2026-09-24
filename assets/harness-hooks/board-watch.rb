@@ -20,10 +20,10 @@
 # The script ends when its Claude Code process ends.
 #
 # Claude Code (.claude/settings.json), on SessionStart and on Stop:
-#   {"type":"command","command":"ruby coordination/hooks/board-watch.rb",
+#   {"type":"command","command":"ruby coordination/harness-hooks/board-watch.rb",
 #    "async":true,"asyncRewake":true,"timeout":604800}
 #
-# Required env: COORD_AGENT (set by setup_agent). COORD_DIR and TASKRC optional.
+# Required env: COORD_ROLE (set by setup_agent). COORD_DIR and TASKRC optional.
 # Env: BOARD_WATCH_INTERVAL (default 60), BOARD_WATCH_IDLE (default 120).
 # The script does nothing if COORD_DISPATCHED is set: the dispatcher owns
 # the loop for dispatched agents.
@@ -58,7 +58,7 @@ module BoardWatch
     end
 
     def work
-      Work.new(task_ids("next", @env["COORD_AGENT"]), task_ids("next", "--mine"), messages)
+      Work.new(task_ids("next", @env["COORD_ROLE"]), task_ids("next", "--mine"), messages)
     end
 
     private
@@ -69,7 +69,7 @@ module BoardWatch
     end
 
     def messages
-      Dir.glob(File.join(@env["COORD_DIR"], "inbox", @env["COORD_AGENT"], "*.md")).map { |p| File.basename(p) }
+      Dir.glob(File.join(@env["COORD_DIR"], "inbox", @env["COORD_ROLE"], "*.md")).map { |p| File.basename(p) }
     end
   end
 
@@ -213,9 +213,9 @@ module BoardWatch
 
     private
 
-    def active? = !agent.empty? && agent != "unknown" && !@env["COORD_DISPATCHED"] && coord
-    def agent = @env["COORD_AGENT"].to_s
-    def worker = @env.fetch("COORD_WORKER", agent)
+    def active? = !role.empty? && role != "unknown" && !@env["COORD_DISPATCHED"] && coord
+    def role = @env["COORD_ROLE"].to_s
+    def worker = @env.fetch("COORD_WORKER", role)
     def coord_dir = File.expand_path(@env.fetch("COORD_DIR", "coordination"))
     def lock = @lock ||= Lock.new(File.join(coord_dir, "locks", "board-watch-#{worker}.d"))
     def backoff = @backoff ||= Backoff.new(File.join(coord_dir, "sessions", "#{worker}.watch.json"), interval)
@@ -234,13 +234,13 @@ module BoardWatch
     end
 
     def board_env
-      @env.to_h.merge("COORD_DIR" => coord_dir, "COORD_AGENT" => agent, "COORD_WORKER" => worker,
+      @env.to_h.merge("COORD_DIR" => coord_dir, "COORD_ROLE" => role, "COORD_WORKER" => worker,
                       "TASKRC" => @env.fetch("TASKRC", File.join(coord_dir, "taskrc")))
     end
 
     def poke(work)
       backoff.record(work)
-      warn format(PROMPT, role: agent, summary: work.summary)
+      warn format(PROMPT, role: role, summary: work.summary)
       2
     end
   end

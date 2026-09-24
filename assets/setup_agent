@@ -45,7 +45,7 @@ module SetupAgent
   end
 
   def self.launch(args, manifest, _worktree)
-    ENV["COORD_AGENT"] = args.role
+    ENV["COORD_ROLE"] = args.role
     ENV["COORD_WORKER"] = args.worker
     model = args.model || manifest.model_for(args.harness, args.role)
     return Dispatch.launch(args, model) if args.dispatch

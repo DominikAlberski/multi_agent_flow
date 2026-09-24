@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# flow.rb - generate harness-specific agent files for the multi-agent flow.
+# flow.rb - generate harness-specific role files for the multi-agent flow.
 #
 # Usage:
 #   ruby scripts/flow.rb --project DIR --agent HARNESS:ROLE [--agent ...] \
@@ -33,7 +33,7 @@ module Flow
   DISPATCH_EXCLUDE = %w[architect project-manager].freeze
 
   # Applies to every `coord msg`, `coord annotate`, and task title/scope an
-  # agent writes. Generated agent files ship standalone (opencode/codex/hermes
+  # agent writes. Generated role files ship standalone (opencode/codex/hermes
   # sessions never see the user's own CLAUDE.md), so the rules are spelled
   # out here instead of referenced.
   STE_RULE = <<~TEXT.strip
@@ -74,7 +74,7 @@ module Flow
     1. Read goals from the project manager: `./coord inbox architect`.
     2. Decompose each goal into tasks. Keep scopes disjoint (one writer per path).
     3. Create each task, then add its spec:
-         ./coord add --agent <role> --scope "<paths>" --title "<title>"
+         ./coord add --role <role> --scope "<paths>" --title "<title>"
          ./coord annotate <id> "Goal: <goal>. Inputs: <files or context>. Out of scope: <paths or work>. Acceptance: <done condition>. Report format: <what to annotate>."
     4. Watch progress: `./coord status`, `./coord conflicts`, `./coord inbox architect`.
     5. Answer worker questions. Resolve conflicts.
@@ -101,7 +101,7 @@ module Flow
     1. Read the user's request from this session.
     2. Decompose the request into tasks. Keep scopes disjoint (one writer per path).
     3. Create each task, then add its spec:
-         ./coord add --agent <role> --scope "<paths>" --title "<title>"
+         ./coord add --role <role> --scope "<paths>" --title "<title>"
          ./coord annotate <id> "Goal: <goal>. Inputs: <files or context>. Out of scope: <paths or work>. Acceptance: <done condition>. Report format: <what to annotate>."
     4. Watch progress: `./coord status`, `./coord conflicts`.
     5. Answer worker questions. Resolve conflicts.
@@ -386,7 +386,7 @@ module Flow
       hooks_dir = File.join(Dir.home, ".codex", "hooks")
       FileUtils.mkdir_p(hooks_dir)
       dest = File.join(hooks_dir, "next-task.rb")
-      src  = File.join(ASSETS, "hooks", "next-task.rb")
+      src  = File.join(ASSETS, "harness-hooks", "next-task.rb")
       if !File.exist?(dest) || File.read(dest) != File.read(src)
         FileUtils.cp(src, dest)
         FileUtils.chmod("+x", dest)
@@ -413,7 +413,7 @@ module Flow
       hooks_dir = File.join(Dir.home, ".hermes", "agent-hooks")
       FileUtils.mkdir_p(hooks_dir)
       dest = File.join(hooks_dir, "next-task.sh")
-      src  = File.join(ASSETS, "hooks", "next-task-hermes.sh")
+      src  = File.join(ASSETS, "harness-hooks", "next-task-hermes.sh")
       if !File.exist?(dest) || File.read(dest) != File.read(src)
         FileUtils.cp(src, dest)
         FileUtils.chmod("+x", dest)
@@ -447,7 +447,7 @@ module Flow
 
     def print_instructions(results)
       puts
-      puts "Generated agent files:"
+      puts "Generated role files:"
       results.each { |result| puts generated_line(result) }
       print_missing_models(results)
       print_unembeddable(results)
@@ -495,7 +495,7 @@ module Flow
       return if list.empty?
 
       puts
-      puts "These harnesses cannot embed a model in the agent file. Set it in the harness:"
+      puts "These harnesses cannot embed a model in the role file. Set it in the harness:"
       list.each { |r| puts "  #{r[:agent][:harness]}:#{r[:agent][:role]} -> #{model_command(r)}" }
     end
 

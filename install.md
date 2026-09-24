@@ -106,7 +106,7 @@ ruby "$FLOW/scripts/flow.rb" \
 The generator does these things:
 
 1. Sets up the coordination layer. It calls `assets/bootstrap.rb`.
-2. Writes one agent file per role, in the format of its harness.
+2. Writes a role file for each role, in the format of its harness.
 3. Writes a manifest at `$PROJECT/.agent-flow.json`.
 
 The generator is idempotent. It skips files that are already correct.
@@ -121,7 +121,7 @@ cat .agent-flow.json
 ls setup_agent
 ```
 
-Check that each agent file exists:
+Check that each role file exists:
 
 - opencode: `.opencode/agents/<role>.md`
 - Claude Code: `.claude/agents/<role>.md`
@@ -168,7 +168,7 @@ Report the generated files. Then give the user these instructions.
 >     ./setup_agent hermes tester --dispatch
 >
 > This creates (or reuses) a worktree at `.worktrees/<role>-<worker_id>`,
-> sets `COORD_AGENT` and `COORD_WORKER`, and launches the harness there with
+> sets `COORD_ROLE` and `COORD_WORKER`, and launches the harness there with
 > its role loaded. To run several instances of one role, add a worker suffix:
 > `backend-developer_1`, `backend-developer_2`. Claims are atomic, so they
 > will not collide.
@@ -196,7 +196,7 @@ Report the generated files. Then give the user these instructions.
   `./coord with-lock ollama -- <command>`.
 - Give each agent its own worktree so file changes never collide:
   `./coord worktree <role>` creates `.worktrees/<role>-<worker_id>` (inside the
-  project, gitignored) on branch `agent/<role>-<worker_id>`. In that worktree
+  project, gitignored) on branch `worker/<role>-<worker_id>`. In that worktree
   run `source coord-env.sh` first; it points `COORD_DIR` and `TASKRC` at the
   main project, so every worktree shares one coordination/ dir and one task
   board. `./setup_agent` does all of this for you.

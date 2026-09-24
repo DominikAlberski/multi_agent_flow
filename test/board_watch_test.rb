@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# test/board_watch_test.rb - tests for assets/hooks/board-watch.rb.
+# test/board_watch_test.rb - tests for assets/harness-hooks/board-watch.rb.
 #
 # Run: ruby test/board_watch_test.rb
 #
@@ -11,7 +11,7 @@ require "minitest/autorun"
 require "tmpdir"
 require "fileutils"
 
-load File.expand_path("../assets/hooks/board-watch.rb", __dir__)
+load File.expand_path("../assets/harness-hooks/board-watch.rb", __dir__)
 
 module BoardWatchTestHelpers
   def work(unclaimed: [], claimed: [], messages: []) = BoardWatch::Work.new(unclaimed, claimed, messages)
@@ -149,13 +149,25 @@ class WatcherTest < Minitest::Test
 end
 
 class MainTest < Minitest::Test
-  def test_does_nothing_without_an_agent
+  TASK_ID = "01234567-89ab-cdef-0123-456789abcdef"
+
+  def test_does_nothing_without_a_role
     assert_equal 0, BoardWatch::Main.new({}, {}).run
   end
 
   def test_does_nothing_under_the_dispatcher
-    env = { "COORD_AGENT" => "tester", "COORD_DISPATCHED" => "1" }
+    env = { "COORD_ROLE" => "tester", "COORD_DISPATCHED" => "1" }
 
     assert_equal 0, BoardWatch::Main.new(env, {}).run
+  end
+
+  # A fake coord prints one task ID, so the watcher finds work at once.
+  def test_pokes_the_role_from_coord_role
+    Dir.mktmpdir("board-watch-main") do |dir|
+      File.write(File.join(dir, "coord"), "puts #{TASK_ID.inspect}\n")
+      FileUtils.chmod("+x", File.join(dir, "coord"))
+      env = { "COORD_ROLE" => "tester", "COORD_DIR" => File.join(dir, "coordination"), "BOARD_WATCH_INTERVAL" => "0" }
+      Dir.chdir(dir) { assert_output(nil, /role tester/) { assert_equal 2, BoardWatch::Main.new(env, {}).run } }
+    end
   end
 end

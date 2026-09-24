@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# dispatcher - outside-of-agent message board monitor and agent spawner.
+# dispatcher - task board and inbox monitor that starts one-shot agents.
 #
 # The dispatcher solves two problems:
 # 1. A long-lived interactive agent session burns tokens while idle. The
@@ -66,8 +66,8 @@
 # session starts with that note. If the harness reports an unknown session,
 # the dispatcher also starts fresh. Other failures keep the session.
 #
-# The agent runs with COORD_DIR, COORD_AGENT, COORD_WORKER (default:
-# <role>-dispatcher), TASKRC, and COORD_DISPATCHED=1 set, and with stdin closed. Every built-in
+# The agent runs with COORD_DIR, COORD_ROLE, COORD_WORKER (default:
+# <role>-bot), TASKRC, and COORD_DISPATCHED=1 set, and with stdin closed. Every built-in
 # adapter skips permission prompts (hermes --yolo, claude bypassPermissions,
 # codex --dangerously-bypass-approvals-and-sandbox): the agent runs every
 # tool call without approval. Run it only in a worktree or sandbox you trust
@@ -75,7 +75,7 @@
 #
 # Environment:
 #   COORD_DIR       Path to coordination/ (default: ./coordination).
-#   COORD_WORKER    Worker ID for the agent (default: <role>-dispatcher).
+#   COORD_WORKER    Worker ID for the agent (default: <role>-bot).
 #   DISPATCHER_LOG  Append log lines to this file (default: stderr).
 #
 # Ruby: 3.0+ (endless method defs, same as coord).
@@ -547,14 +547,14 @@ module Dispatcher
   class Main
     def initialize(config)
       @config = config
-      @runner = Runner.new(config, Harness.for(config), Main.agent_env(config))
+      @runner = Runner.new(config, Harness.for(config), Main.run_env(config))
       @mailbox = Mailbox.new(config.coord_dir, config.role)
-      @poller = Poller.new(Main.agent_env(config), config.role)
+      @poller = Poller.new(Main.run_env(config), config.role)
       @watch = TaskWatch.new(config.interval)
     end
 
-    def self.agent_env(config)
-      env = { "COORD_DIR" => config.coord_dir, "COORD_AGENT" => config.role, "COORD_WORKER" => config.worker,
+    def self.run_env(config)
+      env = { "COORD_DIR" => config.coord_dir, "COORD_ROLE" => config.role, "COORD_WORKER" => config.worker,
               "COORD_DISPATCHED" => "1" }
       taskrc = File.join(config.coord_dir, "taskrc")
       File.exist?(taskrc) ? env.merge("TASKRC" => taskrc) : env
@@ -647,7 +647,7 @@ module Dispatcher
 
     def self.finish(config, env)
       config.coord_dir = File.expand_path(env.fetch("COORD_DIR", "coordination"))
-      config.worker = env.fetch("COORD_WORKER", "#{config.role}-dispatcher")
+      config.worker = env.fetch("COORD_WORKER", "#{config.role}-bot")
       config.skill = nil if config.no_skill
       config.skill ||= HermesSkill.name(config.role) if !config.no_skill && HermesSkill.installed?(config.role)
       config

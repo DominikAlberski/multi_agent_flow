@@ -11,7 +11,7 @@ coordination/locks/*
 coordination/exports/*
 !coordination/exports/.gitkeep
 coordination/events.log
-coordination/hooks/*.log
+coordination/message-hooks/*.log
 coordination/sessions/
 
 # Agent worktrees live here; each is a git worktree, not committed source.

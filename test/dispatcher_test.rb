@@ -19,7 +19,7 @@ load File.expand_path("../assets/dispatcher", __dir__)
 module DispatcherTestHelpers
   def config(**overrides)
     defaults = { role: "backend-developer", harness: "hermes", interval: 60, max_turns: 50, timeout: 300,
-                 cache_window: 3300, coord_dir: @dir, worker: "backend-developer-dispatcher", poll_tasks: true }
+                 cache_window: 3300, coord_dir: @dir, worker: "backend-developer-bot", poll_tasks: true }
     Dispatcher::Config.new(**defaults, **overrides)
   end
 
@@ -309,7 +309,7 @@ class RunnerTest < Minitest::Test
   end
 
   def runner(script) = Dispatcher::Runner.new(config(command: script, timeout: 5), FakeHarness, {})
-  def session = Dispatcher::Session.new(@dir, "backend-developer-dispatcher")
+  def session = Dispatcher::Session.new(@dir, "backend-developer-bot")
 
   def test_success_saves_the_session_id
     capture_io { assert runner("echo session=new-1").dispatch("go") }
@@ -445,8 +445,8 @@ class MainTest < Minitest::Test
   def test_agent_gets_the_coord_environment
     write_message("backend-developer", "1.md", "architect", "first")
     out = File.join(@dir, "env")
-    run_cycle(%(echo "$COORD_DIR $COORD_AGENT $COORD_WORKER" > #{out}))
-    assert_equal "#{@dir} backend-developer backend-developer-dispatcher", File.read(out).strip
+    run_cycle(%(echo "$COORD_DIR $COORD_ROLE $COORD_WORKER $COORD_DISPATCHED" > #{out}))
+    assert_equal "#{@dir} backend-developer backend-developer-bot 1", File.read(out).strip
   end
 end
 
@@ -456,7 +456,7 @@ class OptionsTest < Minitest::Test
   def test_defaults
     config = parse("reviewer", "--no-skill")
     assert_equal "reviewer", config.role
-    assert_equal "reviewer-dispatcher", config.worker
+    assert_equal "reviewer-bot", config.worker
     assert_equal "/tmp/c", config.coord_dir
     assert config.poll_tasks
     assert_nil config.skill
@@ -600,7 +600,7 @@ class PollerTest < Minitest::Test
     @dir = Dir.mktmpdir("dispatcher-poller-test")
     @coord_dir = File.join(@dir, "coordination")
     @env = { "COORD_DIR" => @coord_dir, "TASKRC" => File.join(@coord_dir, "taskrc"),
-             "COORD_AGENT" => "backend-developer", "COORD_WORKER" => "backend-1" }
+             "COORD_ROLE" => "backend-developer", "COORD_WORKER" => "backend-1" }
     # The Poller shells out to `coord`, so it needs a coord executable in CWD.
     FileUtils.cp(File.expand_path("../assets/coord", __dir__), File.join(@dir, "coord"))
     FileUtils.chmod("+x", File.join(@dir, "coord"))
@@ -618,7 +618,7 @@ class PollerTest < Minitest::Test
 
   def test_lists_unclaimed_task_ids
     id = capture_io do
-      Coord::CLI.new(["add", "--agent", "backend-developer", "--scope", "t/**", "--title", "Fix"], env: @env).run
+      Coord::CLI.new(["add", "--role", "backend-developer", "--scope", "t/**", "--title", "Fix"], env: @env).run
     end.first.strip
     assert_equal [id], poller.unclaimed_task_ids
   end

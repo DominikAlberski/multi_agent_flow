@@ -26,7 +26,7 @@ module Coord
 
   TASKRC_BLOCK = <<~BLOCK
     # >>> multi-agent-flow >>>
-    uda.agent.type=string
+    uda.role.type=string
     uda.worker.type=string
     uda.scope.type=string
     uda.taskref.type=string
@@ -42,7 +42,7 @@ module Coord
     coord - multi-agent coordination
 
       coord init
-      coord add --agent A --scope S --title T [--project P] [--ref R]
+      coord add --role R --scope S --title T [--project P] [--ref R]
       coord next [ROLE] [--mine] [--wait [--interval S] [--timeout S]]
       coord conflicts                      list pending tasks with overlapping scopes
       coord claim ID [--force]             claim for COORD_WORKER (atomic)
@@ -51,10 +51,10 @@ module Coord
       coord annotate ID TEXT...
       coord msg [--from A] TO TEXT...
       coord broadcast [--from A] TEXT...         send to every known role except the sender
-      coord inbox [AGENT] [--peek] [--all] [--wait [--interval S] [--timeout S]]
-      coord hooks [ROLE]                          show hooks for a role or all
+      coord inbox [ROLE] [--peek] [--all] [--wait [--interval S] [--timeout S]]
+      coord hooks [ROLE]                          show message hooks for a role or all
       coord log [N]                               show last N coordination events
-      coord lock NAME [--ttl SECONDS] [--agent A]
+      coord lock NAME [--ttl SECONDS] [--worker W]
       coord unlock NAME
       coord with-lock NAME [--ttl SECONDS] -- CMD...
       coord worktree ROLE [WORKER]          create a git worktree + branch for a role
@@ -77,7 +77,7 @@ module Coord
     "help" => :cmd_help
   }.freeze
 
-  ADD_OPTS = { "--agent" => :agent, "--scope" => :scope, "--ref" => :ref,
+  ADD_OPTS = { "--role" => :role, "--scope" => :scope, "--ref" => :ref,
                "--project" => :project, "--title" => :title }.freeze
 
   # Wiring lazily builds the collaborators the CLI needs.
@@ -87,7 +87,7 @@ module Coord
     def tasks = @tasks ||= Tasks.new
     def conflicts = @conflicts ||= Conflicts.new(tasks)
     def locks = @locks ||= Locks.new(paths)
-    def messages = @messages ||= Messages.new(paths, @agent)
+    def messages = @messages ||= Messages.new(paths, @role)
     def board = @board ||= Board.new(tasks, paths)
     def event_log = @event_log ||= EventLog.new(paths)
     def hooks = @hooks ||= Hooks.new(paths)
@@ -101,9 +101,9 @@ module Coord
       @coord_dir = coord_dir
     end
 
-    def inbox_dir(agent) = File.join(coord_dir, "inbox", agent.to_s)
-    def hooks_dir = File.join(coord_dir, "hooks")
-    def hook_path(role) = File.join(hooks_dir, "#{role}.sh")
+    def inbox_dir(role) = File.join(coord_dir, "inbox", role.to_s)
+    def message_hooks_dir = File.join(coord_dir, "message-hooks")
+    def hook_path(role) = File.join(message_hooks_dir, "#{role}.sh")
     def locks_dir = File.join(coord_dir, "locks")
     def exports_dir = File.join(coord_dir, "exports")
     def lock_dir(name) = File.join(locks_dir, "#{name}.d")
@@ -112,7 +112,7 @@ module Coord
     def board_path = File.join(exports_dir, "board.md")
     def taskdata_dir = File.join(coord_dir, "taskdata")
     def log_path = File.join(coord_dir, "events.log")
-    def hook_log(role) = File.join(hooks_dir, "#{role}.log")
+    def hook_log(role) = File.join(message_hooks_dir, "#{role}.log")
     def manifest_path = File.join(File.dirname(File.expand_path(coord_dir)), ".agent-flow.json")
   end
 
@@ -121,7 +121,7 @@ module Coord
   # user's global ~/.task, so two projects never share one board. An explicit
   # TASKRC env var still overrides this (see CLI#initialize).
   class Setup
-    SUBDIRS = %w[inbox locks exports hooks].freeze
+    SUBDIRS = %w[inbox locks exports message-hooks].freeze
 
     def initialize(paths, taskrc)
       @paths = paths
@@ -249,11 +249,11 @@ module Coord
 
     def warning(scope, task)
       "coord: scope '#{scope}' overlaps task #{task["uuid"]} " \
-        "owned by #{task["agent"]} (#{task["scope"]})"
+        "owned by #{task["role"]} (#{task["scope"]})"
     end
 
     def line(a, b)
-      "#{a["agent"]} #{a["scope"]} (#{a["uuid"]}) <> #{b["agent"]} #{b["scope"]} (#{b["uuid"]})"
+      "#{a["role"]} #{a["scope"]} (#{a["uuid"]}) <> #{b["role"]} #{b["scope"]} (#{b["uuid"]})"
     end
   end
 
@@ -405,9 +405,9 @@ module Coord
   class Tasks
     # The previous owner of a task, split so a steal notice can go to the
     # role's inbox (what agents poll) while still naming the exact worker.
-    Holder = Struct.new(:agent, :worker)
+    Holder = Struct.new(:role, :worker)
 
-    ATTRIBUTES = { agent: "agent", scope: "scope", ref: "taskref", project: "project" }.freeze
+    ATTRIBUTES = { role: "role", scope: "scope", ref: "taskref", project: "project" }.freeze
 
     def initialize
       @cli = TaskCli.new
@@ -420,11 +420,11 @@ module Coord
     end
 
     def next_for(role)
-      pending.select { |task| task["agent"] == role && claimable?(task) && actionable?(task) }
+      pending.select { |task| task["role"] == role && claimable?(task) && actionable?(task) }
     end
 
     def mine(role, worker)
-      pending.select { |task| task["agent"] == role && task["worker"] == worker && task["start"] }
+      pending.select { |task| task["role"] == role && task["worker"] == worker && task["start"] }
     end
 
     # Returns the prior holder (nil if there was none) so the caller can warn
@@ -436,7 +436,7 @@ module Coord
       holder = task["worker"].to_s
       refuse_steal(id, holder) if active_claim?(task, holder, worker) && !force
       @cli.modify(id, "worker:#{worker}", "start:now")
-      holder.empty? ? nil : Holder.new(task["agent"].to_s, holder)
+      holder.empty? ? nil : Holder.new(task["role"].to_s, holder)
     end
 
     def unclaim(id)
@@ -479,9 +479,9 @@ module Coord
       @paths = paths
     end
 
-    def lock(name, ttl:, agent:)
-      acquire!(name, ttl: ttl, agent: agent)
-      puts "locked #{name} by #{agent} (ttl #{ttl}s)"
+    def lock(name, ttl:, worker:)
+      acquire!(name, ttl: ttl, worker: worker)
+      puts "locked #{name} by #{worker} (ttl #{ttl}s)"
     end
 
     def unlock(name)
@@ -489,15 +489,15 @@ module Coord
       puts "unlocked #{name}"
     end
 
-    def with_lock(name, ttl:, command:, agent:)
-      acquire!(name, ttl: ttl, agent: agent)
+    def with_lock(name, ttl:, command:, worker:)
+      acquire!(name, ttl: ttl, worker: worker)
       run_locked(name, command)
     end
 
     # Short critical section (e.g. claiming a task). Retries briefly instead of
     # failing when two workers contend.
-    def with_mutex(name, agent:)
-      acquire_with_retry(name, agent)
+    def with_mutex(name, worker:)
+      acquire_with_retry(name, worker)
       begin
         yield
       ensure
@@ -505,10 +505,10 @@ module Coord
       end
     end
 
-    def acquire!(name, ttl:, agent:)
+    def acquire!(name, ttl:, worker:)
       reclaim_if_stale(name)
       Dir.mkdir(@paths.lock_dir(name))
-      write_meta(name, ttl, agent)
+      write_meta(name, ttl, worker)
     rescue Errno::EEXIST
       raise Error, "lock #{name} busy"
     end
@@ -520,9 +520,9 @@ module Coord
 
     private
 
-    def acquire_with_retry(name, agent, attempts: 20)
+    def acquire_with_retry(name, worker, attempts: 20)
       attempts.times do
-        return acquire!(name, ttl: 30, agent: agent)
+        return acquire!(name, ttl: 30, worker: worker)
       rescue Error
         sleep 0.05
       end
@@ -563,7 +563,7 @@ module Coord
     end
 
     def holder(name)
-      read_meta(name)["agent"] || "unknown"
+      read_meta(name)["worker"] || "unknown"
     end
 
     def read_meta(name)
@@ -572,8 +572,8 @@ module Coord
       {}
     end
 
-    def write_meta(name, ttl, agent)
-      File.write(@paths.lock_meta(name), JSON.generate(agent: agent, ts: Time.now.to_i, ttl: ttl))
+    def write_meta(name, ttl, worker)
+      File.write(@paths.lock_meta(name), JSON.generate(worker: worker, ts: Time.now.to_i, ttl: ttl))
     end
   end
 
@@ -591,17 +591,17 @@ module Coord
       path
     end
 
-    def inbox(agent, peek: false, all: false)
-      files = files(agent, all: all)
-      return puts("no messages for #{agent}") if files.empty?
+    def inbox(role, peek: false, all: false)
+      files = files(role, all: all)
+      return puts("no messages for #{role}") if files.empty?
 
       files.each { |file| read_message(file, peek) }
     end
 
     # Paths of the agent's message files, oldest first. Shared with the
     # `--wait` poller so "is there mail yet" tests exactly what `inbox` reads.
-    def files(agent, all: false)
-      dir = @paths.inbox_dir(agent)
+    def files(role, all: false)
+      dir = @paths.inbox_dir(role)
       Dir.glob(File.join(dir, all ? "**" : "", "*.md")).sort
     end
 
@@ -609,7 +609,7 @@ module Coord
     # [role, path] pairs so the caller can fire hooks for each.
     def broadcast(from, text, roles)
       results = roles.map { |role| [role, send_message(role, from, text)] }
-      puts "broadcast -> #{roles.size} agent#{"s" if roles.size != 1}"
+      puts "broadcast -> #{roles.size} role#{"s" if roles.size != 1}"
       results
     end
 
@@ -644,17 +644,17 @@ module Coord
   end
 
   # Hooks runs a per-role shell script when a message is delivered. The hook
-  # is a plain user-authored script at coordination/hooks/<role>.sh — coord
+  # is a plain user-authored script at coordination/message-hooks/<role>.sh — coord
   # does not know or care what harness the agent runs in. It pokes a running
   # session (tmux send-keys), starts a fresh one-shot, sends a notification,
-  # or does nothing at all. The hook receives COORD_AGENT, COORD_FROM, and
+  # or does nothing at all. The hook receives COORD_ROLE, COORD_FROM, and
   # COORD_MSG_FILE in its environment, and the message file path as $1. If the
   # hook is absent, coord is silent — it just writes the inbox file, and the
   # agent picks it up on its next `coord inbox`.
   #
   # The hook runs detached in its own process group, so a slow hook (one that
   # starts a whole agent run) never blocks the sender. Its stdout and stderr
-  # go to coordination/hooks/<role>.log.
+  # go to coordination/message-hooks/<role>.log.
   class Hooks
     def initialize(paths)
       @paths = paths
@@ -671,7 +671,7 @@ module Coord
     private
 
     def spawn_hook(hook, role, from, message_path)
-      env = { "COORD_AGENT" => role.to_s, "COORD_FROM" => from.to_s, "COORD_MSG_FILE" => message_path }
+      env = { "COORD_ROLE" => role.to_s, "COORD_FROM" => from.to_s, "COORD_MSG_FILE" => message_path }
       log = @paths.hook_log(role)
       Process.spawn(env, hook, message_path, out: [log, "a"], err: [:child, :out], pgroup: true)
     end
@@ -689,9 +689,9 @@ module Coord
       @paths = paths
     end
 
-    def append(action, agent, detail)
+    def append(action, worker, detail)
       FileUtils.mkdir_p(@paths.coord_dir)
-      line = [Time.now.utc.iso8601, action, agent, clean(detail)].join("\t")
+      line = [Time.now.utc.iso8601, action, worker, clean(detail)].join("\t")
       File.open(@paths.log_path, "a") { |file| file.puts(line) }
     end
 
@@ -730,11 +730,11 @@ module Coord
     private
 
     def task_roles
-      @tasks.pending.map { |task| task["agent"] }.compact
+      @tasks.pending.map { |task| task["role"] }.compact
     end
 
     def manifest_roles
-      JSON.parse(File.read(@paths.manifest_path)).fetch("agents", []).map { |agent| agent["role"] }.compact
+      JSON.parse(File.read(@paths.manifest_path)).fetch("agents", []).map { |entry| entry["role"] }.compact
     rescue Errno::ENOENT, JSON::ParserError
       []
     end
@@ -757,7 +757,7 @@ module Coord
       rows = grouped
       return puts("no tasks") if rows.empty?
 
-      rows.each { |agent, list| puts summary_line(agent, list) }
+      rows.each { |role, list| puts summary_line(role, list) }
     end
 
     def next_tasks(role)
@@ -781,9 +781,9 @@ module Coord
 
     private
 
-    def summary_line(agent, list)
+    def summary_line(role, list)
       counts = list.group_by { |task| bucket(task) }.transform_values(&:size)
-      "#{agent}: #{counts.map { |key, value| "#{key}=#{value}" }.join(" ")}"
+      "#{role}: #{counts.map { |key, value| "#{key}=#{value}" }.join(" ")}"
     end
 
     def task_line(task)
@@ -791,7 +791,7 @@ module Coord
     end
 
     def grouped
-      @tasks.pending.group_by { |task| task["agent"] || "unassigned" }.sort.to_h
+      @tasks.pending.group_by { |task| task["role"] || "unassigned" }.sort.to_h
     end
 
     def bucket(task)
@@ -822,12 +822,12 @@ module Coord
 
     def owner_label(task)
       worker = task["worker"].to_s
-      worker.empty? ? (task["agent"] || "unassigned") : "#{task["agent"]}/#{worker}"
+      worker.empty? ? (task["role"] || "unassigned") : "#{task["role"]}/#{worker}"
     end
   end
 
-  # Worktree creates a per-role git worktree and branch, so "one branch or
-  # worktree per agent" (the contract's own rule) is a command, not a manual
+  # Worktree creates a per-worker git worktree and branch, so "one branch or
+  # worktree per worker" (the contract's own rule) is a command, not a manual
   # step. The worktree shares the main project's coordination/ dir and task
   # board through COORD_DIR/TASKRC exported by an untracked coord-env.sh, not
   # by symlinking tracked paths (a symlink would dirty the worktree and, if
@@ -854,7 +854,7 @@ module Coord
     # part of the work.
     def create(role, worker)
       slug = [role, worker].compact.join("-")
-      branch = "agent/#{slug}"
+      branch = "worker/#{slug}"
       dir = self.class.dir_for(@root, slug)
       return reuse(dir, branch) if Dir.exist?(dir)
 
@@ -1025,7 +1025,7 @@ module Coord
     def cmd_add
       opts = @args.parse_options(ADD_OPTS)
       opts[:title] ||= @args.join unless @args.empty?
-      abort "usage: coord add --agent A --scope S --title T" if opts[:title].to_s.empty?
+      abort "usage: coord add --role R --scope S --title T" if opts[:title].to_s.empty?
       id = tasks.add(**opts)
       conflicts.warn_with(opts[:scope], exclude: id)
       puts id
@@ -1039,7 +1039,7 @@ module Coord
       wait = @args.flag?("--wait")
       interval = @args.interval
       timeout = @args.timeout
-      role = require_agent!(@args.shift || @agent, "next ROLE, or export COORD_AGENT")
+      role = require_role!(@args.shift || @role, "next ROLE, or export COORD_ROLE")
       return board.mine_tasks(role, @worker) if mine
 
       return board.next_tasks(role) unless wait
@@ -1056,8 +1056,8 @@ module Coord
     def cmd_claim
       id = @args.require_arg("claim", "ID")
       force = @args.flag?("--force")
-      require_agent!(@worker, "claim ID (needs COORD_WORKER or COORD_AGENT)")
-      holder = locks.with_mutex("task-#{id}", agent: @worker) { tasks.claim(id, @worker, force: force) }
+      require_worker!(@worker, "claim ID (needs COORD_WORKER or COORD_ROLE)")
+      holder = locks.with_mutex("task-#{id}", worker: @worker) { tasks.claim(id, @worker, force: force) }
       notify_prior_holder(id, holder) if holder && holder.worker != @worker
       event_log.append("claim", @worker, id)
       puts "claimed #{id} by #{@worker}"
@@ -1084,33 +1084,33 @@ module Coord
     end
 
     def cmd_msg
-      from = require_agent!(@args.value_of("--from") || @agent, "msg --from A, or export COORD_AGENT")
+      from = require_role!(@args.value_of("--from") || @role, "msg --from A, or export COORD_ROLE")
       to = @args.require_arg("msg", "TO")
       text = @args.require_text("msg")
       deliver(to, from, text)
-      event_log.append("msg", from, "to #{to}: #{text}")
+      event_log.append("msg", @worker, "to #{to}: #{text}")
     end
 
     def cmd_inbox
       # Same ordering requirement as cmd_next: parse every flag before the
-      # positional `shift`, or an unparsed flag gets read as the AGENT.
+      # positional `shift`, or an unparsed flag gets read as the ROLE.
       wait = @args.flag?("--wait")
       interval = @args.interval
       timeout = @args.timeout
       peek = @args.flag?("--peek")
       all = @args.flag?("--all")
-      agent = require_agent!(@args.shift || @agent, "inbox AGENT, or export COORD_AGENT")
-      return messages.inbox(agent, peek: peek, all: all) unless wait
+      role = require_role!(@args.shift || @role, "inbox ROLE, or export COORD_ROLE")
+      return messages.inbox(role, peek: peek, all: all) unless wait
 
-      wait_for(interval, timeout, -> { messages.files(agent, all: all) }) do
-        messages.inbox(agent, peek: peek, all: all)
+      wait_for(interval, timeout, -> { messages.files(role, all: all) }) do
+        messages.inbox(role, peek: peek, all: all)
       end
     end
 
     def cmd_lock
       name = @args.require_arg("lock", "NAME")
-      agent = require_agent!(@args.value_of("--agent") || @agent, "lock NAME --agent A, or export COORD_AGENT")
-      locks.lock(name, ttl: @args.ttl, agent: agent)
+      worker = require_worker!(@args.value_of("--worker") || @worker, "lock NAME --worker W, or export COORD_WORKER")
+      locks.lock(name, ttl: @args.ttl, worker: worker)
     end
 
     def cmd_unlock = locks.unlock(@args.require_arg("unlock", "NAME"))
@@ -1120,14 +1120,14 @@ module Coord
       command = @args.take_command
       abort "usage: coord with-lock NAME [--ttl SECONDS] -- CMD..." if command.nil? || command.empty?
 
-      locks.with_lock(name, ttl: @args.ttl, command: command, agent: @agent)
+      locks.with_lock(name, ttl: @args.ttl, command: command, worker: @worker)
     end
 
     # Broadcast sends a message to every known role except the sender (see
     # Roster). The architect uses this for scope changes or blockers that
     # affect everyone, instead of messaging each role individually.
     def cmd_broadcast
-      from = require_agent!(@args.value_of("--from") || @agent, "broadcast --from A, or export COORD_AGENT")
+      from = require_role!(@args.value_of("--from") || @role, "broadcast --from A, or export COORD_ROLE")
       text = @args.require_text("broadcast")
       roles = Roster.new(paths, tasks).roles - [from]
       abort "coord: no other roles to broadcast to" if roles.empty?
@@ -1146,9 +1146,9 @@ module Coord
 
     # Hooks shows which role hooks are installed. With a ROLE argument, shows
     # just that role's hook. The hooks themselves are plain shell scripts at
-    # coordination/hooks/<role>.sh, fired by `coord msg` and `coord broadcast`.
+    # coordination/message-hooks/<role>.sh, fired by `coord msg` and `coord broadcast`.
     def cmd_hooks
-      return puts("no hooks directory (run ./coord init)") unless Dir.exist?(paths.hooks_dir)
+      return puts("no message hooks directory (run ./coord init)") unless Dir.exist?(paths.message_hooks_dir)
 
       found = hook_files(@args.shift)
       return puts("no hooks installed") if found.empty?
@@ -1174,10 +1174,13 @@ module Coord
 
     private
 
-    def require_agent!(value, usage)
+    def require_role!(value, usage) = require_set!(value, "role", "COORD_ROLE", usage)
+    def require_worker!(value, usage) = require_set!(value, "worker", "COORD_WORKER", usage)
+
+    def require_set!(value, term, env_name, usage)
       return value unless value.nil? || value.empty? || value == "unknown"
 
-      abort "coord: no role set. Pass one explicitly or `export COORD_AGENT=<role>` (usage: #{usage})"
+      abort "coord: no #{term} set. Pass one explicitly or `export #{env_name}=<#{term}>` (usage: #{usage})"
     end
 
     def deliver(to, from, text)
@@ -1188,11 +1191,11 @@ module Coord
     def deliver_broadcast(from, text, roles)
       results = messages.broadcast(from, text, roles)
       results.each { |role, path| hooks.run(role, from: from, message_path: path) }
-      event_log.append("broadcast", from, text)
+      event_log.append("broadcast", @worker, text)
     end
 
     def hook_files(role)
-      found = Dir.glob(File.join(paths.hooks_dir, "*.sh")).sort
+      found = Dir.glob(File.join(paths.message_hooks_dir, "*.sh")).sort
       role ? found.select { |path| File.basename(path, ".sh") == role } : found
     end
 
@@ -1205,7 +1208,7 @@ module Coord
       warn "coord: task #{id} was claimed from #{holder.worker} by #{@worker}"
       # Send to the role's inbox (what agents poll with `coord inbox`), not the
       # worker id, which no agent reads. Name the exact worker in the body.
-      to = holder.agent.empty? ? holder.worker : holder.agent
+      to = holder.role.empty? ? holder.worker : holder.role
       messages.send_message(to, @worker, "task #{id} was claimed from worker #{holder.worker} by #{@worker}")
     end
 
@@ -1232,8 +1235,8 @@ module Coord
     def initialize(argv, env: ENV)
       @args = Args.new(argv)
       @coord_dir = env.fetch("COORD_DIR", "coordination")
-      @agent = env.fetch("COORD_AGENT", "unknown")
-      @worker = env.fetch("COORD_WORKER", @agent)
+      @role = env.fetch("COORD_ROLE", "unknown")
+      @worker = env.fetch("COORD_WORKER", @role)
       @taskrc = env.fetch("TASKRC", File.join(@coord_dir, "taskrc"))
       @project_root = Dir.pwd
       ENV["TASKRC"] = @taskrc

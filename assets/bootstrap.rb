@@ -22,22 +22,22 @@ module Bootstrap
   END_MARKER = "<<< multi-agent-flow <<<"
   COORD_SIGNATURE = "coord - shared coordination layer"
   SETUP_AGENT_SIGNATURE = "setup_agent - create a worktree for one agent and launch its harness session."
-  DISPATCHER_SIGNATURE = "dispatcher - outside-of-agent message board monitor and agent spawner."
+  DISPATCHER_SIGNATURE = "dispatcher - task board and inbox monitor that starts one-shot agents."
   VAULT_SIGNATURE = "vault - shared knowledge base watcher (graphify + Obsidian + MCP)."
   DASHBOARD_SIGNATURE = "dashboard - local observability web UI for multi-agent coordination."
-  SUBDIRS = %w[inbox locks exports hooks].freeze
+  SUBDIRS = %w[inbox locks exports message-hooks harness-hooks].freeze
 
   NEXT_TASK_HOOK_SIGNATURE = "next-task.rb - Stop hook for Claude Code and Codex."
   NEXT_TASK_HERMES_SIGNATURE = "next-task-hermes.sh - on_session_end hook for Hermes Agent."
   BOARD_WATCH_SIGNATURE = "board-watch.rb - background board watcher for Claude Code sessions."
 
-  # Claude Code hooks: [event, script, hook]. The sync next-task hook continues
+  # Claude Code harness hooks: [event, hook]. The sync next-task hook continues
   # a session at Stop. The asyncRewake board-watch hook wakes an idle session.
   CLAUDE_HOOKS = [
-    ["Stop", "next-task.rb", { "type" => "command", "command" => "ruby coordination/hooks/next-task.rb" }],
+    ["Stop", { "type" => "command", "command" => "ruby coordination/harness-hooks/next-task.rb" }],
     *%w[SessionStart Stop].map do |event|
-      [event, "board-watch.rb", { "type" => "command", "command" => "ruby coordination/hooks/board-watch.rb",
-                                  "async" => true, "asyncRewake" => true, "timeout" => 604_800 }]
+      [event, { "type" => "command", "command" => "ruby coordination/harness-hooks/board-watch.rb",
+                "async" => true, "asyncRewake" => true, "timeout" => 604_800 }]
     end
   ].freeze
 
@@ -69,8 +69,8 @@ module Bootstrap
       1. Verify:
            cd %{project} && ./coord init && ./coord status
 
-      2. Set COORD_AGENT so messages and locks are attributed, e.g.:
-           export COORD_AGENT=local
+      2. Set COORD_ROLE and COORD_WORKER so messages and locks are attributed, e.g.:
+           export COORD_ROLE=local COORD_WORKER=local-1
 
       3. Shared memory (graphify + Obsidian vault): %{vault_note}
 
@@ -316,11 +316,11 @@ module Bootstrap
 
     def plan_hook_scripts
       [
-        ["hooks/next-task.rb", File.join(@target, "coordination", "hooks", "next-task.rb"),
+        ["harness-hooks/next-task.rb", File.join(@target, "coordination", "harness-hooks", "next-task.rb"),
          NEXT_TASK_HOOK_SIGNATURE],
-        ["hooks/next-task-hermes.sh", File.join(@target, "coordination", "hooks", "next-task-hermes.sh"),
+        ["harness-hooks/next-task-hermes.sh", File.join(@target, "coordination", "harness-hooks", "next-task-hermes.sh"),
          NEXT_TASK_HERMES_SIGNATURE],
-        ["hooks/board-watch.rb", File.join(@target, "coordination", "hooks", "board-watch.rb"),
+        ["harness-hooks/board-watch.rb", File.join(@target, "coordination", "harness-hooks", "board-watch.rb"),
          BOARD_WATCH_SIGNATURE]
       ].map do |src_name, dest, signature|
         status = hook_script_status(dest, src_name, signature)
@@ -357,17 +357,17 @@ module Bootstrap
     end
 
     def missing_claude_hooks(settings)
-      CLAUDE_HOOKS.reject { |event, script, _hook| claude_hook_entry?(settings, event, script) }
+      CLAUDE_HOOKS.reject { |event, hook| claude_hook_entry?(settings, event, hook["command"]) }
     end
 
-    def claude_hook_entry?(settings, event, script)
-      (settings.dig("hooks", event) || []).any? { |entry| entry.dig("hooks", 0, "command").to_s.include?(script) }
+    def claude_hook_entry?(settings, event, command)
+      (settings.dig("hooks", event) || []).any? { |entry| entry.dig("hooks", 0, "command") == command }
     end
 
     def configure_claude_settings(path, _source = nil)
       settings = File.exist?(path) ? (JSON.parse(File.read(path)) rescue {}) : {}
       missing = missing_claude_hooks(settings)
-      missing.each { |event, _script, hook| add_claude_hook(settings, event, hook) }
+      missing.each { |event, hook| add_claude_hook(settings, event, hook) }
       write_json(path, settings) unless missing.empty?
       !missing.empty?
     end

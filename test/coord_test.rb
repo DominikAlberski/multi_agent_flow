@@ -82,7 +82,7 @@ class TaskwarriorTest < Minitest::Test
     @dir = Dir.mktmpdir("coord-test")
     coord_dir = File.join(@dir, "coordination")
     @env = { "COORD_DIR" => coord_dir, "TASKRC" => File.join(coord_dir, "taskrc"),
-             "COORD_AGENT" => "backend-developer", "COORD_WORKER" => "backend-1" }
+             "COORD_ROLE" => "backend-developer", "COORD_WORKER" => "backend-1" }
     Coord::CLI.new(["init"], env: @env).run
   end
 
@@ -93,11 +93,32 @@ class TaskwarriorTest < Minitest::Test
   def tasks = Coord::Tasks.new
 
   def add(title)
-    tasks.add(title: title, agent: "backend-developer")
+    tasks.add(title: title, role: "backend-developer")
   end
 
   def find(id)
     Coord::Tasks.new.pending.find { |t| t["uuid"] == id }
+  end
+
+  def test_add_stores_the_role_in_the_role_field
+    id = add("role field")
+    assert_equal "backend-developer", find(id)["role"]
+  end
+
+  def test_next_takes_the_role_from_coord_role
+    add("for the env role")
+    out, = capture_io { Coord::CLI.new(["next"], env: @env).run }
+    assert_includes out, "for the env role"
+  end
+
+  def test_status_groups_tasks_by_role
+    add("status row")
+    out, = capture_io { Coord::CLI.new(["status"], env: @env).run }
+    assert_match(/^backend-developer: /, out)
+  end
+
+  def test_taskrc_declares_the_role_attribute
+    assert_includes File.read(@env["TASKRC"]), "uda.role.type=string"
   end
 
   # A title or annotation that happens to look like "attr:value" must survive
@@ -127,7 +148,7 @@ class TaskwarriorTest < Minitest::Test
     tasks.claim(id, "backend-1")
     holder = Coord::Tasks.new.claim(id, "backend-2", force: true)
     assert_equal "backend-1", holder.worker
-    assert_equal "backend-developer", holder.agent
+    assert_equal "backend-developer", holder.role
   end
 
   def test_unclaim_frees_a_task_for_reclaim
@@ -204,7 +225,7 @@ class TaskwarriorTest < Minitest::Test
     File.write(@env["TASKRC"], "data.location=#{blocker}\n")
 
     error = assert_raises(Coord::Error) do
-      Coord::Tasks.new.add(title: "boom", agent: "backend-developer")
+      Coord::Tasks.new.add(title: "boom", role: "backend-developer")
     end
     assert_match(/task add failed/, error.message)
   end
@@ -221,7 +242,7 @@ class TaskwarriorTest < Minitest::Test
   # sender's own role. The architect uses it for cross-cutting announcements.
   def test_broadcast_delivers_to_all_roles_with_tasks
     add("shared task")
-    Coord::CLI.new(["add", "--agent", "reviewer", "--scope", "test/**", "--title", "review task"], env: @env).run
+    Coord::CLI.new(["add", "--role", "reviewer", "--scope", "test/**", "--title", "review task"], env: @env).run
     out, = capture_io do
       Coord::CLI.new(["broadcast", "--from", "architect", "scope change: all tests move to spec/"], env: @env).run
     end
@@ -242,6 +263,24 @@ class TaskwarriorTest < Minitest::Test
     assert_match(/done\t.*#{id}/, out)
   end
 
+  def test_lock_records_the_worker_as_holder
+    capture_io { Coord::CLI.new(["lock", "db", "--worker", "backend-2"], env: @env).run }
+    meta = JSON.parse(File.read(File.join(@env["COORD_DIR"], "locks", "db.json")))
+    assert_equal "backend-2", meta["worker"]
+  end
+
+  def test_lock_defaults_the_holder_to_coord_worker
+    capture_io { Coord::CLI.new(["lock", "db"], env: @env).run }
+    meta = JSON.parse(File.read(File.join(@env["COORD_DIR"], "locks", "db.json")))
+    assert_equal "backend-1", meta["worker"]
+  end
+
+  def test_log_records_the_worker_as_message_sender
+    capture_io { Coord::CLI.new(["msg", "reviewer", "hello"], env: @env).run }
+    out, = capture_io { Coord::CLI.new(["log"], env: @env).run }
+    assert_match(/msg\tbackend-1\t/, out)
+  end
+
   def test_log_with_no_events_says_so
     out, = capture_io { Coord::CLI.new(["log"], env: @env).run }
     assert_match(/no events yet/, out)
@@ -255,16 +294,16 @@ class TaskwarriorTest < Minitest::Test
     end
   end
 
-  # A hook at coordination/hooks/<role>.sh runs when a message is delivered
+  # A hook at coordination/message-hooks/<role>.sh runs when a message is delivered
   # to that role. The hook is a plain shell script — coord does not know or
   # care what harness the agent runs in.
   def test_msg_fires_hook_when_installed
-    hook_dir = File.join(@env["COORD_DIR"], "hooks")
+    hook_dir = File.join(@env["COORD_DIR"], "message-hooks")
     FileUtils.mkdir_p(hook_dir)
     hook = File.join(hook_dir, "backend-developer.sh")
     File.write(hook, <<~SH)
       #!/bin/sh
-      echo "hook fired: $COORD_AGENT from $COORD_FROM" > "#{hook}.out"
+      echo "hook fired: $COORD_ROLE from $COORD_FROM" > "#{hook}.out"
     SH
     FileUtils.chmod("+x", hook)
 
@@ -283,20 +322,20 @@ class TaskwarriorTest < Minitest::Test
     File.delete(hook)
   end
 
-  # Hook output goes to coordination/hooks/<role>.log, not /dev/null, so a
+  # Hook output goes to coordination/message-hooks/<role>.log, not /dev/null, so a
   # broken hook is debuggable.
   def test_hook_output_goes_to_role_log
     install_hook("backend-developer", "echo from-hook\n")
     capture_io { Coord::CLI.new(["msg", "--from", "architect", "backend-developer", "hi"], env: @env).run }
-    log = File.join(@env["COORD_DIR"], "hooks", "backend-developer.log")
+    log = File.join(@env["COORD_DIR"], "message-hooks", "backend-developer.log")
     assert wait_for_file(log) { File.read(log).include?("from-hook") }, "hook log not written"
   end
 
   def test_broadcast_skips_the_sender
     add("backend task")
-    Coord::CLI.new(["add", "--agent", "architect", "--scope", "docs/**", "--title", "plan"], env: @env).run
+    Coord::CLI.new(["add", "--role", "architect", "--scope", "docs/**", "--title", "plan"], env: @env).run
     out, = capture_io { Coord::CLI.new(["broadcast", "--from", "architect", "heads up"], env: @env).run }
-    assert_match(/broadcast -> 1 agent\b/, out)
+    assert_match(/broadcast -> 1 role\b/, out)
     assert_empty Dir.glob(File.join(@env["COORD_DIR"], "inbox", "architect", "*.md"))
   end
 
@@ -315,11 +354,11 @@ class TaskwarriorTest < Minitest::Test
     lines = File.readlines(File.join(@env["COORD_DIR"], "events.log"))
     assert_equal 1, lines.size
     assert_equal 4, lines.first.chomp.split("\t").size
-    assert_match(/msg\tarchitect\tto reviewer: line one line two/, lines.first)
+    assert_match(/msg\tbackend-1\tto reviewer: line one line two/, lines.first)
   end
 
   def install_hook(role, body)
-    hook = File.join(@env["COORD_DIR"], "hooks", "#{role}.sh")
+    hook = File.join(@env["COORD_DIR"], "message-hooks", "#{role}.sh")
     File.write(hook, "#!/bin/sh\n#{body}")
     FileUtils.chmod("+x", hook)
     hook
@@ -344,7 +383,7 @@ class TaskwarriorTest < Minitest::Test
 
   # `coord hooks` lists installed hooks and their status.
   def test_hooks_lists_installed_hooks
-    hook_dir = File.join(@env["COORD_DIR"], "hooks")
+    hook_dir = File.join(@env["COORD_DIR"], "message-hooks")
     FileUtils.mkdir_p(hook_dir)
     hook = File.join(hook_dir, "backend-developer.sh")
     File.write(hook, "#!/bin/sh\necho hi\n")
@@ -361,6 +400,20 @@ class TaskwarriorTest < Minitest::Test
     out, = capture_io { Coord::CLI.new(["hooks", "reviewer"], env: @env).run }
     assert_match(/reviewer\.sh/, out)
     refute_match(/backend-developer\.sh/, out)
+  end
+
+  # Harness hook scripts are not message hooks. `coord hooks` must not list
+  # them as hooks for a role such as "next-task-hermes".
+  def test_hooks_ignores_harness_hooks
+    harness_dir = File.join(@env["COORD_DIR"], "harness-hooks")
+    FileUtils.mkdir_p(harness_dir)
+    File.write(File.join(harness_dir, "next-task-hermes.sh"), "#!/bin/sh\n")
+    out, = capture_io { Coord::CLI.new(["hooks"], env: @env).run }
+    refute_match(/next-task-hermes/, out)
+  end
+
+  def test_init_creates_the_message_hooks_dir
+    assert Dir.exist?(File.join(@env["COORD_DIR"], "message-hooks"))
   end
 
   def test_hooks_with_no_hooks_says_so
@@ -424,13 +477,13 @@ class TaskrcSafetyTest < Minitest::Test
     coord_dir = File.join(@dir, "coordination")
     taskrc = File.join(coord_dir, "taskrc")
     FileUtils.mkdir_p(coord_dir)
-    File.write(taskrc, "# #{Coord::MARKER}\nuda.agent.type=string\n")
+    File.write(taskrc, "# #{Coord::MARKER}\nuda.role.type=string\n")
 
     Coord::Setup.new(Coord::Paths.new(coord_dir), taskrc).ensure_taskrc
 
     content = File.read(taskrc)
     assert_match(/^data\.location=/, content)
-    assert_includes content, "uda.agent.type=string"
+    assert_includes content, "uda.role.type=string"
     assert_equal 1, content.scan(Coord::MARKER).size
   end
 end
@@ -453,16 +506,15 @@ class WorktreeTest < Minitest::Test
 
   def teardown
     FileUtils.remove_entry(@root)
-    FileUtils.remove_entry(worktrees_root) if Dir.exist?(worktrees_root)
   end
 
   def run_git(*args)
     system("git", "-C", @root, *args, out: File::NULL) || raise("git #{args.join(" ")} failed")
   end
 
-  # All worktrees live under one sibling folder, <project>.worktrees/<slug>.
+  # All worktrees live inside the project, under <project>/.worktrees/<slug>.
   def worktrees_root
-    File.join(File.dirname(@root), "#{File.basename(@root)}.worktrees")
+    File.join(@root, ".worktrees")
   end
 
   def test_worktree_lives_under_the_worktrees_folder
@@ -470,7 +522,7 @@ class WorktreeTest < Minitest::Test
     @worktree_dir = File.join(worktrees_root, "tester")
     env_file = File.read(File.join(@worktree_dir, "coord-env.sh"))
 
-    assert_equal "#{@root}.worktrees/tester", @worktree_dir
+    assert_equal "#{@root}/.worktrees/tester", @worktree_dir
     assert Dir.exist?(@worktree_dir)
     assert_includes env_file, "COORD_DIR=#{File.join(@root, "coordination")}"
     assert_includes env_file, "TASKRC=#{File.join(@root, "coordination", "taskrc")}"
@@ -501,7 +553,7 @@ class WorktreeTest < Minitest::Test
 
   # Regression: `git worktree remove` deletes the worktree directory but not
   # its branch. A later `setup_agent` run then hit `git worktree add -b
-  # agent/tester` against a branch that already existed and aborted with
+  # worker/tester` against a branch that already existed and aborted with
   # "fatal: a branch named ... already exists".
   def test_create_recreates_the_worktree_when_only_the_branch_survives
     worktree = Coord::Worktree.new(@root)
@@ -513,7 +565,7 @@ class WorktreeTest < Minitest::Test
     worktree.create("tester", nil)
 
     assert Dir.exist?(@worktree_dir)
-    assert_equal "agent/tester", `git -C #{@worktree_dir} branch --show-current`.strip
+    assert_equal "worker/tester", `git -C #{@worktree_dir} branch --show-current`.strip
   end
 end
 
@@ -531,13 +583,11 @@ class WorktreeFirstRunTest < Minitest::Test
     run_git("add", "README.md")
     run_git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init")
     File.write(File.join(@root, "coord"), "#!/usr/bin/env ruby\n")
-    @worktree_dir = File.join(File.dirname(@root), "#{File.basename(@root)}.worktrees", "tester")
+    @worktree_dir = File.join(@root, ".worktrees", "tester")
   end
 
   def teardown
     FileUtils.remove_entry(@root)
-    worktrees_root = File.dirname(@worktree_dir)
-    FileUtils.remove_entry(worktrees_root) if Dir.exist?(worktrees_root)
   end
 
   def run_git(*args)

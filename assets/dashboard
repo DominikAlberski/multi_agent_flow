@@ -101,7 +101,7 @@ module Dashboard
     private
 
     def declared_roles
-      JSON.parse(File.read(@cfg.manifest)).fetch("agents", []).map { |a| a["role"] }.compact
+      JSON.parse(File.read(@cfg.manifest)).fetch("agents", []).map { |entry| entry["role"] }.compact
     rescue Errno::ENOENT, JSON::ParserError
       []
     end
@@ -126,7 +126,7 @@ module Dashboard
     def orphaned(tasks)
       roles = declared_roles
       return [] if roles.empty?
-      tasks.select { |t| t["agent"] && !roles.include?(t["agent"]) }
+      tasks.select { |t| t["role"] && !roles.include?(t["role"]) }
     end
 
     def scope_conflicts(tasks)
@@ -155,9 +155,9 @@ module Dashboard
     end
 
     def parse_event(line)
-      ts, action, agent, detail = line.split("\t", 4)
+      ts, action, worker, detail = line.split("\t", 4)
       return nil unless ts && action
-      { ts: ts, action: action, agent: agent, detail: detail }
+      { ts: ts, action: action, worker: worker, detail: detail }
     end
 
     def inbox_messages
@@ -190,7 +190,7 @@ module Dashboard
       ts   = data["ts"].to_i
       ttl  = data.fetch("ttl") { nil }&.to_i
       return nil unless ttl&.positive?
-      { name: name, agent: data["agent"], acquired_at: Time.at(ts).utc.iso8601,
+      { name: name, worker: data["worker"], acquired_at: Time.at(ts).utc.iso8601,
         expires_at: Time.at(ts + ttl).utc.iso8601, stale: ts + ttl < Time.now.to_i }
     rescue JSON::ParserError, Errno::ENOENT
       nil
@@ -253,7 +253,7 @@ module Dashboard
       </header>
       <div id="alerts" class="alerts"></div>
       <div id="stats" class="stats"></div>
-      <div id="agents" class="grid"></div>
+      <div id="roles" class="grid"></div>
       <div class="two">
         <div class="card"><h3>Recent Events</h3><div id="events"></div></div>
         <div>
@@ -281,7 +281,7 @@ module Dashboard
           if(orphaned.length) alerts.push({l:'danger',m:orphaned.length+' task(s) assigned to roles nobody is running'});
           if(conflicts.length) alerts.push({l:'warn',m:conflicts.length+' scope conflict(s) between pending tasks'});
           Object.entries(d.inboxes||{}).forEach(([role,msgs])=>{if(msgs.length)alerts.push({l:'warn',m:role+' inbox: '+msgs.length+' unread message(s)'})});
-          (d.locks||[]).filter(l=>l.stale).forEach(l=>alerts.push({l:'danger',m:'Stale lock: '+esc(l.name)+' held by '+(l.agent||'?')+', expired'}));
+          (d.locks||[]).filter(l=>l.stale).forEach(l=>alerts.push({l:'danger',m:'Stale lock: '+esc(l.name)+' held by '+(l.worker||'?')+', expired'}));
           document.getElementById('alerts').innerHTML=alerts.map(a=>`<div class="alert ${a.l==='warn'?'warn':''}">&#x26A0; ${esc(a.m)}</div>`).join('');
 
           const tasks=d.tasks.all||[],now=new Date();
@@ -292,22 +292,22 @@ module Dashboard
             {v:stale.length,l:'Stale',c:stale.length?'danger':''},{v:(d.declared_roles||[]).length,l:'Roles',c:''}
           ].map(s=>`<div class="stat"><div class="sv"${s.c?' style="color:var(--'+s.c+')"':''}>${s.v}</div><div class="sl">${s.l}</div></div>`).join('');
 
-          const byAgent={};
-          tasks.forEach(t=>{const a=t.agent||'unassigned';if(!byAgent[a])byAgent[a]={c:[],bl:[],w:[]};(t.wait&&new Date(t.wait)>now?byAgent[a].w:t.start?byAgent[a].c:byAgent[a].bl).push(t)});
+          const byRole={};
+          tasks.forEach(t=>{const r=t.role||'unassigned';if(!byRole[r])byRole[r]={c:[],bl:[],w:[]};(t.wait&&new Date(t.wait)>now?byRole[r].w:t.start?byRole[r].c:byRole[r].bl).push(t)});
           const staleIds=new Set(stale.map(t=>t.uuid));
           const roles=d.declared_roles||[];
-          document.getElementById('agents').innerHTML=Object.entries(byAgent).map(([agent,g])=>{
-            const isOrph=roles.length>0&&!roles.includes(agent);
+          document.getElementById('roles').innerHTML=Object.entries(byRole).map(([role,g])=>{
+            const isOrph=roles.length>0&&!roles.includes(role);
             const rows=[
               ...g.c.map(t=>`<div class="row">${staleIds.has(t.uuid)?b('stale','danger'):b('claimed','info')} <strong>${esc(t.description)}</strong><div class="meta">${esc(t.worker||'')} &middot; ${ago(t.start)} ago${t.scope?' &middot; '+esc(t.scope):''}</div></div>`),
               ...g.bl.map(t=>`<div class="row">${b('backlog','ok')} <strong>${esc(t.description)}</strong><div class="meta">${t.scope?esc(t.scope):''}</div></div>`),
               ...g.w.map(t=>`<div class="row">${b('waiting','warn')} <strong>${esc(t.description)}</strong><div class="meta">${t.scope?esc(t.scope):''}</div></div>`)
             ];
-            return`<div class="card"><h3>${esc(agent)}${isOrph?' '+b('no runner','danger'):''}</h3>${rows.join('')||'<div class="muted">no tasks</div>'}</div>`
+            return`<div class="card"><h3>${esc(role)}${isOrph?' '+b('no runner','danger'):''}</h3>${rows.join('')||'<div class="muted">no tasks</div>'}</div>`
           }).join('');
 
           const evts=(d.events||[]).slice().reverse().slice(0,25);
-          document.getElementById('events').innerHTML=evts.map(e=>`<div class="er"><span class="ets">${ago(e.ts)} ago</span><span class="ea ${ac(e.action)}">${esc(e.action)}</span><span>${esc(e.agent)} ${e.detail?'&mdash; '+esc(e.detail.slice(0,55)):''}</span></div>`).join('')||'<div class="muted">no events yet</div>';
+          document.getElementById('events').innerHTML=evts.map(e=>`<div class="er"><span class="ets">${ago(e.ts)} ago</span><span class="ea ${ac(e.action)}">${esc(e.action)}</span><span>${esc(e.worker)} ${e.detail?'&mdash; '+esc(e.detail.slice(0,55)):''}</span></div>`).join('')||'<div class="muted">no events yet</div>';
 
           const inboxes=Object.entries(d.inboxes||{});
           document.getElementById('inboxes').innerHTML=inboxes.length?inboxes.map(([role,msgs])=>{
@@ -317,7 +317,7 @@ module Dashboard
           }).join(''):'<div class="muted">no inboxes</div>';
 
           const lks=d.locks||[];
-          document.getElementById('locks').innerHTML=lks.length?lks.map(l=>`<div class="row"><span>${esc(l.name)}</span> ${l.stale?b('stale','danger'):b('held','info')} <span class="meta" style="margin-left:4px">${esc(l.agent||'')} &middot; expires ${ago(l.expires_at)}</span></div>`).join(''):'<div class="muted">no active locks</div>';
+          document.getElementById('locks').innerHTML=lks.length?lks.map(l=>`<div class="row"><span>${esc(l.name)}</span> ${l.stale?b('stale','danger'):b('held','info')} <span class="meta" style="margin-left:4px">${esc(l.worker||'')} &middot; expires ${ago(l.expires_at)}</span></div>`).join(''):'<div class="muted">no active locks</div>';
         }
 
         async function refresh(){

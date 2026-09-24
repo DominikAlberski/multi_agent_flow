@@ -71,7 +71,7 @@ of silently stranding those tasks.
 ```sh
 cd /path/to/project
 ./coord init
-./coord add --agent local --scope "test/**" --title "example task"
+./coord add --role local --scope "test/**" --title "example task"
 ./coord status
 ./coord board          # writes coordination/exports/board.md
 ```
@@ -86,7 +86,7 @@ cd /path/to/project
 ```
 
 One command: creates or reuses the agent's worktree, exports
-`COORD_DIR`/`TASKRC`/`COORD_AGENT`/`COORD_WORKER`, then execs the harness
+`COORD_DIR`/`TASKRC`/`COORD_ROLE`/`COORD_WORKER`, then execs the harness
 there. For `opencode`/`codex` this loads the role file automatically via
 `--agent`/`.codex/prompts/<role>.md`; for `claude`, which does not auto-load
 `.claude/agents/<role>.md` into an interactive session, it passes an initial
@@ -97,10 +97,10 @@ adds one); `WORKER` defaults to `1`.
 
 ## How agents use it
 
-Set `COORD_AGENT` so messages and locks are attributed:
+Set `COORD_ROLE` so messages and locks are attributed:
 
 ```sh
-export COORD_AGENT=local
+export COORD_ROLE=local
 ./coord claim <id> local
 ./coord annotate <id> "working on it"
 ./coord msg --from local deepseek "review test/foo.rb when free"

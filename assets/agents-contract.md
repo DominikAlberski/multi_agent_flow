@@ -9,7 +9,7 @@ This project uses a shared coordination layer for multiple coding agents
 
 ```
 ./coord init                                  # create coordination/ dirs
-./coord add --agent ROLE --scope S --title T  # architect: add a task (prints id)
+./coord add --role ROLE --scope S --title T   # architect: add a task (prints id)
 ./coord annotate ID "Goal: ... Inputs: ... Out of scope: ... Acceptance: ... Report format: ..."  # architect: add the task's spec, right after `add`
 ./coord next [ROLE] [--wait [--interval S]]   # list unclaimed tasks (or block until one appears)
 ./coord next --mine                           # list your in-progress tasks
@@ -31,9 +31,10 @@ run `coord unclaim ID` instead of leaving it to expire.
 
 ### Roles and workers
 
-- `agent` is the **role** (pool): `backend-developer`.
-- `worker` is the **instance**: `backend-1`, `backend-2`.
-- Set `COORD_AGENT` to the role and `COORD_WORKER` to a unique instance id.
+- `role` is the project function: `backend-developer`. A task belongs to a role.
+- `worker` is one instance of a role: `backend-1`, `backend-2`.
+- An agent is one harness session that runs a role as a worker. See GLOSSARY.md.
+- Set `COORD_ROLE` to the role and `COORD_WORKER` to a unique worker id.
 - `claim` is atomic (per-task lock). Two workers racing one task → exactly one wins.
 - The architect creates tasks for a role and does not need to know how many
   instances exist. Run one instance per role unless you set `COORD_WORKER`.
@@ -68,10 +69,10 @@ Read messages move to `coordination/inbox/<agent>/read/`.
 `coord broadcast` reaches every role that owns a pending task or is listed in
 `.agent-flow.json`, except the sender.
 `coord msg` and `coord broadcast` fire a per-role hook at
-`coordination/hooks/<role>.sh` if one is installed. The hook is a plain shell
-script. It gets `COORD_AGENT`, `COORD_FROM`, and `COORD_MSG_FILE` in its
+`coordination/message-hooks/<role>.sh` if one is installed. The hook is a plain shell
+script. It gets `COORD_ROLE`, `COORD_FROM`, and `COORD_MSG_FILE` in its
 environment, and the message file path as `$1`. It runs in the background and
-logs to `coordination/hooks/<role>.log`. Use it to poke a running agent
+logs to `coordination/message-hooks/<role>.log`. Use it to poke a running agent
 session, start a one-shot run, or send a notification. `coord` does not know
 which harness the agent runs in.
 `coord log` shows claims, completions, unclaims, messages, and broadcasts from

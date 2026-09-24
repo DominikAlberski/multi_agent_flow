@@ -9,16 +9,16 @@
 # are available, letting the session end normally.
 #
 # Claude Code (.claude/settings.json):
-#   {"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ruby coordination/hooks/next-task.rb"}]}]}}
+#   {"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ruby coordination/harness-hooks/next-task.rb"}]}]}}
 # Codex (~/.codex/hooks.json):
 #   {"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ruby ~/.codex/hooks/next-task.rb"}]}]}}
 #
-# Required env: COORD_AGENT (set by setup_agent). COORD_DIR and TASKRC optional.
+# Required env: COORD_ROLE (set by setup_agent). COORD_DIR and TASKRC optional.
 require "json"
 require "rbconfig"
 
-agent = ENV["COORD_AGENT"].to_s
-exit 0 if agent.empty? || agent == "unknown"
+role = ENV["COORD_ROLE"].to_s
+exit 0 if role.empty? || role == "unknown"
 
 coord_dir = ENV.fetch("COORD_DIR", "coordination")
 taskrc    = ENV.fetch("TASKRC", File.join(coord_dir, "taskrc"))
@@ -32,15 +32,15 @@ exit 0 unless coord
 env = ENV.to_h.merge(
   "TASKRC"       => taskrc,
   "COORD_DIR"    => coord_dir,
-  "COORD_AGENT"  => agent,
-  "COORD_WORKER" => ENV.fetch("COORD_WORKER", agent)
+  "COORD_ROLE"   => role,
+  "COORD_WORKER" => ENV.fetch("COORD_WORKER", role)
 )
-output = IO.popen(env, [RbConfig.ruby, coord, "next", agent], err: File::NULL, &:read).to_s
+output = IO.popen(env, [RbConfig.ruby, coord, "next", role], err: File::NULL, &:read).to_s
 exit 0 unless output.match?(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)
 
 $stdout.print JSON.generate(
   decision: "block",
-  reason: "Unclaimed tasks exist for role #{agent}. " \
+  reason: "Unclaimed tasks exist for role #{role}. " \
           "Run ./coord inbox to read messages, then ./coord next to list tasks. " \
           "Claim the next task and complete it. When no tasks remain, stop."
 )

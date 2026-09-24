@@ -142,14 +142,14 @@ class BootstrapTest < InstallerTestCase
   # data.location would silently fall back to the global ~/.task database.
   def test_upgrades_a_marked_taskrc_missing_data_location
     FileUtils.mkdir_p(File.dirname(taskrc_path))
-    File.write(taskrc_path, "# >>> multi-agent-flow >>>\nuda.agent.type=string\n")
+    File.write(taskrc_path, "# >>> multi-agent-flow >>>\nuda.role.type=string\n")
 
     out, status = bootstrap
 
     assert_equal 0, status, out
     content = File.read(taskrc_path)
     assert_includes content, "data.location=#{File.join(@dir, "coordination", "taskdata")}"
-    assert_includes content, "uda.agent.type=string"
+    assert_includes content, "uda.role.type=string"
   end
 
   def test_check_writes_nothing
@@ -175,14 +175,16 @@ class BootstrapTest < InstallerTestCase
     settings_path = File.join(@dir, ".claude", "settings.json")
     FileUtils.mkdir_p(File.dirname(settings_path))
     File.write(settings_path, JSON.generate(hooks: { Stop: [{ matcher: "", hooks: [{ type: "command",
-                                                     command: "ruby coordination/hooks/next-task.rb" }] }] }))
+                                                     command: "ruby coordination/harness-hooks/next-task.rb" }] }] }))
     2.times { assert_equal 0, bootstrap.last }
 
     hooks = JSON.parse(File.read(settings_path))["hooks"]
     watch = hooks["SessionStart"].map { |entry| entry["hooks"][0] }
     assert_equal [true], watch.map { |hook| hook["asyncRewake"] }
+    assert_equal ["ruby coordination/harness-hooks/board-watch.rb"], watch.map { |hook| hook["command"] }
     assert_equal 2, hooks["Stop"].size
-    assert File.exist?(File.join(@dir, "coordination", "hooks", "board-watch.rb"))
+    assert File.exist?(File.join(@dir, "coordination", "harness-hooks", "board-watch.rb"))
+    assert Dir.exist?(File.join(@dir, "coordination", "message-hooks"))
   end
 end
 
@@ -240,6 +242,22 @@ class FlowTest < InstallerTestCase
 
     assert_equal 0, status, out
     assert_equal custom, manifest["hermes_dir"]
+  end
+
+  def test_architect_prompt_adds_tasks_with_the_role_flag
+    out, status = flow("--agent", "opencode:architect")
+
+    assert_equal 0, status, out
+    content = File.read(architect_file)
+    assert_includes content, "./coord add --role <role>"
+    refute_match(/COORD_AGENT|coord add --agent/, content)
+  end
+
+  def test_bootstrap_contract_uses_the_new_names
+    contract = File.read(File.join(ROOT, "assets", "agents-contract.md"))
+
+    refute_match(/COORD_AGENT|--agent ROLE|coordination\/hooks\//, contract)
+    assert_includes contract, "COORD_ROLE"
   end
 
   # Regression: the architect prompt used to tell the architect to take goals
@@ -410,9 +428,9 @@ class SetupAgentTest < Minitest::Test
     launcher.define_method(:exec_or_die, original)
   end
 
-  # Worktrees are grouped under one sibling folder, <project>.worktrees/<slug>.
-  def test_worktree_dir_is_grouped_under_the_worktrees_folder
-    assert_equal "/tmp/myproject.worktrees/tester-1",
+  # Worktrees live inside the project, under <project>/.worktrees/<slug>.
+  def test_worktree_dir_is_inside_the_project
+    assert_equal "/tmp/myproject/.worktrees/tester-1",
                  SetupAgent::Worktree.dir_for("/tmp/myproject", "tester-1")
   end
 
@@ -437,7 +455,7 @@ class SetupAgentTest < Minitest::Test
   end
 
   # The skill name uses the main checkout's name, from the project root and
-  # from a worktree alike (<project>.worktrees/<slug> -> <project>-<role>).
+  # from a worktree alike (<project>/.worktrees/<slug> -> <project>-<role>).
   def test_hermes_skill_name_is_the_same_in_root_and_worktree
     skip "git not installed" unless system("git", "--version", out: File::NULL)
     in_project_with_worktree do |root, worktree|
@@ -464,7 +482,7 @@ class SetupAgentTest < Minitest::Test
       FileUtils.mkdir_p(root)
       git(root, "init", "-q")
       git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init")
-      worktree = File.join(File.dirname(root), "myproject.worktrees", "slug")
+      worktree = File.join(root, ".worktrees", "slug")
       git(root, "worktree", "add", "-q", worktree)
       yield root, worktree
     end

@@ -34,6 +34,7 @@ See **[install.md](install.md)** for the exact instructions the agent follows.
 
 | File | Audience | What it covers |
 |---|---|---|
+| **[GLOSSARY.md](GLOSSARY.md)** | Everyone | Domain terms: harness, role, worker, agent, task, message, claim, lock, hooks |
 | **[GETTING_STARTED.md](GETTING_STARTED.md)** | First-time user | Concepts, prerequisites, manual install, basic workflow |
 | **[USER_MANUAL.md](USER_MANUAL.md)** | Setting up a real team | Full install (flow.rb), all harnesses, dispatcher, monitoring |
 | **[install.md](install.md)** | An AI coding agent | Interactive wizard: asks the user for harnesses/roles, runs the generator |
@@ -48,21 +49,22 @@ multi_agent_flow/
   install.md                  # agent instruction: interactive setup wizard
   SKILL.md                    # portable skill for agent skill loaders
   README.md                   # this file
+  GLOSSARY.md                 # domain terms
   GETTING_STARTED.md          # first-time walkthrough (concepts + manual setup)
   USER_MANUAL.md              # full team setup reference
   scripts/
-    flow.rb                   # generates harness-specific agent files + installs coordination layer
+    flow.rb                   # generates harness-specific role files + installs coordination layer
     check.rb                  # repo consistency check (UDA sync, marker blocks, worktree formula)
   templates/
     roles.yml                 # role definitions + model hints
-    opencode.md.erb           # agent file templates per harness
+    opencode.md.erb           # role file templates per harness
     claude.md.erb
     codex.md.erb
     hermes.md.erb
   assets/
     coord                     # coordination CLI (Ruby)
     setup_agent               # worktree + harness launch (Ruby)
-    dispatcher                # unattended agent: poll board, spin up, exit (Ruby)
+    dispatcher                # polls task board + inbox, starts one-shot agents (Ruby)
     vault                     # graphify + Obsidian + MCP watcher control (Ruby)
     dashboard                 # web dashboard: stuck-detection UI (Ruby/Sinatra)
     bootstrap.rb              # idempotent coordination layer installer (Ruby)
@@ -70,6 +72,7 @@ multi_agent_flow/
     agents-contract.md        # contract appended to AGENTS.md / CLAUDE.md
     gitignore.append          # marker-guarded ignore entries
     coordination/             # inbox / locks / exports skeleton
+    harness-hooks/            # next-task + board-watch scripts run by harnesses
   test/
     coord_test.rb             # behavioral tests for the coord CLI
     installer_test.rb         # tests for bootstrap.rb, flow.rb, setup_agent
@@ -125,10 +128,8 @@ those tools are absent. If wiring into CI, install both to get full coverage.
   `coord board`/`export` are read-only projections.
 - **Agents never call `task` directly.** `coord` keeps the protocol stable and
   lets the storage backend change later.
-- **Terminology:** `harness` is the coding tool (opencode, Claude Code, Hermes,
-  Codex). `role` is the project function (architect, backend-developer). `worker`
-  is one running instance (`COORD_WORKER=backend-developer-1`). One role can run
-  as multiple workers; `claim` is atomic so they cannot take the same task.
+- **Terminology:** see [GLOSSARY.md](GLOSSARY.md). One role can run as several
+  workers. `claim` is atomic, so two workers cannot take the same task.
 - **A claim is a lease.** Idle past `COORD_LEASE_TTL` seconds (default 4 hours)
   it becomes claimable again without `--force`. `coord unclaim` releases one on
   demand.

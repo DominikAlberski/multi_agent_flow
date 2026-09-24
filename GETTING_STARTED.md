@@ -34,19 +34,18 @@ All shared state lives in a `coordination/` folder inside your project.
 
 ## 2. Concepts
 
-| Term | Meaning |
-|---|---|
-| **Harness** | An AI coding tool in a terminal: opencode, Claude Code, Hermes, or Codex. |
-| **Role** | A project function: architect, backend-developer, reviewer, tester. |
-| **Worker** | One running instance of a role. `COORD_WORKER=backend-developer-1`. |
-| **Task** | One unit of work. Has a title, a role (owner), and a scope. |
-| **Scope** | The file paths an agent may change for a task. Example: `test/queries/**`. |
-| **Claim** | A worker marks a task as its own and starts work. `claim` is atomic. |
-| **Lock** | A flag that stops two agents from using one shared resource at the same time. |
-| **Board** | A Markdown file that shows all tasks as columns (Backlog / In Progress / Done). |
-| **Vault** | An Obsidian folder with the graphify code-knowledge graph. |
-| **Architect** | The role that decomposes a request into tasks and assigns them. It does not write code. |
-| **Project manager** | An optional role above the architect. You talk to the project manager. It sends one goal at a time to the architect and relays the report back. |
+[GLOSSARY.md](GLOSSARY.md) defines every term. In short:
+
+- A **harness** (Claude Code, opencode, Codex, Hermes) runs a **role** (architect,
+  tester) as a **worker** (`tester-1`). That running session is an **agent**.
+- A **task** belongs to a role. A worker **claims** a task. A **lock** is held by a worker.
+- A **message** goes to a role's inbox.
+
+Two roles have a special job:
+
+- **Architect**: splits a request into tasks and assigns them. It does not write code.
+- **Project manager** (optional): you talk to it. It sends one goal at a time to the
+  architect and relays the report back.
 
 ---
 
@@ -117,12 +116,12 @@ The installer is idempotent. Run it again at any time; it skips work already
 done. Add `--install-deps` if a required tool is missing.
 
 > **Note:** `bootstrap.rb` creates the coordination layer and copies the shared
-> scripts. To also generate harness-specific agent files (`.claude/agents/`,
+> scripts. To also generate harness-specific role files (`.claude/agents/`,
 > `.opencode/agents/`, etc.) and the `.agent-flow.json` manifest, use
 > `scripts/flow.rb` instead. See **[USER_MANUAL.md](USER_MANUAL.md)** for that
 > full setup. `setup_agent` requires `.agent-flow.json`, so if you used
 > bootstrap.rb alone here, skip the `setup_agent` shortcut in step 7 and set
-> `COORD_AGENT` manually as shown below.
+> `COORD_ROLE` manually as shown below.
 
 ---
 
@@ -161,14 +160,14 @@ cd /path/to/your/project
 ./coord worktree backend-developer
 ```
 
-This creates `.worktrees/backend-developer-1` on branch `agent/backend-developer-1`.
+This creates `.worktrees/backend-developer-1` on branch `worker/backend-developer-1`.
 
 In the agent's terminal:
 
 ```sh
 cd /path/to/your/project/.worktrees/backend-developer-1
 source coord-env.sh
-export COORD_AGENT=backend-developer
+export COORD_ROLE=backend-developer
 export COORD_WORKER=backend-developer-1
 ```
 
@@ -181,9 +180,9 @@ Do the same for each agent. Example layout:
 - Terminal 2: `reviewer` (cloud model, interactive)
 - Terminal 3: you — run `coord` commands and watch
 
-> **Shortcut:** if you ran `scripts/flow.rb` to generate agent files (see
+> **Shortcut:** if you ran `scripts/flow.rb` to generate role files (see
 > USER_MANUAL.md), use `./setup_agent HARNESS ROLE[_WORKER]` instead. It does
-> the worktree, `coord-env.sh`, `COORD_AGENT`, and `COORD_WORKER` steps and
+> the worktree, `coord-env.sh`, `COORD_ROLE`, and `COORD_WORKER` steps and
 > then launches the harness.
 
 If you run more than one instance of the same role, give each a unique worker id:
@@ -200,7 +199,7 @@ claim the same task.
 ## 8. Create a task
 
 ```sh
-./coord add --agent backend-developer --scope "test/queries/**" \
+./coord add --role backend-developer --scope "test/queries/**" \
   --title "Fix reek offenses in test/queries"
 ```
 
@@ -302,7 +301,7 @@ Read your messages:
 ./coord inbox
 ```
 
-`inbox` defaults to `$COORD_AGENT`. Reading marks messages as read. Use
+`inbox` defaults to `$COORD_ROLE`. Reading marks messages as read. Use
 `--peek` to read without marking. Messages are files in
 `coordination/inbox/<role>/`.
 
@@ -350,10 +349,10 @@ Terminal 1 (`backend-developer`):
 ```sh
 cd /path/to/project/.worktrees/backend-developer-1
 source coord-env.sh
-export COORD_AGENT=backend-developer
+export COORD_ROLE=backend-developer
 export COORD_WORKER=backend-developer-1
 
-./coord add --agent backend-developer --scope "test/queries/**" \
+./coord add --role backend-developer --scope "test/queries/**" \
   --title "Fix reek in test/queries"
 # prints: 3f2a...  (use as $ID)
 ./coord claim $ID
@@ -369,11 +368,11 @@ Terminal 2 (`reviewer`):
 ```sh
 cd /path/to/project/.worktrees/reviewer-1
 source coord-env.sh
-export COORD_AGENT=reviewer
+export COORD_ROLE=reviewer
 export COORD_WORKER=reviewer-1
 
 ./coord inbox
-./coord add --agent reviewer --scope "test/queries/**" \
+./coord add --role reviewer --scope "test/queries/**" \
   --title "Review test/queries changes"
 # prints: 9c1b...  (use as $RID)
 ./coord claim $RID
@@ -387,21 +386,21 @@ terminals with the same role and different worker ids:
 
 ```sh
 # architect terminal
-./coord add --agent backend-developer --scope "app/models/**"   --title "Refactor models"
-./coord add --agent backend-developer --scope "app/services/**" --title "Refactor services"
-./coord add --agent backend-developer --scope "app/jobs/**"     --title "Refactor jobs"
+./coord add --role backend-developer --scope "app/models/**"   --title "Refactor models"
+./coord add --role backend-developer --scope "app/services/**" --title "Refactor services"
+./coord add --role backend-developer --scope "app/jobs/**"     --title "Refactor jobs"
 ```
 
 ```sh
 # terminal 1
-export COORD_AGENT=backend-developer; export COORD_WORKER=backend-developer-1
+export COORD_ROLE=backend-developer; export COORD_WORKER=backend-developer-1
 ./coord next      # shows all three unclaimed tasks
 ./coord claim <id>  # claims one; the rest stay available
 ```
 
 ```sh
 # terminal 2
-export COORD_AGENT=backend-developer; export COORD_WORKER=backend-developer-2
+export COORD_ROLE=backend-developer; export COORD_WORKER=backend-developer-2
 ./coord next      # shows remaining unclaimed tasks
 ```
 
@@ -429,7 +428,7 @@ take the same task.
 Run `brew install task`, or re-run the installer with `--install-deps`.
 
 **`coord: locked by ...`**
-Another agent holds the lock. Wait, or release it with `./coord unlock NAME`.
+Another worker holds the lock. Wait, or release it with `./coord unlock NAME`.
 
 **The task ID is unknown.**
 Run `./coord status`. Or run `task +LATEST uuids`.
@@ -444,14 +443,14 @@ The existing file is not from this flow. Add `--force` only if you are sure.
 The task scopes overlap. Split the tasks. Give each task a different scope.
 
 **`coord: no role set`**
-`COORD_AGENT` is unset or set to `unknown`. Run `export COORD_AGENT=<role>`.
+`COORD_ROLE` is unset or set to `unknown`. Run `export COORD_ROLE=<role>`.
 
 **A task looks claimed but nobody is working on it.**
 The worker likely crashed. Wait for the lease to expire (`COORD_LEASE_TTL`,
 default 4 hours) or free it now: `./coord unclaim $ID`.
 
 **A Claude Code session says it has no role.**
-Setting `COORD_AGENT` does not make Claude Code assume that role. `.claude/agents/ROLE.md`
+Setting `COORD_ROLE` does not make Claude Code assume that role. `.claude/agents/ROLE.md`
 is a subagent definition, not the session's persona. Tell the session directly:
 "Read `.claude/agents/ROLE.md` and follow it exactly." `./setup_agent claude ROLE` does
 this for you.
@@ -467,7 +466,7 @@ checks for the skill and only passes `--skills` when it exists.
 
 This guide covered the basic workflow. For a real multi-agent team setup with:
 
-- Harness-specific agent files for each role
+- Harness-specific role files for each role
 - Dispatched (unattended) agents that start only when there is work
 - Prompt cache management to save tokens
 - The graphify knowledge base

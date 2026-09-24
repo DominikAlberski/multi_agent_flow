@@ -123,7 +123,7 @@ Remove `--check` from step 4 and run again.
 
 Expected output:
 
-- `Generated agent files:` with one line per role:
+- `Generated role files:` with one line per role:
   - `.claude/agents/<role>.md`
   - `.opencode/agents/<role>.md`
   - `~/.hermes/skills/my-app-tester/SKILL.md`
@@ -175,10 +175,10 @@ Open one terminal per interactive agent. Run `cd "$PROJECT"` first in each.
 `setup_agent HARNESS ROLE[_WORKER]` does these things in one command:
 
 1. Creates or reuses a worktree at `.worktrees/<role>-<worker_id>` on branch
-   `agent/<role>-<worker_id>`.
+   `worker/<role>-<worker_id>`.
 2. Sources `coord-env.sh` so the worktree shares the main project's
    `coordination/` dir and task board.
-3. Exports `COORD_AGENT`, `COORD_WORKER`, `COORD_DIR`, and `TASKRC`.
+3. Exports `COORD_ROLE`, `COORD_WORKER`, `COORD_DIR`, and `TASKRC`.
 4. Launches the harness in that worktree with the role loaded.
 
 Harness-specific notes:
@@ -216,7 +216,7 @@ adds two hooks to `.claude/settings.json`:
 
 One watcher runs per worker. The lock is `coordination/locks/board-watch-<worker>.d`.
 The watcher stops when its Claude Code process stops. The watcher does nothing
-for the user's own sessions (no `COORD_AGENT`) and for dispatched agents
+for the user's own sessions (no `COORD_ROLE`) and for dispatched agents
 (`COORD_DISPATCHED=1`). To change the timing, set `BOARD_WATCH_INTERVAL` and
 `BOARD_WATCH_IDLE` (seconds) before you run `setup_agent`.
 
@@ -239,7 +239,7 @@ Add `--dispatch` to the `setup_agent` command:
 `--dispatch` runs `./dispatcher` in the worktree instead of an interactive session:
 
 1. Creates or reuses a worktree at `.worktrees/<role>-bot` on branch
-   `agent/<role>-bot`. The `-bot` worker id keeps dispatched workers separate
+   `worker/<role>-bot`. The `-bot` worker id keeps dispatched workers separate
    from interactive workers of the same role.
 2. Connects the worktree to the main project's task board.
 3. Starts `./dispatcher` in the worktree.
@@ -403,11 +403,11 @@ root as the Obsidian vault.
 ## Message hooks
 
 `coord msg` and `coord broadcast` fire a per-role hook at
-`coordination/hooks/<role>.sh` when a message is delivered. The hook is a plain
+`coordination/message-hooks/<role>.sh` when a message is delivered. The hook is a plain
 shell script. If there is no hook, `coord` only writes the inbox file.
 
 ```sh
-# coordination/hooks/backend-developer.sh
+# coordination/message-hooks/backend-developer.sh
 #!/bin/sh
 # Poke a running tmux session to check its inbox
 tmux send-keys -t backend './coord inbox' Enter
@@ -415,12 +415,12 @@ tmux send-keys -t backend './coord inbox' Enter
 
 Hook environment variables:
 
-- `COORD_AGENT`: the receiving role.
+- `COORD_ROLE`: the receiving role.
 - `COORD_FROM`: the sender.
 - `COORD_MSG_FILE` and `$1`: the message file path.
 
 The hook runs in the background; a slow hook does not block the sender. Output
-goes to `coordination/hooks/<role>.log`. `coord hooks [ROLE]` lists installed
+goes to `coordination/message-hooks/<role>.log`. `coord hooks [ROLE]` lists installed
 hooks and their status.
 
 ---
@@ -430,9 +430,9 @@ hooks and their status.
 Each agent commits on its own branch. You merge the branches into main.
 
 ```sh
-git branch --list 'agent/*'
-git diff main..agent/backend-developer-1
-git merge agent/backend-developer-1
+git branch --list 'worker/*'
+git diff main..worker/backend-developer-1
+git merge worker/backend-developer-1
 ```
 
 ---
@@ -458,13 +458,44 @@ unchanged files and updates changed files in place. Then commit.
 
 ---
 
+## Upgrade from a version before GLOSSARY.md
+
+This version renames terms (see [GLOSSARY.md](GLOSSARY.md)). It does not read
+the old names. Old task boards and worktrees do not work with it.
+
+| Old | New |
+|---|---|
+| `COORD_AGENT` | `COORD_ROLE` |
+| `coord add --agent ROLE` | `coord add --role ROLE` |
+| `coord lock NAME --agent A` | `coord lock NAME --worker W` |
+| task field `agent` | task field `role` |
+| branch `agent/<worker>` | branch `worker/<worker>` |
+| `coordination/hooks/<role>.sh` (message hooks) | `coordination/message-hooks/<role>.sh` |
+| `coordination/hooks/next-task.rb` and other harness hooks | `coordination/harness-hooks/` |
+| dispatcher default worker `<role>-dispatcher` | `<role>-bot` |
+
+Do these steps in the project:
+
+1. Stop the team (see above).
+2. Finish or write down the open tasks. The reset deletes them.
+3. Remove the worktrees: `git worktree remove .worktrees/<name>` for each one.
+4. Delete the old branches after you merge them: `git branch -D agent/<worker>`.
+5. Delete `coordination/taskdata/` and `coordination/taskrc`.
+6. Move your message hooks from `coordination/hooks/` to `coordination/message-hooks/`.
+7. Delete the rest of `coordination/hooks/`.
+8. In `.claude/settings.json`, delete the hook entries that point to `coordination/hooks/`.
+9. Run `scripts/flow.rb` again, then `./coord init`.
+10. Commit.
+
+---
+
 ## Command reference
 
 | Command | What it does |
 |---|---|
 | `./coord init` | Create the `coordination/` folders. |
-| `./coord add --agent ROLE --scope S --title T` | Create a task for a role. Prints the ID. |
-| `./coord next [ROLE]` | List unclaimed tasks for a role (defaults to `$COORD_AGENT`). |
+| `./coord add --role ROLE --scope S --title T` | Create a task for a role. Prints the ID. |
+| `./coord next [ROLE]` | List unclaimed tasks for a role (defaults to `$COORD_ROLE`). |
 | `./coord next --wait` | Block (polls every 60s) until a task appears. |
 | `./coord next --mine` | List the tasks this worker has claimed. |
 | `./coord conflicts` | List pending tasks whose scopes overlap. |
