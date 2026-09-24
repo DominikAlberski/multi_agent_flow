@@ -4,11 +4,13 @@
 # flow.rb - generate harness-specific role files for the multi-agent flow.
 #
 # Usage:
-#   ruby scripts/flow.rb --project DIR --agent HARNESS:ROLE [--agent ...] \
+#   ruby scripts/flow.rb --project DIR [--agent HARNESS:ROLE ...] [--remove HARNESS:ROLE ...] \
 #        [--model ROLE=MODEL] [--hermes-dir DIR] [--check] [--force] [--no-bootstrap]
 #   ruby scripts/flow.rb --list-roles
 #
 # HARNESS is one of: opencode, claude, codex, hermes.
+# A re-run keeps the agents in .agent-flow.json. --agent adds an agent.
+# --remove drops an agent. Without --agent, a re-run regenerates the current agents.
 # Idempotent: identical files are skipped, changed files are updated, and
 # foreign files are refused unless --force is given.
 require "fileutils"
@@ -168,6 +170,7 @@ module Flow
       @argv = argv
       @project = nil
       @agents = []
+      @removed = []
       @models = {}
       @hermes_dir = DEFAULT_HERMES_DIR
       @check = false
@@ -196,9 +199,10 @@ module Flow
 
     def option_parser
       OptionParser.new do |o|
-        o.banner = "Usage: ruby scripts/flow.rb --project DIR --agent HARNESS:ROLE [--agent ...]"
+        o.banner = "Usage: ruby scripts/flow.rb --project DIR [--agent HARNESS:ROLE ...] [--remove HARNESS:ROLE ...]"
         o.on("--project DIR") { |v| @project = v }
         o.on("--agent SPEC", "HARNESS:ROLE[:MODEL]") { |v| @agents << parse_agent(v) }
+        o.on("--remove SPEC", "HARNESS:ROLE") { |v| @removed << parse_agent(v) }
         o.on("--model PAIR", "ROLE=MODEL") { |v| k, m = v.split("=", 2); @models[k] = m }
         o.on("--hermes-dir DIR") { |v| @hermes_dir = File.expand_path(v) }
         o.on("--check") { @check = true }
@@ -226,6 +230,7 @@ module Flow
 
     def validate
       validate_project
+      @agents = Roster.new(@project).merge(@agents, @removed)
       validate_agents
     end
 
@@ -237,7 +242,7 @@ module Flow
     end
 
     def validate_agents
-      abort "flow: at least one --agent HARNESS:ROLE is required" if @agents.empty?
+      abort "flow: no agents. Add one with --agent HARNESS:ROLE" if @agents.empty?
 
       @agents.each { |agent| validate_agent(agent) }
     end
@@ -292,7 +297,7 @@ module Flow
     end
 
     def model_for(agent)
-      agent[:model] || @models[agent[:role]] || DEFAULT_MODELS[agent[:harness]]
+      agent[:model] || @models[agent[:role]] || agent[:saved_model] || DEFAULT_MODELS[agent[:harness]]
     end
 
     def destination(harness, role)
@@ -521,6 +526,29 @@ module Flow
     def model_command(result)
       result[:agent][:harness] == "codex" ? "codex -m #{result[:model]}" : "hermes model"
     end
+  end
+  
+  # Roster merges the agents saved in .agent-flow.json with the --agent and
+  # --remove specs of this run. A saved model ranks below --model.
+  class Roster
+    def initialize(project)
+      path = File.join(project, ".agent-flow.json")
+      @saved = File.exist?(path) ? JSON.parse(File.read(path)).fetch("agents", []) : []
+    end
+  
+    def merge(added, removed)
+      kept = saved.map { |a| added.find { |b| same?(a, b) }&.merge(saved_model: a[:saved_model]) || a }
+      agents = kept + added.reject { |b| kept.any? { |a| same?(a, b) } }
+      agents.reject { |a| removed.any? { |b| same?(a, b) } }
+    end
+  
+    private
+  
+    def saved
+      @saved.map { |a| { harness: a["harness"], role: a["role"], saved_model: a["model"] } }
+    end
+  
+    def same?(one, other) = one[:harness] == other[:harness] && one[:role] == other[:role]
   end
 end
 

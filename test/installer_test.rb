@@ -246,6 +246,46 @@ class FlowTest < InstallerTestCase
                  manifest["agents"]
   end
 
+  def agent_specs = manifest["agents"].map { |a| "#{a["harness"]}:#{a["role"]}" }
+
+  def test_rerun_adds_an_agent_and_keeps_the_current_agents
+    flow("--agent", "opencode:backend-developer")
+
+    out, status = flow("--agent", "opencode:architect")
+
+    assert_equal 0, status, out
+    assert_equal %w[opencode:backend-developer opencode:architect], agent_specs
+    assert File.exist?(architect_file)
+  end
+
+  def test_rerun_without_agents_regenerates_the_current_agents
+    flow("--agent", "opencode:backend-developer")
+    File.delete(agent_file)
+
+    out, status = flow
+
+    assert_equal 0, status, out
+    assert File.exist?(agent_file)
+  end
+
+  def test_remove_drops_an_agent_from_the_manifest
+    flow("--agent", "opencode:backend-developer", "--agent", "opencode:architect")
+
+    out, status = flow("--remove", "opencode:architect")
+
+    assert_equal 0, status, out
+    assert_equal %w[opencode:backend-developer], agent_specs
+  end
+
+  def test_rerun_keeps_a_saved_model_unless_model_overrides_it
+    flow("--agent", "opencode:backend-developer:m1")
+    flow("--agent", "opencode:architect", "--agent", "opencode:backend-developer")
+    assert_equal "m1", manifest["agents"].first["model"]
+
+    flow("--model", "backend-developer=m2")
+    assert_equal "m2", manifest["agents"].first["model"]
+  end
+
   def test_is_idempotent
     flow("--agent", "opencode:backend-developer")
     first = File.read(agent_file)
@@ -529,14 +569,15 @@ class SetupAgentTest < Minitest::Test
     assert_raises(SystemExit) { capture_io { manifest.verify!("opencode", "nope") } }
   end
 
-  # flow.rb lives in multi_agent_flow, not in the project. flow.rb also
-  # rewrites the whole manifest, so the hint must keep the current agents.
+  # flow.rb lives in multi_agent_flow, not in the project. flow.rb keeps the
+  # current agents, so the hint names only the missing agent.
   def test_manifest_rejection_prints_the_full_flow_command
     manifest = SetupAgent::Manifest.new([{ "harness" => "claude", "role" => "reviewer" }])
 
     _out, err = capture_io { assert_raises(SystemExit) { manifest.verify!("opencode", "frontend-developer") } }
     assert_includes err, 'ruby "$FLOW/scripts/flow.rb" --project "$PWD"'
-    assert_includes err, "--agent claude:reviewer --agent opencode:frontend-developer"
+    assert_includes err, '--project "$PWD" --agent opencode:frontend-developer'
+    refute_includes err, "claude:reviewer"
   end
 
   def test_hermes_launcher_is_registered

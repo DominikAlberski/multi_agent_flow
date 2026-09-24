@@ -463,9 +463,18 @@ git worktree remove .worktrees/<name>
 
 ## Change the setup later
 
-Run `ruby "$FLOW/scripts/flow.rb" --project "$PROJECT"` again with the new
-`--agent` list. Include all current agents in the list. `flow.rb` rewrites
-`.agent-flow.json` from the list, so an agent that is not in the list is removed.
+Run `flow.rb` again. `flow.rb` keeps the agents in `.agent-flow.json`.
+Give only the changes:
+
+```sh
+ruby "$FLOW/scripts/flow.rb" --project "$PROJECT" \
+  --agent opencode:frontend-developer \
+  --remove claude:architect
+```
+
+`--agent` adds an agent. `--remove` removes an agent from `.agent-flow.json`.
+`--remove` does not delete the generated role file.
+Without `--agent` and `--remove`, `flow.rb` regenerates the current agents.
 The generator skips unchanged files and updates changed files in place. Then commit.
 
 ---

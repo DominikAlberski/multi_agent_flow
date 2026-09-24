@@ -149,12 +149,11 @@ module SetupAgent
       abort "setup_agent: no #{harness}:#{role} in .agent-flow.json.\n#{add_hint("#{harness}:#{role}")}"
     end
 
-    # flow.rb rewrites the whole manifest, so the hint repeats every current
-    # agent. $FLOW is the multi_agent_flow checkout, not this project.
+    # flow.rb keeps the agents in the manifest, so the hint names only the
+    # missing agent. $FLOW is the multi_agent_flow checkout, not this project.
     def add_hint(missing)
-      agents = @agents.map { |a| "#{a['harness']}:#{a['role']}" } + [missing]
       "  Fix (from the project root, with FLOW=<path to multi_agent_flow>):\n" \
-        "    ruby \"$FLOW/scripts/flow.rb\" --project \"$PWD\" #{agents.map { |a| "--agent #{a}" }.join(' ')}"
+        "    ruby \"$FLOW/scripts/flow.rb\" --project \"$PWD\" --agent #{missing}"
     end
 
     def model_for(harness, role)
