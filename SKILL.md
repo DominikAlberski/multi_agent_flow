@@ -12,8 +12,8 @@ For a first-time user, read `GETTING_STARTED.md` first. It is a step-by-step
 walkthrough with a full worked example.
 
 For the fastest setup, read and implement `install.md`: it asks the user which
-harnesses and roles to use, then runs `scripts/flow.rb` to generate the agent
-files and the coordination layer.
+harnesses and roles to use, then runs `maf add` to generate the agent files
+and the coordination layer.
 
 Three pillars:
 
@@ -37,25 +37,37 @@ No `jq` needed: `coord` parses the Taskwarrior JSON itself.
 
 ## Install into a project
 
-Run the bundled bootstrap. Paths below are relative to this skill directory.
+Link `bin/maf` from this skill directory into a folder on `PATH` once:
 
 ```sh
-./assets/bootstrap.rb /path/to/project --roles architect,backend-developer,frontend-developer,reviewer,tester
+ln -sf "$PWD/bin/maf" ~/.local/bin/maf
 ```
 
-Flags: `--check` (preview, write nothing), `--install-deps` (install missing
-required tools), `--force` (overwrite a foreign `coord`).
+Then run `maf` in the project root. The project is the current directory.
+
+```sh
+maf roles                                           # list the roles
+maf add claude:architect opencode:backend-developer # add agents, install the flow
+maf add opencode:tester                             # add one more agent later
+maf remove opencode:tester                          # remove an agent
+maf agents                                          # list the current agents
+maf update                                          # regenerate the current agents
+```
+
+Flags for `maf add`: `--check` (preview, write nothing), `--force` (overwrite a
+foreign `coord`), `--model ROLE=MODEL`. `maf add` keeps the current agents in
+`.agent-flow.json`.
 
 It creates and never destroys:
 
 - `coordination/{inbox,locks,exports,taskdata}/`
-- `coord`, `setup_agent`, and `vault` (executable) at the project root; `vault`
+- `coord`, `dispatcher`, and `vault` (executable) at the project root; `vault`
   is also started automatically if `graphify` is on PATH (see Shared memory)
 - `coordination/taskrc`: a project-local Taskwarrior config (own database,
   under `coordination/taskdata`) plus the UDA block — never the user's
   global `~/.taskrc`, so two projects never share one board
 - a "Multi-agent coordination" contract appended to `AGENTS.md`, the only
-  instruction file; bootstrap moves the text of an existing `CLAUDE.md` or
+  instruction file; `maf add` moves the text of an existing `CLAUDE.md` or
   `.claude/CLAUDE.md` into `AGENTS.md` and deletes that file, because Claude
   Code reads `AGENTS.md` only when no `CLAUDE.md` exists
 - `.gitignore` entries (marker-guarded)
@@ -70,8 +82,8 @@ of silently stranding those tasks.
 ## Uninstall
 
 ```sh
-ruby scripts/uninstall.rb --project /path/to/project --check   # preview
-ruby scripts/uninstall.rb --project /path/to/project           # asks, then removes
+maf uninstall --check   # preview
+maf uninstall           # asks, then removes
 ```
 
 Removes only files that carry the flow signature or marker. Keeps
@@ -91,10 +103,10 @@ cd /path/to/project
 ## Launch an agent
 
 ```sh
-./setup_agent HARNESS ROLE[_WORKER] [model:PROVIDER/MODEL]
-./setup_agent claude architect
-./setup_agent opencode backend-developer_1 model:openrouter/deepseek-v3
-./setup_agent hermes tester --dispatch   # unattended: runs ./dispatcher in the worktree
+maf start HARNESS ROLE[_WORKER] [model:PROVIDER/MODEL]
+maf start claude architect
+maf start opencode backend-developer_1 model:openrouter/deepseek-v3
+maf start hermes tester --dispatch   # unattended: runs ./dispatcher in the worktree
 ```
 
 One command: creates or reuses the agent's worktree, exports
@@ -104,8 +116,7 @@ there. For `opencode`/`codex` this loads the role file automatically via
 `.claude/agents/<role>.md` into an interactive session, it passes an initial
 prompt telling the session to read and follow that file; for `hermes`, it
 loads the role as a skill via `--skills <project>-<role>`. `HARNESS:ROLE` must
-already be in `.agent-flow.json` (`scripts/flow.rb --agent HARNESS:ROLE`
-adds one); `WORKER` defaults to `1`.
+already be in `.agent-flow.json` (`maf add HARNESS:ROLE` adds one); `WORKER` defaults to `1`.
 
 ## How agents use it
 
@@ -142,11 +153,11 @@ Locks are `mkdir`-based, so they work on macOS and Linux without `flock`.
 
 ## Shared memory
 
-`bootstrap.rb` installs a `vault` script and starts it automatically when
+`maf add` installs a `vault` script and starts it automatically when
 `graphify` is on PATH at install time:
 
 ```sh
-./vault           # start (no-op if already running); bootstrap.rb runs this for you
+./vault           # start (no-op if already running); maf add runs this for you
 ./vault export    # regenerate the Obsidian vault once
 ./vault status
 ./vault stop
@@ -176,7 +187,7 @@ watcher, with its pid in `coordination/vault.pid` and its output in
    say "never edit" also get a restricted tool grant where the harness
    supports one.
 2. Work in a per-agent branch or git worktree (`coord worktree ROLE`, or
-   `setup_agent HARNESS ROLE` which also does this). Worktrees live inside the
+   `maf start HARNESS ROLE` which also does this). Worktrees live inside the
    project at `.worktrees/<role>-<worker_id>` (gitignored). In the worktree,
    run `source coord-env.sh` so `COORD_DIR`/`TASKRC` point at the main project
    and every worktree shares one coordination/ dir and board.

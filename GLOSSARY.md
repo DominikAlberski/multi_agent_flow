@@ -6,10 +6,10 @@ If a text needs a new term, add the term here first.
 
 | Term | Meaning | Name in code and CLI |
 |---|---|---|
-| harness | An AI coding tool: Claude Code, opencode, Codex, or Hermes. | `harness`, `setup_agent HARNESS` |
+| harness | An AI coding tool: Claude Code, opencode, Codex, or Hermes. | `harness`, `maf start HARNESS` |
 | role | A project function with its prompt. Examples: `architect`, `tester`. | `role`, `COORD_ROLE`, `--role`, task field `role` |
 | worker | One instance of a role with a stable ID. Example: `tester-1`. A worker owns claims, locks, one worktree, and one branch. | `worker`, `COORD_WORKER` |
-| agent | One harness session that runs a role as a worker. An agent ends. Its worker stays. | `setup_agent` |
+| agent | One harness session that runs a role as a worker. An agent ends. Its worker stays. | `maf start` |
 | task | One unit of work on the task board. Taskwarrior stores the task board. | `Tasks`, `coord add` |
 | scope | The file paths that a task may change. Example: `test/queries/**`. | task field `scope`, `--scope` |
 | message | A note to a role. Unread messages are in `coordination/inbox/<role>/`. | `Messages`, `coord msg` |

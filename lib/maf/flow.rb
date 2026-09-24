@@ -487,7 +487,7 @@ module Flow
       return if missing.empty?
 
       puts
-      puts "No model chosen for these roles. flow.rb leaves the choice to you. Suggestions:"
+      puts "No model chosen for these roles. maf leaves the choice to you. Suggestions:"
       missing.each { |result| puts "  #{result[:agent][:role]}: #{model_hint(result)}" }
       puts "  Set one with: --model <role>=<provider/model>"
     end

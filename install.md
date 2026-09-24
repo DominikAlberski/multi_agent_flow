@@ -7,31 +7,40 @@ You set up a shared coordination layer for multiple coding agents in one project
 
 ---
 
-## Step 1 - Find the flow folder
+## Step 1 - Install the maf command
 
 This file lives in the flow folder. Call that folder `FLOW`.
-
-All commands below use `$FLOW`. Set it to the real path.
+Link `FLOW/bin/maf` into a folder on `PATH`:
 
 ```sh
 export FLOW=/path/to/multi_agent_flow
+mkdir -p ~/.local/bin
+ln -sf "$FLOW/bin/maf" ~/.local/bin/maf
+maf help
 ```
 
-Check the tools. The `coord` tool and the installer are Ruby scripts.
+If `maf help` fails, add `~/.local/bin` to `PATH`.
+If the link exists already, keep it.
+
+Check the tools. `maf` and the `coord` tool are Ruby scripts.
 
 ```sh
 ruby -v
 task --version
 ```
 
-If `task` is missing, install it (`brew install task`) or pass `--install-deps`
-to the installer in step 4.
+If `task` is missing, install it (`brew install task`).
 
 ## Step 2 - Ask the user for the project folder
 
 Ask: "Which project folder should use the multi-agent flow?"
 
 Use the answer as `PROJECT`. The folder must exist and must be a git repository.
+Run all `maf` commands below in `PROJECT`:
+
+```sh
+cd "$PROJECT"
+```
 
 ## Step 3 - Ask the user for harnesses and roles
 
@@ -41,7 +50,7 @@ Code, Codex, Hermes."
 Show the available roles. Run:
 
 ```sh
-ruby "$FLOW/scripts/flow.rb" --list-roles
+maf roles
 ```
 
 Tell the user about the `project-manager` role: the user talks to it, it sends
@@ -67,49 +76,31 @@ recommendation. The user knows what runs on the machine.
 
 The user may skip a model. If skipped, the harness default applies.
 
-## Step 5 - Run the generator
+## Step 5 - Add the agents
 
-Build one `--agent HARNESS:ROLE` flag per role. Add one `--model ROLE=MODEL` flag
+Give one `HARNESS:ROLE` argument per role. Add one `--model ROLE=MODEL` flag
 per chosen model.
 
 Preview first. This writes nothing.
 
 ```sh
-ruby "$FLOW/scripts/flow.rb" \
-  --project "$PROJECT" \
-  --agent claude:project-manager \
-  --agent claude:architect \
-  --agent opencode:backend-developer \
-  --agent opencode:frontend-developer \
-  --agent codex:reviewer \
-  --agent hermes:tester \
+maf add claude:project-manager claude:architect \
+  opencode:backend-developer opencode:frontend-developer \
+  codex:reviewer hermes:tester \
   --model project-manager=anthropic/claude-opus-4-6 \
   --model architect=anthropic/claude-opus-4-6 \
   --check
 ```
 
-Then run it for real. Remove `--check`.
+Then run the same command without `--check`.
 
-```sh
-ruby "$FLOW/scripts/flow.rb" \
-  --project "$PROJECT" \
-  --agent claude:project-manager \
-  --agent claude:architect \
-  --agent opencode:backend-developer \
-  --agent opencode:frontend-developer \
-  --agent codex:reviewer \
-  --agent hermes:tester \
-  --model project-manager=anthropic/claude-opus-4-6 \
-  --model architect=anthropic/claude-opus-4-6
-```
+`maf add` does these things:
 
-The generator does these things:
-
-1. Sets up the coordination layer. It calls `assets/bootstrap.rb`.
+1. Sets up the coordination layer.
 2. Writes a role file for each role, in the format of its harness.
 3. Writes a manifest at `$PROJECT/.agent-flow.json`.
 
-The generator is idempotent. It skips files that are already correct.
+`maf add` is idempotent. It skips files that are already correct.
 
 ## Step 6 - Verify
 
@@ -117,8 +108,7 @@ The generator is idempotent. It skips files that are already correct.
 cd "$PROJECT"
 ./coord init
 ./coord status
-cat .agent-flow.json
-ls setup_agent
+maf agents
 ```
 
 Check that each role file exists:
@@ -136,9 +126,9 @@ Worktrees contain only committed files. Commit before starting any agent.
 
 ```sh
 cd "$PROJECT"
-git add coord setup_agent dispatcher AGENTS.md .gitignore \
+git add coord dispatcher AGENTS.md .gitignore \
         .agent-flow.json .claude .opencode coordination
-git rm --cached -q --ignore-unmatch CLAUDE.md .claude/CLAUDE.md   # bootstrap moved it into AGENTS.md
+git rm --cached -q --ignore-unmatch CLAUDE.md .claude/CLAUDE.md   # maf add moved it into AGENTS.md
 git add vault vault-daemon 2>/dev/null; true
 git commit -m "Add multi-agent flow"
 ```
@@ -153,20 +143,20 @@ Report the generated files. Then give the user these instructions.
 > For each claude, opencode, or codex agent, open a terminal in the project
 > folder and run:
 >
->     ./setup_agent HARNESS ROLE[_WORKER] [model:PROVIDER/MODEL]
+>     maf start HARNESS ROLE[_WORKER] [model:PROVIDER/MODEL]
 >
 > Example, for this setup:
 >
->     ./setup_agent claude project-manager
->     ./setup_agent claude architect
->     ./setup_agent opencode backend-developer_1
->     ./setup_agent opencode frontend-developer_1
->     ./setup_agent codex reviewer
+>     maf start claude project-manager
+>     maf start claude architect
+>     maf start opencode backend-developer_1
+>     maf start opencode frontend-developer_1
+>     maf start codex reviewer
 >
 > To run an agent unattended, add `--dispatch`. The agent then starts only
 > when there is work, and it exits when the work is done:
 >
->     ./setup_agent hermes tester --dispatch
+>     maf start hermes tester --dispatch
 >
 > This creates (or reuses) a worktree at `.worktrees/<role>-<worker_id>`,
 > sets `COORD_ROLE` and `COORD_WORKER`, and launches the harness there with
@@ -176,7 +166,7 @@ Report the generated files. Then give the user these instructions.
 >
 > Hermes loads the role as a skill (`--skills <project>-<role>`); the skill
 > file at `~/.hermes/skills/<project>-<role>/SKILL.md` must have been generated
-> by `flow.rb` first.
+> by `maf add` first.
 >
 > Talk to the project manager session, not the architect. For example: "Build a
 > task tracker app." The project manager sends the goal to the architect. The
@@ -200,11 +190,13 @@ Report the generated files. Then give the user these instructions.
   project, gitignored) on branch `worker/<role>-<worker_id>`. In that worktree
   run `source coord-env.sh` first; it points `COORD_DIR` and `TASKRC` at the
   main project, so every worktree shares one coordination/ dir and one task
-  board. `./setup_agent` does all of this for you.
+  board. `maf start` does all of this for you.
 - Claude Code does not auto-load `.claude/agents/<role>.md` into an interactive
   session (that file is a subagent definition, used via its Task tool, not the
-  session's own persona). `./setup_agent claude <role>` works around this by
+  session's own persona). `maf start claude <role>` works around this by
   passing an initial prompt that tells the session to read and follow it.
-- The user can add or remove agents later. Run the generator again.
+- The user can add agents later with `maf add HARNESS:ROLE`.
+  The user can remove agents with `maf remove HARNESS:ROLE`.
+  `maf add` keeps the current agents.
 - Codex and Hermes have no subagent files. Codex gets custom prompts. Hermes gets
   skills, loaded via `--skills <project>-<role>`. Both work the same way in this flow.

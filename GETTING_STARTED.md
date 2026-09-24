@@ -83,45 +83,43 @@ Optional: install `graphify` for the knowledge base.
 
 ## 4. Install the coordination layer
 
-Set a variable for the flow folder:
+Link the `maf` command into a folder on `PATH` once:
 
 ```sh
-export FLOW=/path/to/multi_agent_flow
+mkdir -p ~/.local/bin
+ln -sf /path/to/multi_agent_flow/bin/maf ~/.local/bin/maf
+maf help
 ```
 
-Preview the install (writes nothing):
+Run `maf` in your project root. Preview the install (writes nothing):
 
 ```sh
-$FLOW/assets/bootstrap.rb /path/to/your/project --check
+cd /path/to/your/project
+maf add claude:architect opencode:backend-developer claude:reviewer --check
 ```
 
 Run the install:
 
 ```sh
-$FLOW/assets/bootstrap.rb /path/to/your/project \
-  --roles architect,backend-developer,reviewer
+maf add claude:architect opencode:backend-developer claude:reviewer
 ```
 
-The installer does these things:
+Use `maf roles` to see all roles. Each argument is `HARNESS:ROLE`.
+
+`maf add` does these things:
 
 1. Creates `coordination/inbox`, `coordination/locks`, `coordination/exports`,
    and `coordination/taskdata`.
-2. Copies `coord`, `setup_agent`, `dispatcher`, and `vault` into your project.
+2. Copies `coord`, `dispatcher`, and `vault` into your project.
 3. Creates `coordination/taskrc`: a project-local Taskwarrior config. Your
    global `~/.taskrc` is never touched; two projects never share one board.
 4. Appends the coordination contract to `AGENTS.md`.
 5. Adds ignore rules to `.gitignore`.
+6. Writes a role file per agent (`.claude/agents/`, `.opencode/agents/`, and
+   so on) and the `.agent-flow.json` manifest.
 
-The installer is idempotent. Run it again at any time; it skips work already
-done. Add `--install-deps` if a required tool is missing.
-
-> **Note:** `bootstrap.rb` creates the coordination layer and copies the shared
-> scripts. To also generate harness-specific role files (`.claude/agents/`,
-> `.opencode/agents/`, etc.) and the `.agent-flow.json` manifest, use
-> `scripts/flow.rb` instead. See **[USER_MANUAL.md](USER_MANUAL.md)** for that
-> full setup. `setup_agent` requires `.agent-flow.json`, so if you used
-> bootstrap.rb alone here, skip the `setup_agent` shortcut in step 7 and set
-> `COORD_ROLE` manually as shown below.
+`maf add` is idempotent. Run it again at any time; it skips work already
+done. It keeps the current agents, so give only the new ones.
 
 ---
 
@@ -145,7 +143,7 @@ files, so commit before starting any agent.
 
 ```sh
 cd /path/to/your/project
-git add coord setup_agent dispatcher vault AGENTS.md .gitignore coordination
+git add coord dispatcher vault AGENTS.md .gitignore coordination .agent-flow.json .claude .opencode
 git commit -m "Add multi-agent flow"
 ```
 
@@ -180,8 +178,7 @@ Do the same for each agent. Example layout:
 - Terminal 2: `reviewer` (cloud model, interactive)
 - Terminal 3: you — run `coord` commands and watch
 
-> **Shortcut:** if you ran `scripts/flow.rb` to generate role files (see
-> USER_MANUAL.md), use `./setup_agent HARNESS ROLE[_WORKER]` instead. It does
+> **Shortcut:** use `maf start HARNESS ROLE[_WORKER]` instead. It does
 > the worktree, `coord-env.sh`, `COORD_ROLE`, and `COORD_WORKER` steps and
 > then launches the harness.
 
@@ -452,12 +449,12 @@ default 4 hours) or free it now: `./coord unclaim $ID`.
 **A Claude Code session says it has no role.**
 Setting `COORD_ROLE` does not make Claude Code assume that role. `.claude/agents/ROLE.md`
 is a subagent definition, not the session's persona. Tell the session directly:
-"Read `.claude/agents/ROLE.md` and follow it exactly." `./setup_agent claude ROLE` does
+"Read `.claude/agents/ROLE.md` and follow it exactly." `maf start claude ROLE` does
 this for you.
 
 **A Hermes session says the skill is unknown.**
-The skill file does not exist. Run `scripts/flow.rb --agent hermes:ROLE` first to
-generate `~/.hermes/skills/<project>-<role>/SKILL.md`. `./setup_agent hermes ROLE`
+The skill file does not exist. Run `maf add hermes:ROLE` first to
+generate `~/.hermes/skills/<project>-<role>/SKILL.md`. `maf start hermes ROLE`
 checks for the skill and only passes `--skills` when it exists.
 
 ---

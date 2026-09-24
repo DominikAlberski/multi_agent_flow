@@ -23,10 +23,24 @@ vendor dependency.
 
    > Here is the multi-agent flow setup: `<path>/install.md`. Read it and implement it.
 
-The agent asks which harnesses and roles to use, runs the generator, and prints
-the `setup_agent` commands to start each session.
+The agent asks which harnesses and roles to use, runs `maf add`, and prints
+the `maf start` commands to start each session.
 
 See **[install.md](install.md)** for the exact instructions the agent follows.
+
+## Manual path - the maf command
+
+Link `bin/maf` into a folder on `PATH` once. Then run `maf` in the project root.
+
+```sh
+ln -sf "$PWD/bin/maf" ~/.local/bin/maf
+
+cd ~/Projects/my-app
+maf roles                                             # list the roles
+maf add claude:architect opencode:backend-developer   # install the flow and add agents
+maf start claude architect                            # start one agent in its worktree
+maf help                                              # all commands
+```
 
 ---
 
@@ -36,8 +50,8 @@ See **[install.md](install.md)** for the exact instructions the agent follows.
 |---|---|---|
 | **[GLOSSARY.md](GLOSSARY.md)** | Everyone | Domain terms: harness, role, worker, agent, task, message, claim, lock, hooks |
 | **[GETTING_STARTED.md](GETTING_STARTED.md)** | First-time user | Concepts, prerequisites, manual install, basic workflow |
-| **[USER_MANUAL.md](USER_MANUAL.md)** | Setting up a real team | Full install (flow.rb), all harnesses, dispatcher, monitoring |
-| **[install.md](install.md)** | An AI coding agent | Interactive wizard: asks the user for harnesses/roles, runs the generator |
+| **[USER_MANUAL.md](USER_MANUAL.md)** | Setting up a real team | Full install (maf), all harnesses, dispatcher, monitoring |
+| **[install.md](install.md)** | An AI coding agent | Interactive wizard: asks the user for harnesses/roles, runs `maf add` |
 | **[SKILL.md](SKILL.md)** | Agent skill loader | Self-contained portable skill (frontmatter + full API reference) |
 
 ---
@@ -52,9 +66,15 @@ multi_agent_flow/
   GLOSSARY.md                 # domain terms
   GETTING_STARTED.md          # first-time walkthrough (concepts + manual setup)
   USER_MANUAL.md              # full team setup reference
-  scripts/
+  bin/
+    maf                       # the maf command line tool; link it into PATH
+  lib/maf/
+    cli.rb                    # maf subcommands
     flow.rb                   # generates harness-specific role files + installs coordination layer
+    bootstrap.rb              # idempotent coordination layer installer
+    setup_agent.rb            # maf start: worktree + harness launch
     uninstall.rb              # removes the flow from a project; keeps graphify-out/ and obsidian/
+  scripts/
     check.rb                  # repo consistency check (UDA sync, marker blocks, worktree formula)
   templates/
     roles.yml                 # role definitions + model hints
@@ -64,11 +84,9 @@ multi_agent_flow/
     hermes.md.erb
   assets/
     coord                     # coordination CLI (Ruby)
-    setup_agent               # worktree + harness launch (Ruby)
     dispatcher                # polls task board + inbox, starts one-shot agents (Ruby)
     vault                     # graphify + Obsidian + MCP watcher control (Ruby)
     dashboard                 # web dashboard: stuck-detection UI (Ruby/Sinatra)
-    bootstrap.rb              # idempotent coordination layer installer (Ruby)
     taskrc.append             # Taskwarrior UDA block
     agents-contract.md        # contract appended to AGENTS.md
     gitignore.append          # marker-guarded ignore entries
@@ -76,7 +94,8 @@ multi_agent_flow/
     harness-hooks/            # next-task + board-watch scripts run by harnesses
   test/
     coord_test.rb             # behavioral tests for the coord CLI
-    installer_test.rb         # tests for bootstrap.rb, flow.rb, setup_agent
+    installer_test.rb         # tests for bootstrap.rb, flow.rb, setup_agent.rb
+    maf_test.rb               # tests for the maf command
     dispatcher_test.rb        # tests for the dispatcher
     uninstaller_test.rb       # tests for uninstall.rb
 ```
@@ -110,12 +129,13 @@ ruby scripts/check.rb
 
 Verifies: UDA block in `assets/coord` matches `assets/taskrc.append`; marker
 blocks are present in all generated files; worktree path formula is identical in
-`assets/coord` and `assets/setup_agent`.
+`assets/coord` and `lib/maf/setup_agent.rb`.
 
 ```sh
 ruby test/coord_test.rb      # covers the coord CLI
-ruby test/installer_test.rb  # covers bootstrap.rb, flow.rb, setup_agent
-ruby test/uninstaller_test.rb  # covers scripts/uninstall.rb
+ruby test/installer_test.rb  # covers bootstrap.rb, flow.rb, setup_agent.rb
+ruby test/uninstaller_test.rb  # covers uninstall.rb
+ruby test/maf_test.rb        # covers the maf command
 ```
 
 Minitest, stdlib only. Tests that require `task` or `git` skip (exit 0) when

@@ -2,7 +2,7 @@
 #
 # `model_hint` is only a recommendation shown to the user. The user chooses
 # the model with --model ROLE=MODEL. If the user does not choose a model,
-# claude roles get flow.rb's DEFAULT_MODELS entry (claude-opus-5-5).
+# claude roles get lib/maf/flow.rb's DEFAULT_MODELS entry (claude-opus-5-5).
 #
 # `description` is also the routing line in the architect's "Available roles"
 # list. Keep it short and specific to the role.
