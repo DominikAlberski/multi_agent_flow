@@ -52,6 +52,7 @@ maf add opencode:tester                             # add one more agent later
 maf remove opencode:tester                          # remove an agent
 maf agents                                          # list the current agents
 maf update                                          # regenerate the current agents
+maf                                                 # interactive menu (in a terminal)
 ```
 
 Flags for `maf add`: `--check` (preview, write nothing), `--force` (overwrite a

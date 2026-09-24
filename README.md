@@ -42,6 +42,9 @@ maf start claude architect                            # start one agent in its w
 maf help                                              # all commands
 ```
 
+Run `maf` without a command to use the interactive menu. The menu asks for
+each value: harness, roles, models, and the agent to start.
+
 ---
 
 ## Documentation

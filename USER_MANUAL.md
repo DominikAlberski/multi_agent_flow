@@ -82,6 +82,9 @@ maf help
 If `maf help` fails, add `~/.local/bin` to `PATH`. Run every `maf` command in
 the project root. `maf` uses the current directory as the project.
 
+Run `maf` without a command to use the interactive menu. The menu does the
+steps below and asks for each value. The steps below use the commands.
+
 ### 2. Confirm the project has at least one commit
 
 ```sh

@@ -12,6 +12,7 @@ require "tmpdir"
 require "fileutils"
 require "json"
 require "rbconfig"
+require "yaml"
 
 MAF = File.expand_path("../bin/maf", __dir__)
 
@@ -115,6 +116,49 @@ class MafTest < Minitest::Test
 
     assert_equal 0, status, out
     assert_includes out, "remove .opencode/agents/architect.md"
+  end
+
+  def menu(input)
+    output = IO.popen({ "VAULT_SKIP" => "1" }, [RbConfig.ruby, MAF, "menu"], "r+",
+                      chdir: @dir, err: [:child, :out]) { |io| io.write(input); io.close_write; io.read }
+    [output, $?.exitstatus]
+  end
+
+  def role_number(role)
+    roles = YAML.load_file(File.expand_path("../templates/roles.yml", __dir__)).fetch("roles").keys
+    (roles.index(role) + 1).to_s
+  end
+
+  def test_menu_adds_agents
+    input = ["1", "1", "#{role_number("architect")},#{role_number("tester")}", "", "", "q"].join("\n")
+
+    out, status = menu("#{input}\n")
+
+    assert_equal 0, status, out
+    assert_equal %w[opencode:architect opencode:tester], agent_specs
+  end
+
+  def test_menu_removes_an_agent_after_confirmation
+    maf("add", "opencode:backend-developer", "opencode:architect", "--no-bootstrap")
+
+    out, status = menu("2\n2\ny\nq\n")
+
+    assert_equal 0, status, out
+    assert_equal %w[opencode:backend-developer], agent_specs
+  end
+
+  def test_menu_keeps_running_after_an_invalid_choice
+    out, status = menu("9\n4\nq\n")
+
+    assert_equal 0, status, out
+    assert_includes out, "invalid choice"
+    assert_includes out, "architect"
+  end
+
+  def test_menu_stops_at_end_of_input
+    out, status = menu("")
+
+    assert_equal 0, status, out
   end
 
   def test_start_rejects_an_unknown_agent
