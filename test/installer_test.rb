@@ -575,8 +575,7 @@ class SetupAgentTest < Minitest::Test
     manifest = SetupAgent::Manifest.new([{ "harness" => "claude", "role" => "reviewer" }])
 
     _out, err = capture_io { assert_raises(SystemExit) { manifest.verify!("opencode", "frontend-developer") } }
-    assert_includes err, 'ruby "$FLOW/scripts/flow.rb" --project "$PWD"'
-    assert_includes err, '--project "$PWD" --agent opencode:frontend-developer'
+    assert_includes err, "maf add opencode:frontend-developer"
     refute_includes err, "claude:reviewer"
   end
 

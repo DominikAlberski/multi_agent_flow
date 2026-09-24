@@ -134,9 +134,7 @@ module SetupAgent
     end
 
     def self.abort_missing(path)
-      abort "setup_agent: #{path} missing. Run from the project root:\n" \
-            "  ruby \"$FLOW/scripts/flow.rb\" --project \"$PWD\" --agent HARNESS:ROLE ...\n" \
-            "  (FLOW is the multi_agent_flow checkout.)"
+      abort "setup_agent: #{path} missing. Fix: maf add HARNESS:ROLE"
     end
 
     def initialize(agents)
@@ -149,12 +147,8 @@ module SetupAgent
       abort "setup_agent: no #{harness}:#{role} in .agent-flow.json.\n#{add_hint("#{harness}:#{role}")}"
     end
 
-    # flow.rb keeps the agents in the manifest, so the hint names only the
-    # missing agent. $FLOW is the multi_agent_flow checkout, not this project.
-    def add_hint(missing)
-      "  Fix (from the project root, with FLOW=<path to multi_agent_flow>):\n" \
-        "    ruby \"$FLOW/scripts/flow.rb\" --project \"$PWD\" --agent #{missing}"
-    end
+    # maf add keeps the current agents, so the hint names only the missing agent.
+    def add_hint(missing) = "  Fix: maf add #{missing}"
 
     def model_for(harness, role)
       entry = @agents.find { |a| a["harness"] == harness && a["role"] == role }

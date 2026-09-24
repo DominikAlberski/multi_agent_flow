@@ -499,8 +499,8 @@ module Flow
 
     def print_sessions(results)
       puts
-      puts "Next: open one session per agent in #{@project}, in the chosen harness:"
-      results.each { |result| puts "  - #{result[:agent][:harness]} -> #{result[:agent][:role]}" }
+      puts "Next: start one session per agent in #{@project}:"
+      results.each { |result| puts "  maf start #{result[:agent][:harness]} #{result[:agent][:role]}" }
       puts
       puts "In each worker session, paste:"
       puts %(  "Run ./coord inbox <role>. Then work the pending tasks assigned to you. Repeat.")

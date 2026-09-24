@@ -1,0 +1,10 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# maf - multi-agent-flow command line tool.
+#
+# Run maf in the project root. maf uses the current directory as the project.
+# Link this file into a directory on PATH. maf resolves the link to find lib/.
+require File.expand_path("../lib/maf/cli", File.dirname(File.realpath(__FILE__)))
+
+Maf::CLI.new(ARGV).run
