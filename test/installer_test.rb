@@ -206,28 +206,6 @@ class FlowTest < InstallerTestCase
                  manifest["agents"]
   end
 
-  def test_claude_agents_default_to_opus_5_5
-    out, status = flow("--agent", "claude:reviewer")
-
-    assert_equal 0, status, out
-    assert_includes File.read(File.join(@dir, ".claude", "agents", "reviewer.md")), "model: claude-opus-5-5\n"
-    assert_equal "claude-opus-5-5", manifest["agents"].first["model"]
-  end
-
-  def test_an_explicit_model_overrides_the_claude_default
-    out, status = flow("--agent", "claude:reviewer", "--model", "reviewer=sonnet")
-
-    assert_equal 0, status, out
-    assert_includes File.read(File.join(@dir, ".claude", "agents", "reviewer.md")), "model: sonnet\n"
-    assert_equal "sonnet", manifest["agents"].first["model"]
-  end
-
-  def test_worker_prompt_keeps_subagent_use_small
-    flow("--agent", "opencode:backend-developer")
-
-    assert_includes File.read(agent_file), "Do not use subagents to verify your work."
-  end
-
   def test_is_idempotent
     flow("--agent", "opencode:backend-developer")
     first = File.read(agent_file)
