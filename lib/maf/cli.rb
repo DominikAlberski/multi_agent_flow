@@ -21,13 +21,12 @@ module Maf
   # AgentArgs turns the bare HARNESS:ROLE arguments of add and remove into
   # flow.rb flags. Flag values (for example --model ROLE=MODEL) stay as they are.
   module AgentArgs
-    VALUE_FLAGS = %w[--model --hermes-dir].freeze
-
     def self.convert(args, flag)
       args.each_with_index.flat_map { |arg, i| spec?(arg, i.zero? ? nil : args[i - 1]) ? [flag, arg] : [arg] }
     end
 
-    def self.spec?(arg, before) = !arg.start_with?("-") && !VALUE_FLAGS.include?(before)
+    def self.spec?(arg, before) = !arg.start_with?("-") && !value_flags.include?(before)
+    def self.value_flags = @value_flags ||= Flow::Generator.value_flags
   end
 
   class CLI

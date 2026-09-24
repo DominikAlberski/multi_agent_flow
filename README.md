@@ -73,6 +73,8 @@ multi_agent_flow/
     maf                       # the maf command line tool; link it into PATH
   lib/maf/
     cli.rb                    # maf subcommands
+    menu.rb                   # interactive menu (maf without a command)
+    prompt.rb                 # numbered terminal questions for the menu
     flow.rb                   # generates harness-specific role files + installs coordination layer
     bootstrap.rb              # idempotent coordination layer installer
     setup_agent.rb            # maf start: worktree + harness launch

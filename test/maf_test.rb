@@ -25,6 +25,11 @@ class MafTest < Minitest::Test
     FileUtils.remove_entry(@dir)
   end
 
+  def maf_at(path, *args)
+    output = IO.popen([RbConfig.ruby, path, *args], chdir: @dir, err: [:child, :out], &:read)
+    [output, $?.exitstatus]
+  end
+
   def maf(*args)
     output = IO.popen({ "VAULT_SKIP" => "1" }, [RbConfig.ruby, MAF, *args],
                       chdir: @dir, err: [:child, :out], &:read)
@@ -74,6 +79,35 @@ class MafTest < Minitest::Test
 
     assert_equal 0, status, out
     assert_equal %w[opencode:backend-developer], agent_specs
+  end
+
+  def test_remove_of_the_last_agent_leaves_an_empty_manifest
+    maf("add", "opencode:architect", "--no-bootstrap")
+
+    out, status = maf("remove", "opencode:architect", "--no-bootstrap")
+
+    assert_equal 0, status, out
+    assert_empty agent_specs
+    assert_includes out, "maf add HARNESS:ROLE"
+  end
+
+  def test_add_passes_the_hermes_dir_value_through
+    skills = File.join(@dir, "skills")
+
+    out, status = maf("add", "--hermes-dir", skills, "hermes:tester", "--no-bootstrap")
+
+    assert_equal 0, status, out
+    assert_equal %w[hermes:tester], agent_specs
+  end
+
+  def test_a_copied_maf_says_to_link_it
+    copy = File.join(@dir, "maf")
+    FileUtils.cp(MAF, copy)
+
+    out, status = maf_at(copy, "help")
+
+    refute_equal 0, status
+    assert_includes out, "ln -s"
   end
 
   def test_update_regenerates_the_current_agents
@@ -155,10 +189,43 @@ class MafTest < Minitest::Test
     assert_includes out, "architect"
   end
 
+  def test_menu_uninstalls_after_confirmation
+    maf("add", "opencode:architect", "--no-bootstrap")
+
+    out, status = menu("6
+y
+q
+")
+
+    assert_equal 0, status, out
+    refute File.exist?(File.join(@dir, ".agent-flow.json"))
+  end
+
+  def test_menu_survives_a_corrupt_manifest
+    File.write(File.join(@dir, ".agent-flow.json"), "{")
+
+    out, status = menu("2
+q
+")
+
+    assert_equal 0, status, out
+    assert_includes out, "error:"
+    assert_includes out, "q) Quit"
+  end
+
   def test_menu_stops_at_end_of_input
     out, status = menu("")
 
     assert_equal 0, status, out
+  end
+
+  # AgentArgs must know every flow.rb flag that takes a value. Otherwise the
+  # value becomes an --agent spec.
+  def test_agent_args_value_flags_come_from_the_flow_option_parser
+    require File.expand_path("../lib/maf/cli", __dir__)
+
+    assert_equal Flow::Generator.value_flags.sort, Maf::AgentArgs.value_flags.sort
+    assert_includes Maf::AgentArgs.value_flags, "--model"
   end
 
   def test_start_rejects_an_unknown_agent

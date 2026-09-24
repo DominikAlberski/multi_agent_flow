@@ -5,6 +5,8 @@
 #
 # Run maf in the project root. maf uses the current directory as the project.
 # Link this file into a directory on PATH. maf resolves the link to find lib/.
-require File.expand_path("../lib/maf/cli", File.dirname(File.realpath(__FILE__)))
+cli = File.expand_path("../lib/maf/cli.rb", File.dirname(File.realpath(__FILE__)))
+abort "maf: cannot find #{cli}. Link bin/maf into PATH with ln -s. Do not copy it." unless File.exist?(cli)
+require cli
 
 Maf::CLI.new(ARGV).run

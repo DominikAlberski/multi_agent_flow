@@ -183,11 +183,20 @@ module Flow
       @roles = YAML.load_file(File.join(TEMPLATES, "roles.yml")).fetch("roles")
       return print_roles if @list_roles
       validate
+      return finish_without_agents if @agents.empty?
+
       run_bootstrap
       results = generate
       install_hooks unless @check
       write_manifest
       print_instructions(results)
+    end
+
+    # Flags that take a value. maf uses them to tell flag values from agent specs.
+    def self.value_flags = new([]).value_flags
+
+    def value_flags
+      option_parser.top.list.grep(OptionParser::Switch::RequiredArgument).flat_map(&:long)
     end
 
     private
@@ -240,8 +249,9 @@ module Flow
       @project = File.realpath(@project)
     end
 
+    # A removal may leave no agents. Only a run that removes nothing needs one.
     def validate_agents
-      abort "flow: no agents. Add one with --agent HARNESS:ROLE" if @agents.empty?
+      abort "flow: no agents. Add one with --agent HARNESS:ROLE" if @agents.empty? && @removed.empty?
 
       @agents.each { |agent| validate_agent(agent) }
     end
@@ -251,6 +261,11 @@ module Flow
         abort "flow: unknown harness '#{agent[:harness]}' (use #{HARNESSES.join(", ")})"
       end
       abort "flow: unknown role '#{agent[:role]}'" unless @roles.key?(agent[:role])
+    end
+
+    def finish_without_agents
+      write_manifest
+      puts "No agents left. Add one: maf add HARNESS:ROLE. Remove the flow: maf uninstall."
     end
 
     def run_bootstrap
@@ -526,7 +541,7 @@ module Flow
       result[:agent][:harness] == "codex" ? "codex -m #{result[:model]}" : "hermes model"
     end
   end
-  
+
   # Roster merges the agents saved in .agent-flow.json with the --agent and
   # --remove specs of this run. A saved model ranks below --model.
   class Roster
@@ -534,19 +549,19 @@ module Flow
       path = File.join(project, ".agent-flow.json")
       @saved = File.exist?(path) ? JSON.parse(File.read(path)).fetch("agents", []) : []
     end
-  
+
     def merge(added, removed)
       kept = saved.map { |a| added.find { |b| same?(a, b) }&.merge(saved_model: a[:saved_model]) || a }
       agents = kept + added.reject { |b| kept.any? { |a| same?(a, b) } }
       agents.reject { |a| removed.any? { |b| same?(a, b) } }
     end
-  
+
     private
-  
+
     def saved
       @saved.map { |a| { harness: a["harness"], role: a["role"], saved_model: a["model"] } }
     end
-  
+
     def same?(one, other) = one[:harness] == other[:harness] && one[:role] == other[:role]
   end
 end

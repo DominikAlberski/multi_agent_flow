@@ -25,7 +25,7 @@ module Maf
 
     def show_menu
       @prompt.say("\nmaf - #{Dir.pwd}")
-      @prompt.say("Agents: #{Maf.agent_specs.join(", ").then { |s| s.empty? ? "none" : s }}")
+      guarded { @prompt.say("Agents: #{Maf.agent_specs.join(", ").then { |s| s.empty? ? "none" : s }}") }
       ACTIONS.each { |key, (label, _)| @prompt.say("  #{key}) #{label}") }
       @prompt.say("  q) Quit")
     end
@@ -37,11 +37,13 @@ module Maf
       true
     end
 
-    # A failed step aborts. The menu keeps running after the abort message.
+    # A failed step aborts or raises. The menu prints the error and keeps running.
     def guarded
       yield
     rescue SystemExit
       nil
+    rescue StandardError => e
+      @prompt.say("error: #{e.message}")
     end
 
     def add
