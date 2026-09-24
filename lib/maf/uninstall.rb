@@ -1,10 +1,8 @@
-#!/usr/bin/env ruby
 # frozen_string_literal: true
 
 # uninstall.rb - remove the multi-agent flow from a project.
 #
-# Usage:
-#   ruby scripts/uninstall.rb --project DIR [--check] [--yes] [--force]
+# maf uninstall runs Uninstall::Runner. Options: --project DIR [--check] [--yes] [--force]
 #
 # Removes only what bootstrap.rb and flow.rb installed. A file must carry the
 # tool signature or marker. A foreign file with the same name stays.
@@ -15,7 +13,7 @@
 require "fileutils"
 require "json"
 require "optparse"
-require_relative "../assets/bootstrap"
+require_relative "bootstrap"
 require_relative "flow"
 
 module Uninstall
@@ -249,7 +247,7 @@ module Uninstall
   end
 
   class Runner
-    USAGE = "Usage: ruby scripts/uninstall.rb --project DIR [--check] [--yes] [--force]"
+    USAGE = "Usage: maf uninstall [--check] [--yes] [--force]"
 
     def initialize(argv)
       @opts = {}
@@ -299,5 +297,3 @@ module Uninstall
     def say(message) = puts("[multi-agent-flow] #{message}")
   end
 end
-
-Uninstall::Runner.new(ARGV).run if __FILE__ == $PROGRAM_NAME

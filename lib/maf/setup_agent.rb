@@ -1,14 +1,13 @@
-#!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# setup_agent - create a worktree for one agent and launch its harness session.
+# setup_agent.rb - create a worktree for one agent and launch its harness session.
 #
-# Usage: ./setup_agent HARNESS ROLE[_WORKER] [model:MODEL] [--model MODEL]
-#                      [--dispatch [DISPATCHER FLAGS...]]
-#   ./setup_agent claude backend-developer_1
-#   ./setup_agent opencode reviewer --model openrouter/deepseek-v3
-#   ./setup_agent hermes tester --dispatch --model openrouter/deepseek-v3
-#   ./setup_agent claude reviewer --dispatch --cache-window 1500
+# Usage: maf start HARNESS ROLE[_WORKER] [model:MODEL] [--model MODEL]
+#                  [--dispatch [DISPATCHER FLAGS...]]
+#   maf start claude backend-developer_1
+#   maf start opencode reviewer --model openrouter/deepseek-v3
+#   maf start hermes tester --dispatch --model openrouter/deepseek-v3
+#   maf start claude reviewer --dispatch --cache-window 1500
 #
 # Without --dispatch, the harness starts as an interactive session. With
 # --dispatch, the worktree runs ./dispatcher instead: the agent starts only
@@ -18,8 +17,8 @@
 # --dispatch, so a dispatched and an interactive instance of one role get
 # separate worktrees.
 #
-# HARNESS:ROLE must already exist in .agent-flow.json (run scripts/flow.rb
-# in multi_agent_flow first to add a new one). Run from the project root.
+# HARNESS:ROLE must already exist in .agent-flow.json (maf add HARNESS:ROLE
+# adds one). Run from the project root.
 
 require "json"
 require "rbconfig"
@@ -100,7 +99,7 @@ module SetupAgent
     end
 
     def self.abort_usage
-      abort "usage: ./setup_agent HARNESS ROLE[_WORKER] [model:MODEL] [--model MODEL] [--dispatch [FLAGS...]]"
+      abort "usage: maf start HARNESS ROLE[_WORKER] [model:MODEL] [--model MODEL] [--dispatch [FLAGS...]]"
     end
   end
 
@@ -299,5 +298,3 @@ module SetupAgent
     end
   end
 end
-
-SetupAgent.run(ARGV) if __FILE__ == $PROGRAM_NAME

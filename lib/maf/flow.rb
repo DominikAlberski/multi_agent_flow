@@ -1,12 +1,11 @@
-#!/usr/bin/env ruby
 # frozen_string_literal: true
 
 # flow.rb - generate harness-specific role files for the multi-agent flow.
 #
-# Usage:
-#   ruby scripts/flow.rb --project DIR [--agent HARNESS:ROLE ...] [--remove HARNESS:ROLE ...] \
-#        [--model ROLE=MODEL] [--hermes-dir DIR] [--check] [--force] [--no-bootstrap]
-#   ruby scripts/flow.rb --list-roles
+# maf add, maf remove, maf update, and maf roles run Flow::Generator.
+# Options: --project DIR [--agent HARNESS:ROLE ...] [--remove HARNESS:ROLE ...]
+#          [--model ROLE=MODEL] [--hermes-dir DIR] [--check] [--force] [--no-bootstrap]
+#          [--list-roles]
 #
 # HARNESS is one of: opencode, claude, codex, hermes.
 # A re-run keeps the agents in .agent-flow.json. --agent adds an agent.
@@ -24,7 +23,7 @@ require "time"
 abort "flow: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
 
 module Flow
-  ROOT = File.expand_path("..", __dir__)
+  ROOT = File.expand_path("../..", __dir__)
   TEMPLATES = File.join(ROOT, "templates")
   ASSETS = File.join(ROOT, "assets")
   HARNESSES = %w[opencode claude codex hermes].freeze
@@ -199,7 +198,7 @@ module Flow
 
     def option_parser
       OptionParser.new do |o|
-        o.banner = "Usage: ruby scripts/flow.rb --project DIR [--agent HARNESS:ROLE ...] [--remove HARNESS:ROLE ...]"
+        o.banner = "Usage: maf add|remove|update [HARNESS:ROLE ...] [options]"
         o.on("--project DIR") { |v| @project = v }
         o.on("--agent SPEC", "HARNESS:ROLE[:MODEL]") { |v| @agents << parse_agent(v) }
         o.on("--remove SPEC", "HARNESS:ROLE") { |v| @removed << parse_agent(v) }
@@ -261,7 +260,7 @@ module Flow
       # Bootstrap adds the Claude Code hooks only if .claude/ exists. Flow
       # writes .claude/agents/ after bootstrap, so create .claude/ first.
       FileUtils.mkdir_p(File.join(@project, ".claude")) if @agents.any? { |a| a[:harness] == "claude" }
-      args = [RbConfig.ruby, File.join(ASSETS, "bootstrap.rb"), @project, "--roles", roles_arg]
+      args = [RbConfig.ruby, File.join(__dir__, "bootstrap.rb"), @project, "--roles", roles_arg]
       args << "--force" if @force
       ok = system(*args)
       abort "flow: coordination bootstrap failed" unless ok
@@ -551,5 +550,3 @@ module Flow
     def same?(one, other) = one[:harness] == other[:harness] && one[:role] == other[:role]
   end
 end
-
-Flow::Generator.new(ARGV).run if __FILE__ == $PROGRAM_NAME

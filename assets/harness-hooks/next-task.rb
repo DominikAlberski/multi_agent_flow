@@ -13,7 +13,7 @@
 # Codex (~/.codex/hooks.json):
 #   {"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ruby ~/.codex/hooks/next-task.rb"}]}]}}
 #
-# Required env: COORD_ROLE (set by setup_agent). COORD_DIR and TASKRC optional.
+# Required env: COORD_ROLE (set by maf start). COORD_DIR and TASKRC optional.
 require "json"
 require "rbconfig"
 

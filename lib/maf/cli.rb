@@ -3,9 +3,9 @@
 # Maf::CLI maps maf subcommands to the installer code. The project is always
 # the current directory.
 require "json"
-require_relative "../../scripts/flow"
-require_relative "../../scripts/uninstall"
-load File.expand_path("../../assets/setup_agent", __dir__)
+require_relative "flow"
+require_relative "uninstall"
+require_relative "setup_agent"
 
 module Maf
   # AgentArgs turns the bare HARNESS:ROLE arguments of add and remove into

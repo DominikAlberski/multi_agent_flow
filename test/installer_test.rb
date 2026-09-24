@@ -2,14 +2,14 @@
 # frozen_string_literal: true
 
 # test/installer_test.rb - tests for the installer layer:
-# assets/bootstrap.rb, scripts/flow.rb, and assets/setup_agent.
+# lib/maf/bootstrap.rb, lib/maf/flow.rb, and lib/maf/setup_agent.rb.
 #
 # Run: ruby test/installer_test.rb
 #
-# bootstrap.rb and flow.rb run their work when loaded, so the tests invoke
-# them as subprocesses against a disposable project directory. setup_agent is
-# loaded directly (its entry point is guarded) so its parsing can be unit
-# tested. No external tools (task, git, graphify) are required.
+# The tests run bootstrap.rb and the flow.rb generator as subprocesses
+# against a disposable project directory. setup_agent.rb is loaded directly
+# so its parsing can be unit tested. No external tools (task, git, graphify)
+# are required.
 require "minitest/autorun"
 require "tmpdir"
 require "fileutils"
@@ -17,9 +17,10 @@ require "json"
 require "rbconfig"
 
 ROOT = File.expand_path("..", __dir__)
-BOOTSTRAP = File.join(ROOT, "assets", "bootstrap.rb")
-FLOW = File.join(ROOT, "scripts", "flow.rb")
-load File.join(ROOT, "assets", "setup_agent")
+LIB = File.join(ROOT, "lib", "maf")
+BOOTSTRAP = File.join(LIB, "bootstrap.rb")
+FLOW = ["-r", File.join(LIB, "flow.rb"), "-e", "Flow::Generator.new(ARGV).run", "--"].freeze
+require File.join(LIB, "setup_agent")
 load File.join(ROOT, "assets", "vault")
 
 class InstallerTestCase < Minitest::Test
@@ -54,7 +55,7 @@ class BootstrapTest < InstallerTestCase
 
     assert_equal 0, status, out
     assert File.executable?(File.join(@dir, "coord"))
-    assert File.executable?(File.join(@dir, "setup_agent"))
+    refute File.exist?(File.join(@dir, "setup_agent"))
     assert_includes File.read(taskrc_path), "data.location=#{File.join(@dir, "coordination", "taskdata")}"
     assert_includes File.read(File.join(@dir, "AGENTS.md")), ">>> multi-agent-flow >>>"
     assert_includes File.read(File.join(@dir, ".gitignore")), "coord-env.sh"
@@ -230,7 +231,7 @@ end
 
 class FlowTest < InstallerTestCase
   def flow(*args)
-    run_ruby(FLOW, "--project", @dir, "--no-bootstrap", *args)
+    run_ruby(*FLOW, "--project", @dir, "--no-bootstrap", *args)
   end
 
   def agent_file = File.join(@dir, ".opencode", "agents", "backend-developer.md")
@@ -367,7 +368,7 @@ class FlowTest < InstallerTestCase
   # no .claude/ directory and skipped the Claude hooks, so idle Claude agents
   # had no board watcher and never woke up.
   def test_claude_agent_gets_board_watch_hooks_on_a_fresh_project
-    out, status = run_ruby(FLOW, "--project", @dir, "--agent", "claude:backend-developer")
+    out, status = run_ruby(*FLOW, "--project", @dir, "--agent", "claude:backend-developer")
 
     assert_equal 0, status, out
     settings = JSON.parse(File.read(File.join(@dir, ".claude", "settings.json")))
@@ -398,7 +399,7 @@ class FlowTest < InstallerTestCase
   # Codex hooks install into HOME, so keep HOME inside the test directory.
   def flow_with_home(*args)
     env = { "VAULT_SKIP" => "1", "HOME" => @dir }
-    output = IO.popen(env, [RbConfig.ruby, FLOW, "--project", @dir, "--no-bootstrap", *args],
+    output = IO.popen(env, [RbConfig.ruby, *FLOW, "--project", @dir, "--no-bootstrap", *args],
                       err: [:child, :out], &:read)
     [output, $?.exitstatus]
   end
@@ -569,9 +570,8 @@ class SetupAgentTest < Minitest::Test
     assert_raises(SystemExit) { capture_io { manifest.verify!("opencode", "nope") } }
   end
 
-  # flow.rb lives in multi_agent_flow, not in the project. flow.rb keeps the
-  # current agents, so the hint names only the missing agent.
-  def test_manifest_rejection_prints_the_full_flow_command
+  # maf add keeps the current agents, so the hint names only the missing agent.
+  def test_manifest_rejection_prints_the_maf_add_command
     manifest = SetupAgent::Manifest.new([{ "harness" => "claude", "role" => "reviewer" }])
 
     _out, err = capture_io { assert_raises(SystemExit) { manifest.verify!("opencode", "frontend-developer") } }

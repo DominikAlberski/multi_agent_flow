@@ -105,7 +105,7 @@ module Dispatcher
   # Project finds the main checkout from any worktree. `git rev-parse
   # --git-common-dir` returns the main repo's .git dir (relative at the root,
   # absolute in a worktree), so its parent is the main checkout.
-  # NOTE: setup_agent carries the same logic; both run standalone.
+  # NOTE: lib/maf/setup_agent.rb carries the same logic; both run standalone.
   module Project
     def self.root
       common = IO.popen(%w[git rev-parse --git-common-dir], err: File::NULL, &:read).to_s.strip

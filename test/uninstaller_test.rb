@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# test/uninstaller_test.rb - tests for scripts/uninstall.rb.
+# test/uninstaller_test.rb - tests for lib/maf/uninstall.rb.
 #
 # Run: ruby test/uninstaller_test.rb
 #
@@ -15,8 +15,9 @@ require "open3"
 require "rbconfig"
 
 ROOT = File.expand_path("..", __dir__)
-FLOW = File.join(ROOT, "scripts", "flow.rb")
-UNINSTALL = File.join(ROOT, "scripts", "uninstall.rb")
+LIB = File.join(ROOT, "lib", "maf")
+FLOW = ["-r", File.join(LIB, "flow.rb"), "-e", "Flow::Generator.new(ARGV).run", "--"].freeze
+UNINSTALL = ["-r", File.join(LIB, "uninstall.rb"), "-e", "Uninstall::Runner.new(ARGV).run", "--"].freeze
 
 class UninstallerTestCase < Minitest::Test
   def setup
@@ -30,13 +31,13 @@ class UninstallerTestCase < Minitest::Test
 
   def install
     FileUtils.mkdir_p(File.join(@dir, ".claude"))
-    out, status = run_ruby(FLOW, "--project", @dir, "--hermes-dir", @hermes,
+    out, status = run_ruby(*FLOW, "--project", @dir, "--hermes-dir", @hermes,
                            "--agent", "claude:architect", "--agent", "opencode:tester", "--agent", "hermes:reviewer")
     assert_equal 0, status, out
   end
 
   def uninstall(*args, stdin: "")
-    run_ruby(UNINSTALL, "--project", @dir, *args, stdin: stdin)
+    run_ruby(*UNINSTALL, "--project", @dir, *args, stdin: stdin)
   end
 
   def run_ruby(script, *args, stdin: "")
@@ -62,6 +63,17 @@ class UninstallRemovesTest < UninstallerTestCase
     %w[coord setup_agent dispatcher dashboard vault coordination .agent-flow.json
        AGENTS.md .gitignore .claude .opencode].each { |rel| refute File.exist?(path(rel)), "#{rel} still exists" }
     refute Dir.exist?(File.join(@hermes, "#{File.basename(@dir)}-reviewer"))
+  end
+
+  # Older installs copied setup_agent into the project. maf start replaced it.
+  def test_removes_a_setup_agent_from_an_older_install
+    install
+    write("setup_agent", "# setup_agent - create a worktree for one agent and launch its harness session.\n")
+
+    out, status = uninstall("--yes")
+
+    assert_equal 0, status, out
+    refute File.exist?(path("setup_agent"))
   end
 
   def test_keeps_graphify_and_obsidian_and_their_ignore_rules

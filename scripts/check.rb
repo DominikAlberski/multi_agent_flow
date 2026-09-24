@@ -21,17 +21,17 @@ module Check
   FILES = {
     coord: File.join(ROOT, "assets", "coord"),
     taskrc: File.join(ROOT, "assets", "taskrc.append"),
-    bootstrap: File.join(ROOT, "assets", "bootstrap.rb"),
+    bootstrap: File.join(ROOT, "lib", "maf", "bootstrap.rb"),
     gitignore: File.join(ROOT, "assets", "gitignore.append"),
     contract: File.join(ROOT, "assets", "agents-contract.md")
   }.freeze
 
   # The worktree path is computed in two standalone scripts (coord creates the
-  # worktree, setup_agent finds it again) that share no load path, so the
+  # worktree, maf start finds it again) that share no load path, so the
   # formula is duplicated on purpose. Keep the two identical.
   WORKTREE_FILES = {
     coord: File.join(ROOT, "assets", "coord"),
-    setup_agent: File.join(ROOT, "assets", "setup_agent")
+    setup_agent: File.join(ROOT, "lib", "maf", "setup_agent.rb")
   }.freeze
   WORKTREE_SUFFIX_DEF = 'WORKTREES_DIR = ".worktrees"'
   WORKTREE_DIR_EXPR = 'File.join(root, WORKTREES_DIR, slug)'
@@ -41,7 +41,6 @@ module Check
   # file and refuses to update it. Keep each signature in both places.
   SCRIPTS = {
     "coord" => "coord - shared coordination layer",
-    "setup_agent" => "setup_agent - create a worktree for one agent and launch its harness session.",
     "dispatcher" => "dispatcher - task board and inbox monitor that starts one-shot agents.",
     "vault" => "vault - shared knowledge base watcher (graphify + Obsidian + MCP).",
     "dashboard" => "dashboard - local observability web UI for multi-agent coordination."
@@ -90,7 +89,7 @@ module Check
   def check_no_duplicate_block
     return true unless File.read(FILES[:bootstrap]).include?("TASKRC_BLOCK")
 
-    warn "FAIL: assets/bootstrap.rb defines TASKRC_BLOCK; it must read taskrc.append"
+    warn "FAIL: lib/maf/bootstrap.rb defines TASKRC_BLOCK; it must read taskrc.append"
     false
   end
 
@@ -115,7 +114,7 @@ module Check
     end
     return true if bad.empty?
 
-    warn "FAIL: script signature missing in the asset or assets/bootstrap.rb: #{bad.keys.join(", ")}"
+    warn "FAIL: script signature missing in the asset or lib/maf/bootstrap.rb: #{bad.keys.join(", ")}"
     false
   end
 

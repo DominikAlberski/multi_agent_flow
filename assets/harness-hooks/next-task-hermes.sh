@@ -10,7 +10,7 @@
 #       - command: "~/.hermes/agent-hooks/next-task.sh"
 #         timeout: 30
 #
-# Required env: COORD_ROLE (set by setup_agent). COORD_DIR and TASKRC optional.
+# Required env: COORD_ROLE (set by maf start). COORD_DIR and TASKRC optional.
 
 PAYLOAD=$(cat 2>/dev/null)
 

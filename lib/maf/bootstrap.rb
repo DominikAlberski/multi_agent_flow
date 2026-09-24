@@ -2,9 +2,10 @@
 # frozen_string_literal: true
 
 # bootstrap.rb - install the multi-agent coordination layer into a project.
+# flow.rb runs this file as a subprocess.
 #
 # Usage:
-#   ./bootstrap.rb /path/to/project [--roles architect,backend-developer,...]
+#   ruby lib/maf/bootstrap.rb /path/to/project [--roles architect,backend-developer,...]
 #                                   [--check] [--install-deps] [--force]
 #
 # Idempotent: every file change is marker-guarded or content-compared, so
@@ -21,6 +22,7 @@ module Bootstrap
   MARKER = ">>> multi-agent-flow >>>"
   END_MARKER = "<<< multi-agent-flow <<<"
   COORD_SIGNATURE = "coord - shared coordination layer"
+  # Older installs copied setup_agent into the project. uninstall.rb removes it.
   SETUP_AGENT_SIGNATURE = "setup_agent - create a worktree for one agent and launch its harness session."
   DISPATCHER_SIGNATURE = "dispatcher - task board and inbox monitor that starts one-shot agents."
   VAULT_SIGNATURE = "vault - shared knowledge base watcher (graphify + Obsidian + MCP)."
@@ -41,7 +43,7 @@ module Bootstrap
     end
   ].freeze
 
-  PLAN_STEPS = %i[plan_coordination_dirs plan_gitkeeps plan_coord plan_setup_agent plan_dispatcher
+  PLAN_STEPS = %i[plan_coordination_dirs plan_gitkeeps plan_coord plan_dispatcher
                   plan_vault plan_dashboard plan_taskrc plan_claude_md plan_contracts plan_gitignore
                   plan_hook_scripts plan_claude_stop_hook].freeze
 
@@ -105,7 +107,7 @@ module Bootstrap
   class Installer
     def initialize(argv)
       @argv = argv
-      @assets = __dir__
+      @assets = File.expand_path("../../assets", __dir__)
       @target = nil
       @roles = "architect,backend-developer,frontend-developer,reviewer,tester"
       @check = false
@@ -200,10 +202,6 @@ module Bootstrap
 
     def plan_coord
       plan_script("coord", COORD_SIGNATURE)
-    end
-
-    def plan_setup_agent
-      plan_script("setup_agent", SETUP_AGENT_SIGNATURE)
     end
 
     def plan_dispatcher

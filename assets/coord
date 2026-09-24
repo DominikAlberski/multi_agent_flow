@@ -714,7 +714,7 @@ module Coord
 
   # Roster lists every role coord knows about: roles that own a pending task,
   # plus roles declared in the project's .agent-flow.json (written by
-  # scripts/flow.rb). The manifest sits next to coordination/, so a worktree
+  # maf add). The manifest sits next to coordination/, so a worktree
   # that points COORD_DIR at the main checkout still finds it.
   class Roster
     def initialize(paths, tasks)
@@ -834,7 +834,7 @@ module Coord
   #
   # All worktrees live inside the project under .worktrees/<slug>.
   # .worktrees/ is gitignored, so agents stay within the project directory
-  # and need no cross-directory file access permissions. setup_agent computes
+  # and need no cross-directory file access permissions. maf start computes
   # the same path; keep the two in sync (scripts/check.rb).
   class Worktree
     ENV_FILE = "coord-env.sh"

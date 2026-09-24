@@ -23,7 +23,7 @@
 #   {"type":"command","command":"ruby coordination/harness-hooks/board-watch.rb",
 #    "async":true,"asyncRewake":true,"timeout":604800}
 #
-# Required env: COORD_ROLE (set by setup_agent). COORD_DIR and TASKRC optional.
+# Required env: COORD_ROLE (set by maf start). COORD_DIR and TASKRC optional.
 # Env: BOARD_WATCH_INTERVAL (default 60), BOARD_WATCH_IDLE (default 120).
 # The script does nothing if COORD_DISPATCHED is set: the dispatcher owns
 # the loop for dispatched agents.
