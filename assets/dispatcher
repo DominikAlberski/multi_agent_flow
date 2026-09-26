@@ -543,6 +543,28 @@ module Dispatcher
     end
   end
 
+  # StopSignal ends the poll loop after the current agent run. `maf retire`
+  # sends TERM. The agent runs in its own process group, so TERM does not
+  # reach the agent, and the agent finishes its work first. The trap writes
+  # to a pipe, so a TERM also ends the wait between two cycles.
+  class StopSignal
+    def initialize
+      @reader, @writer = IO.pipe
+      trap("TERM") { signal }
+    end
+
+    # Returns true after the full interval, false when a stop was requested.
+    def wait(seconds) = IO.select([@reader], nil, nil, seconds).nil?
+
+    private
+
+    def signal
+      @writer.write_nonblock(".")
+    rescue IOError, IO::WaitWritable
+      nil
+    end
+  end
+
   # Main runs the poll + dispatch loop.
   class Main
     def initialize(config)
@@ -563,7 +585,9 @@ module Dispatcher
     def run
       Log.line("started: role=#{@config.role} #{harness_label} #{timing_label}")
       @mailbox.recover
+      @stop = StopSignal.new
       cycle_forever
+      Log.line("stopped (TERM)") unless @config.once
     rescue Interrupt
       Log.line("stopped (interrupted)")
     end
@@ -580,10 +604,9 @@ module Dispatcher
     def timing_label = "interval=#{@config.interval}s cache_window=#{@config.cache_window}s"
     def harness_label = @config.command ? "command=#{@config.command.inspect}" : "harness=#{@config.harness}"
 
-    # sleep returns the seconds slept, which is always truthy.
     def cycle_forever
       cycle
-      cycle while !@config.once && sleep(@config.interval)
+      cycle while !@config.once && @stop.wait(@config.interval)
     end
 
     def dispatch_messages

@@ -18,6 +18,7 @@ If a text needs a new term, add the term here first.
 | short id | The first 8 characters of a task or goal uuid. | `Goals.short` |
 | slot | A unique number per worktree. The main worktree is slot 0. A project uses the slot for a test database and a port. | `COORD_SLOT`, `coordination/worktree-env.rb` |
 | worker registry | The list of prepared workers: role, harness, model, and worktree of each worker. | `coordination/workers.json`, `maf prepare`, `maf retire` |
+| team budget | The limits for `maf prepare`: the maximum number of workers and the allowed harnesses and models. The project manager does not count. | `.agent-flow.json` key `team`, `maf team set` |
 | lead | The project manager or the architect. All other roles are workers for `coord broadcast`. | `coord broadcast --to leads` |
 | scope | The file paths that a task may change. Example: `test/queries/**`. | task field `scope`, `--scope` |
 | message | A note to a role. Unread messages are in `coordination/inbox/<role>/`. | `Messages`, `coord msg` |

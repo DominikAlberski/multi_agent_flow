@@ -391,6 +391,36 @@ class TaskwarriorTest < Minitest::Test
     end
   end
 
+  # A dispatched architect starts only on a message, so a done task must
+  # send one.
+  def test_done_tells_the_architect
+    id = add("finished work")
+    capture_io { Coord::CLI.new(["done", id], env: @env).run }
+
+    assert_includes File.read(inbox("architect").first), "Task #{id} is done: finished work."
+  end
+
+  def write_registry(workers)
+    File.write(File.join(@env["COORD_DIR"], "workers.json"), JSON.generate(workers))
+  end
+
+  def test_a_task_for_a_role_without_a_worker_alerts_the_project_manager_once
+    write_team_manifest
+    write_registry("architect-1" => { "role" => "architect" })
+    2.times { |n| capture_io { Coord::CLI.new(["add", "--role", "backend-developer", "--title", "t#{n}"], env: @env).run } }
+
+    assert_equal 1, inbox("project-manager").size
+    assert_includes File.read(inbox("project-manager").first), "No worker runs role backend-developer."
+  end
+
+  def test_a_staffed_role_raises_no_alert
+    write_team_manifest
+    write_registry("backend-1" => { "role" => "backend-developer" })
+    capture_io { Coord::CLI.new(["add", "--role", "backend-developer", "--title", "t"], env: @env).run }
+
+    assert_empty inbox("project-manager")
+  end
+
   # A taskrc from an older coord has the marker block but not the goal UDA.
   def test_init_adds_a_missing_uda_to_an_older_taskrc
     taskrc = @env["TASKRC"]

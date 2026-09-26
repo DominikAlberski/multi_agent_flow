@@ -25,6 +25,7 @@ module Maf
     def find(worker) = all[worker]
     def add(worker, entry) = write(all.merge(worker => entry.merge("updated_at" => Time.now.utc.iso8601)))
     def remove(worker) = write(all.except(worker))
+    def update(worker, fields) = add(worker, find(worker).to_h.merge(fields))
 
     private
 

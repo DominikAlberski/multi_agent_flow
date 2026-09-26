@@ -203,6 +203,36 @@ Harness-specific notes:
 `WORKER` defaults to `1`. To run two instances of one role, start
 `backend-developer_2` too. Claims are atomic; two workers never take the same task.
 
+### Let the project manager run the team
+
+Give the project manager a budget. Example:
+
+> "You have 6 worker slots. Use claude and opencode with deepseek-v4-flash.
+> Manage your team in dispatch mode."
+
+The project manager records the budget:
+
+```sh
+maf team set --max 6 --allow claude --allow opencode:deepseek-v4-flash
+```
+
+Then it adds workers itself, for example
+`maf prepare opencode backend-developer_1 --dispatch`. With `--dispatch`,
+`maf prepare` starts the dispatcher in the background. You run no commands.
+
+- `maf team` shows the budget, each worker, its state, and the tasks by role.
+- `maf prepare` refuses a harness or a model outside the budget, and a worker
+  over `max_workers`. The project manager does not count.
+- If only one model is allowed for a harness, `maf prepare` uses that model.
+- `maf retire` sends TERM to a background dispatcher. A running agent run
+  finishes first. Then the dispatcher exits.
+- A task for a role without a worker sends a message to the project manager.
+- Each done task sends a message to the architect, so a dispatched architect
+  starts when there is work to check.
+- Background dispatchers log to `coordination/sessions/<worker>.log`.
+- A background dispatcher keeps running when the project manager's session
+  ends. Run `maf retire` for each worker to stop the team.
+
 ### Isolate test databases and ports
 
 Each worktree gets a unique number, `COORD_SLOT`, in its `coord-env.sh`.
@@ -522,8 +552,9 @@ cd .worktrees/frontend-developer-2
 maf start
 ```
 
-If the old worker still runs, `maf prepare` stops without changes. Stop that
-session, then ask the project manager again. Without `--replace`, the command
+If the old worker still runs in a terminal, `maf prepare` stops without
+changes. Stop that session, then ask the project manager again. A background
+dispatcher is different: `maf` stops it for you (see below). Without `--replace`, the command
 adds a worker. `maf retire backend-developer_2` removes a worker.
 
 Worktrees can stay for the next session. To remove a worktree:
@@ -626,7 +657,10 @@ Do these steps in the project:
 | Command | What it does |
 |---|---|
 | `maf prepare HARNESS ROLE[_WORKER] [--replace W]` | Prepare a worker: role file, worktree, registry. Prints the two start commands. |
-| `maf retire ROLE[_WORKER]` | Remove a worker. Its claimed tasks return to the pool. |
+| `maf retire ROLE[_WORKER]` | Remove a worker. Stops its background dispatcher. Its claimed tasks return to the pool. |
+| `maf team` | Show the budget, the workers, and the tasks by role. |
+| `maf team set --max N --allow HARNESS[:MODEL]` | Set the team budget in `.agent-flow.json`. |
+| `maf start ... --dispatch --detach` | Start a dispatcher in the background. |
 | `maf start` (in a prepared worktree) | Start the worker that `maf prepare` made. |
 | `./coord init` | Create the `coordination/` folders. |
 | `./coord goal add --title T [--base B]` | Create a goal, its branch `goal/<short-id>`, and its worktree. Prints the ID. |

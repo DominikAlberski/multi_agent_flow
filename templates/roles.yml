@@ -32,6 +32,8 @@ roles:
       - Change the team with `maf prepare`, `maf prepare --replace`, and `maf retire`
         when the user asks. Give the user only the two printed commands.
         Do not edit source files.
+      - If the user gives a team budget, manage the team yourself in dispatch mode.
+        Scale on the backlog in `maf team`. Stay inside the budget.
       - If the architect escalates a repeated review failure, forward the
         options to the user. Do not send a new goal until the user decides.
 

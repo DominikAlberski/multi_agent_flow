@@ -393,6 +393,61 @@ class MafTeamTest < Minitest::Test
     assert_includes out, "uncommitted work"
   end
 
+  def manifest = JSON.parse(File.read(File.join(@project, ".agent-flow.json")))
+
+  def test_team_set_records_the_budget_and_maf_add_keeps_it
+    maf("team", "set", "--max", "2", "--allow", "opencode:deepseek-v4-flash")
+    maf("add", "opencode:tester")
+
+    assert_equal({ "max_workers" => 2, "allow" => ["opencode:deepseek-v4-flash"] }, manifest["team"])
+  end
+
+  def test_prepare_uses_the_only_allowed_model
+    maf("team", "set", "--allow", "opencode:deepseek-v4-flash")
+    maf("prepare", "opencode", "tester_1")
+
+    assert_equal "deepseek-v4-flash", workers.dig("tester-1", "model")
+  end
+
+  def test_prepare_refuses_a_harness_outside_the_budget
+    maf("team", "set", "--allow", "opencode")
+    out, status = maf("prepare", "claude", "tester_1")
+
+    refute_equal 0, status
+    assert_includes out, "not allowed"
+  end
+
+  def test_prepare_refuses_a_worker_over_the_limit
+    maf("team", "set", "--max", "1")
+    maf("prepare", "opencode", "architect_2")
+    out, status = maf("prepare", "opencode", "tester_1")
+
+    refute_equal 0, status
+    assert_includes out, "max_workers is 1"
+  end
+
+  def test_replace_frees_a_slot_inside_the_limit
+    maf("team", "set", "--max", "1")
+    maf("prepare", "opencode", "architect_2")
+    out, status = maf("prepare", "opencode", "tester_1", "--replace", "architect_2")
+
+    assert_equal 0, status, out
+  end
+
+  def test_prepare_with_dispatch_starts_and_retire_stops_the_dispatcher
+    out, status = maf("prepare", "opencode", "architect_2", "--dispatch")
+    pid = workers.dig("architect-2", "pid")
+
+    assert_equal 0, status, out
+    assert Process.kill(0, pid)
+    assert_includes maf("team").first, "running (pid #{pid})"
+    out, status = maf("retire", "architect_2")
+    assert_equal 0, status, out
+    assert_raises(Errno::ESRCH) { Process.kill(0, pid) }
+  ensure
+    Process.kill("KILL", pid) rescue nil if pid
+  end
+
   def test_retire_returns_claimed_tasks_to_the_pool
     skip "Taskwarrior ('task') not installed" unless system("task", "--version", out: File::NULL)
     maf("prepare", "opencode", "architect_2")

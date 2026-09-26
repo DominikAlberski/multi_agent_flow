@@ -1244,6 +1244,7 @@ module Coord
       opts[:goal] &&= goal_uuid(opts[:goal])
       id = tasks.add(**opts)
       conflicts.warn_with(opts[:scope], exclude: id)
+      report_unstaffed(opts[:role], id)
       puts id
     end
 
@@ -1297,9 +1298,19 @@ module Coord
 
     def cmd_done
       id = @args.require_arg("done", "ID")
+      task = tasks.find(id)
       tasks.done(id)
       event_log.append("done", @worker, id)
+      report_done(task)
       puts "done #{id}"
+    end
+
+    # A dispatched architect starts only on a message. Without this notice,
+    # the architect never learns that a task is ready for its check.
+    def report_done(task)
+      return if [nil, "architect", Goals::ROLE].include?(task["role"]) || @role == "architect"
+
+      deliver("architect", @worker, "Task #{task["uuid"]} is done: #{task["description"]}. Check the diff and the TESTS line.")
     end
 
     def cmd_annotate
@@ -1422,6 +1433,28 @@ module Coord
     def manifest = @manifest ||= Manifest.new(paths.manifest_path)
     def main_root = File.dirname(File.expand_path(@coord_dir))
     def goal_list = goals.list
+
+    UNSTAFFED = "No worker runs role %s."
+
+    # With a worker registry (coordination/workers.json), a task for a role
+    # without a worker waits forever. Tell the project manager once per role.
+    def report_unstaffed(role, id)
+      return if role.nil? || staffed?(role) || unstaffed_notice?(role)
+
+      text = "#{format(UNSTAFFED, role)} Task #{id} waits. Add a worker: maf prepare HARNESS #{role}_1 --dispatch"
+      return warn("coord: #{text}") unless manifest.agents.any? { |a| a["role"] == "project-manager" }
+
+      deliver("project-manager", "coord", text)
+    end
+
+    def staffed?(role)
+      path = File.join(paths.coord_dir, "workers.json")
+      !File.exist?(path) || JSON.parse(File.read(path)).values.any? { |entry| entry["role"] == role }
+    end
+
+    def unstaffed_notice?(role)
+      messages.files("project-manager").any? { |path| File.read(path).include?(format(UNSTAFFED, role)) }
+    end
 
     # Older taskrc files lack the `goal` UDA. Add it before the first use.
     def goal_uuid(id)

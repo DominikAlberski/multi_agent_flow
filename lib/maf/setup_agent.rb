@@ -15,7 +15,9 @@
 # positional arguments go to the dispatcher (for example --interval,
 # --timeout, --cache-window). WORKER defaults to 1, or to "bot" with
 # --dispatch, so a dispatched and an interactive instance of one role get
-# separate worktrees.
+# separate worktrees. --detach (only with --dispatch) starts the dispatcher
+# in the background, logs to coordination/sessions/<worker>.log, and records
+# its pid in coordination/workers.json. `maf retire` stops it.
 #
 # HARNESS:ROLE must already exist in .agent-flow.json (maf add HARNESS:ROLE
 # adds one). Run from the project root.
@@ -83,20 +85,21 @@ module SetupAgent
   # then the flags. --dispatch and --model M are setup_agent's own flags; all
   # other flags go to the dispatcher and need --dispatch.
   class Args
-    Parsed = Struct.new(:harness, :role, :worker_id, :worker, :model, :dispatch, :dispatcher_args,
+    Parsed = Struct.new(:harness, :role, :worker_id, :worker, :model, :dispatch, :detach, :dispatcher_args,
                         keyword_init: true)
 
     def self.parse(argv)
-      dispatch, positional, flags = split(argv)
+      dispatch, detach, positional, flags = split(argv)
       model = take_model(flags)
       reject_stray(flags, dispatch)
-      Parsed.new(**identity(positional, model, dispatch), dispatch: dispatch, dispatcher_args: flags)
+      abort "setup_agent: --detach works only with --dispatch" if detach && !dispatch
+      Parsed.new(**identity(positional, model, dispatch), dispatch: dispatch, detach: detach, dispatcher_args: flags)
     end
 
     def self.split(argv)
-      rest = argv.reject { |arg| arg == "--dispatch" }
+      rest = argv - %w[--dispatch --detach]
       index = rest.index { |arg| arg.start_with?("--") } || rest.size
-      [rest.size != argv.size, rest[0...index], rest[index..-1]]
+      [argv.include?("--dispatch"), argv.include?("--detach"), rest[0...index], rest[index..-1]]
     end
 
     def self.identity(positional, model, dispatch)
@@ -139,7 +142,24 @@ module SetupAgent
       require_dispatcher!
       cmd = [RbConfig.ruby, "./dispatcher", args.role, "--harness", args.harness]
       cmd += ["--model", model] if model
-      Launcher.exec_or_die(cmd + args.dispatcher_args)
+      cmd += args.dispatcher_args
+      args.detach ? detach(cmd, args.worker) : Launcher.exec_or_die(cmd)
+    end
+
+    # setsid gives the dispatcher its own session, so it keeps running when
+    # the terminal or the harness session that started it ends.
+    def self.detach(cmd, worker)
+      log = File.join(ENV.fetch("COORD_DIR"), "sessions", "#{worker}.log")
+      pid = spawn_detached(cmd, log)
+      Maf::Workers.at(Project.root).update(worker, "pid" => pid)
+      puts "Started #{worker} in the background (pid #{pid}). Log: #{log}"
+    end
+
+    def self.spawn_detached(cmd, log)
+      FileUtils.mkdir_p(File.dirname(log))
+      io = { in: File::NULL, out: [log, "a"], err: %i[child out] }
+      pid = fork { Process.setsid && exec({ "DISPATCHER_LOG" => log }, *cmd, **io) }
+      Process.detach(pid) && pid
     end
 
     def self.require_dispatcher!

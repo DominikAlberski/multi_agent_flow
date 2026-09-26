@@ -99,6 +99,7 @@ module Flow
          ./coord add --role <role> --scope "<paths>" --goal <goal-id> --title "<title>"
          ./coord annotate <id> "Goal: <goal>. Inputs: <files or context>. Out of scope: <paths or work>. Acceptance: <done condition>. Report format: <what to annotate>."
     4. Watch progress: `./coord goal show <goal-id>`, `./coord conflicts`, `./coord inbox architect`.
+       Each done task sends you a message. A task for a role without a worker alerts the project manager.
     5. Answer worker questions. Resolve conflicts.
     6. Before you trust a done task, inspect its diff and its TESTS line:
        `git diff goal/<goal-short-id>...task/<task-short-id>`. Do not rerun the task tests.
@@ -159,6 +160,21 @@ module Flow
     #{SUBAGENT_RULE}
   LOOP
 
+  # The user can give the project manager a budget (`maf team set`) and let it
+  # run the team. Dispatched workers cost no tokens while idle, so the rules
+  # scale on backlog, not on cost.
+  TEAM_RULES = <<~TEXT.strip
+    - If the user gives you a team budget, record it: `maf team set --max <n> --allow <harness[:model]> ...`.
+      Then manage the team yourself in dispatch mode. `maf prepare ... --dispatch` starts the worker in the background.
+    - Check the team with `maf team`. It shows the budget, each worker, and the tasks by role.
+    - Staff the architect first. A goal needs the architect before any other worker.
+    - If coord reports "No worker runs role <role>", add a worker for that role.
+    - If a role has more than three backlog tasks and the budget has a free slot, add a worker for that role.
+    - If a role has no tasks and no open goal needs it, retire its extra workers. Keep one worker per role that an open goal needs.
+    - If the budget is full, replace an idle worker: `--replace <idle-worker>`.
+    - Report each team change to the user in one line.
+  TEXT
+
   PM_LOOP = <<~LOOP
     Work loop:
     1. Read the user's request.
@@ -179,6 +195,7 @@ module Flow
       Remove a worker: `maf retire <role>_<n>`.
       Give the user the two commands that `maf prepare` prints: `cd <worktree>` and `maf start`.
       If `maf` reports that the old worker still runs, ask the user to stop that session. Then run the command again.
+    #{TEAM_RULES}
     - Run goals in parallel only if the goals change different parts of the code.
     - Send goals to the architect only. Never dispatch work to other roles directly.
     - If no report has arrived yet, tell the user and check again with `./coord inbox project-manager`.
@@ -428,14 +445,24 @@ module Flow
     def write_manifest
       return if @check
       path = File.join(@project, ".agent-flow.json")
-      data = {
-        generated_at: Time.now.utc.iso8601,
-        agents: @agents.map { |a| { harness: a[:harness], role: a[:role], model: model_for(a) } }
-      }
+      data = kept_manifest_keys(path).merge(
+        "generated_at" => Time.now.utc.iso8601,
+        "agents" => @agents.map { |a| { harness: a[:harness], role: a[:role], model: model_for(a) } }
+      )
       # Only record hermes_dir when it differs from the default: the default is
       # an absolute home path that would leak into a committed manifest.
-      data[:hermes_dir] = @hermes_dir unless @hermes_dir == DEFAULT_HERMES_DIR
+      data["hermes_dir"] = @hermes_dir unless @hermes_dir == DEFAULT_HERMES_DIR
       File.write(path, JSON.pretty_generate(data))
+    end
+
+    # Other tools own other keys (maf team: "team"; users: "base_branch").
+    # A re-run must keep them.
+    def kept_manifest_keys(path)
+      return {} unless File.exist?(path)
+
+      JSON.parse(File.read(path)).except("generated_at", "agents", "hermes_dir")
+    rescue JSON::ParserError
+      {}
     end
 
     def install_hooks
