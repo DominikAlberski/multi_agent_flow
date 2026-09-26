@@ -45,9 +45,11 @@ Fix:
    Store the slot map in `coordination/slots.json` under a coord lock.
    The main worktree is slot 0.
 2. Write `COORD_SLOT=<n>` to `coord-env.sh`.
-3. Append the output of an optional project hook `coordination/worktree-env.sh` to `coord-env.sh`.
-   Call the hook with `COORD_SLOT`, the role and the worktree path.
+3. Append the output of an optional project hook `coordination/worktree-env.rb` to `coord-env.sh`.
+   Call the hook with `COORD_SLOT` and the worktree path.
+   Keep only `export NAME=VALUE` lines, so a shell that sources the file runs nothing else.
    The project owns the hook, because each stack names its variables differently.
+   A worktree that is gone frees its slot, so a retired worker does not push every later port higher.
 4. Ship an example hook for Rails in `assets/`:
    `TEST_ENV_NUMBER=$COORD_SLOT`, `PORT=$((3000 + COORD_SLOT))`, `CAPYBARA_SERVER_PORT=$((4000 + COORD_SLOT))`.
 5. Tell the architect to use `coord with-lock system-test -- CMD` for any suite that needs a shared resource.

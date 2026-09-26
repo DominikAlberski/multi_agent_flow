@@ -47,9 +47,18 @@ module Maf
     def set(args)
       team = parse(args)
       path = File.join(@root, ".agent-flow.json")
-      data = File.exist?(path) ? JSON.parse(File.read(path)) : {}
-      File.write(path, JSON.pretty_generate(data.merge("team" => team)))
+      File.write(path, JSON.pretty_generate(manifest(path).merge("team" => team)))
       puts Budget.new(team).summary
+    end
+
+    # A corrupt manifest must not be overwritten with only the team key: that
+    # would drop every agent. Stop with a clear message instead.
+    def manifest(path)
+      return {} unless File.exist?(path)
+
+      JSON.parse(File.read(path))
+    rescue JSON::ParserError
+      abort "maf: #{path} is not valid JSON. Fix it, then run this command again."
     end
 
     def parse(args)

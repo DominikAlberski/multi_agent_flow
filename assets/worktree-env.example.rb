@@ -8,8 +8,9 @@
 #
 # Input:  COORD_SLOT (1, 2, ...; the main worktree is slot 0) and
 #         COORD_WORKTREE (absolute path of the worktree).
-# Output: one `export NAME=VALUE` line per variable. Other lines are ignored
-#         by `maf start`.
+# Output: one `export NAME=VALUE` line per variable. `coord worktree` keeps
+#         only those lines, so a later `source coord-env.sh` runs no other
+#         line the hook prints.
 #
 # Use the variables in the project, for example in config/database.yml:
 #   test:

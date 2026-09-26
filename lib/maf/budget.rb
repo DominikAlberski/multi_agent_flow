@@ -13,7 +13,17 @@ module Maf
 
     def self.at(root)
       path = File.join(root, ".agent-flow.json")
-      new(File.exist?(path) ? JSON.parse(File.read(path)).fetch("team", {}) : {})
+      new(team(path))
+    end
+
+    # A corrupt manifest must not silently drop the budget: without limits,
+    # maf would start every worker. Stop with a clear message instead.
+    def self.team(path)
+      return {} unless File.exist?(path)
+
+      JSON.parse(File.read(path)).fetch("team", {})
+    rescue JSON::ParserError
+      abort "maf: #{path} is not valid JSON. Fix it, then run this command again."
     end
 
     def initialize(team)

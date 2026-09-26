@@ -421,6 +421,20 @@ class TaskwarriorTest < Minitest::Test
     assert_empty inbox("project-manager")
   end
 
+  # Without a project-manager role, no message records the notice. The warning
+  # must still appear only once per role, not on every `coord add`.
+  def test_an_unstaffed_role_warns_once_without_a_project_manager
+    manifest = { agents: [{ harness: "claude", role: "architect" }] }
+    File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(manifest))
+    write_registry("architect-1" => { "role" => "architect" })
+
+    _out, err = capture_io do
+      2.times { |n| Coord::CLI.new(["add", "--role", "backend-developer", "--title", "t#{n}"], env: @env).run }
+    end
+
+    assert_equal 1, err.scan("No worker runs role backend-developer.").size
+  end
+
   # A taskrc from an older coord has the marker block but not the goal UDA.
   def test_init_adds_a_missing_uda_to_an_older_taskrc
     taskrc = @env["TASKRC"]
@@ -670,12 +684,37 @@ class WorktreeTest < Minitest::Test
     assert_includes env_file("tester"), "export COORD_SLOT=1\n"
   end
 
+  # A retired worker must give its slot back, or the port map climbs forever.
+  def test_a_removed_worktree_frees_its_slot
+    %w[tester reviewer].each { |slug| FileUtils.mkdir_p(File.join(worktrees_root, slug)) }
+    slots = Coord::Slots.new(File.join(@root, "coordination"))
+
+    assert_equal 1, slots.assign("tester")
+    assert_equal 2, slots.assign("reviewer")
+    FileUtils.remove_entry(File.join(worktrees_root, "reviewer"))
+
+    assert_equal 2, slots.assign("backend-developer")
+  end
+
   def test_the_project_hook_output_is_appended_to_the_env_file
     File.write(File.join(@root, "coordination", "worktree-env.rb"),
                'puts "export PORT=#{3000 + ENV.fetch("COORD_SLOT").to_i}"')
     Coord::Worktree.new(@root).create("tester", nil)
 
     assert_includes env_file("tester"), "export PORT=3001\n"
+  end
+
+  # A shell sources coord-env.sh. Keep only exports, so a hook that prints
+  # other text cannot run a command in every later shell.
+  def test_the_project_hook_output_keeps_only_export_lines
+    File.write(File.join(@root, "coordination", "worktree-env.rb"), <<~RUBY)
+      puts "echo not allowed"
+      puts "export OK=1"
+    RUBY
+    Coord::Worktree.new(@root).create("tester", nil)
+
+    assert_includes env_file("tester"), "export OK=1\n"
+    refute_includes env_file("tester"), "echo not allowed"
   end
 
   def test_a_failing_project_hook_does_not_stop_the_worktree
@@ -805,6 +844,16 @@ class GoalTest < Minitest::Test
 
   def test_goal_add_refuses_a_missing_base_branch
     assert_raises(SystemExit) { coord("goal", "add", "--title", "x", "--base", "nope") }
+  end
+
+  # An empty base_branch is not a branch. Fall back to the default branch
+  # instead of aborting with "base branch  does not exist".
+  def test_an_empty_base_branch_falls_back_to_the_default_branch
+    File.write(File.join(@root, ".agent-flow.json"), JSON.generate(base_branch: ""))
+    uuid = add_goal
+
+    dir = File.join(@root, ".worktrees", "goal-#{short(uuid)}")
+    assert_equal "goal/#{short(uuid)}", `git -C #{dir} branch --show-current`.strip
   end
 
   def test_goal_show_lists_the_tasks_of_the_goal

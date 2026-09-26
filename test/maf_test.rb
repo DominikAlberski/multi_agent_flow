@@ -402,6 +402,27 @@ class MafTeamTest < Minitest::Test
     assert_equal({ "max_workers" => 2, "allow" => ["opencode:deepseek-v4-flash"] }, manifest["team"])
   end
 
+  # A corrupt manifest must stop the command with a clear message, not crash
+  # with a JSON error and not silently drop the budget.
+  def test_team_stops_on_a_corrupt_manifest
+    File.write(File.join(@project, ".agent-flow.json"), "{ not json")
+    out, status = maf("team")
+
+    refute_equal 0, status
+    assert_includes out, "not valid JSON"
+  end
+
+  # `maf team set` must not overwrite a corrupt manifest with only the team
+  # key: that would drop every agent.
+  def test_team_set_leaves_a_corrupt_manifest_alone
+    File.write(File.join(@project, ".agent-flow.json"), "{ not json")
+    out, status = maf("team", "set", "--max", "2")
+
+    refute_equal 0, status
+    assert_includes out, "not valid JSON"
+    assert_equal "{ not json", File.read(File.join(@project, ".agent-flow.json"))
+  end
+
   def test_prepare_uses_the_only_allowed_model
     maf("team", "set", "--allow", "opencode:deepseek-v4-flash")
     maf("prepare", "opencode", "tester_1")

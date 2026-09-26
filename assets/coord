@@ -882,8 +882,11 @@ module Coord
     # The base branch is where each goal starts: the manifest's base_branch,
     # else the branch that origin/HEAD names, else main.
     def self.base_branch(dir, manifest)
+      configured = manifest.base_branch
+      return configured unless configured.to_s.empty?
+
       remote = `git -C #{Shellwords.escape(dir)} symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null`.strip
-      manifest.base_branch || remote.delete_prefix("origin/").then { |name| name.empty? ? "main" : name }
+      remote.delete_prefix("origin/").then { |name| name.empty? ? "main" : name }
     end
   end
 
@@ -976,24 +979,35 @@ module Coord
   # worktree has no coord-env.sh and counts as slot 0.
   class Slots
     def initialize(coord_dir)
+      @coord_dir = coord_dir
       @path = File.join(coord_dir, "slots.json")
       @paths = Paths.new(coord_dir)
     end
 
     def assign(slug)
       FileUtils.mkdir_p(@paths.locks_dir)
-      Locks.new(@paths).with_mutex("slots", worker: "coord") { read.fetch(slug) { add(slug) } }
+      Locks.new(@paths).with_mutex("slots", worker: "coord") { write(slot_for(live, slug))[slug] }
     end
 
     private
 
+    def slot_for(slots, slug)
+      slots[slug] ||= (slots.values.max || 0) + 1
+      slots
+    end
+
     def read = File.exist?(@path) ? JSON.parse(File.read(@path)) : {}
 
-    def add(slug)
-      slots = read
-      slots[slug] = (slots.values.max || 0) + 1
+    # A worktree that is gone frees its slot, so a retired worker does not
+    # push every later worker's port higher. Retire and a manual
+    # `git worktree remove` both free the slot on the next assign.
+    def live = read.select { |slug, _slot| Dir.exist?(worktree_dir(slug)) }
+
+    def worktree_dir(slug) = File.join(File.dirname(File.expand_path(@coord_dir)), Worktree::WORKTREES_DIR, slug)
+
+    def write(slots)
       File.write(@path, JSON.pretty_generate(slots))
-      slots[slug]
+      slots
     end
   end
 
@@ -1028,9 +1042,11 @@ module Coord
       run_hook(hook, { "COORD_SLOT" => slot.to_s, "COORD_WORKTREE" => dir })
     end
 
+    # Keep only `export NAME=VALUE` lines. A shell that sources coord-env.sh
+    # then runs nothing else the hook prints.
     def run_hook(hook, env)
       output = IO.popen(env, [RbConfig.ruby, hook], &:read)
-      return output if $?.success?
+      return output.lines.grep(/\Aexport \w+=/).join if $?.success?
 
       warn "coord: #{hook} failed. coord-env.sh has no project variables."
       ""
@@ -1441,6 +1457,7 @@ module Coord
     def report_unstaffed(role, id)
       return if role.nil? || staffed?(role) || unstaffed_notice?(role)
 
+      event_log.append("unstaffed", @worker, role)
       text = "#{format(UNSTAFFED, role)} Task #{id} waits. Add a worker: maf prepare HARNESS #{role}_1 --dispatch"
       return warn("coord: #{text}") unless manifest.agents.any? { |a| a["role"] == "project-manager" }
 
@@ -1452,8 +1469,19 @@ module Coord
       !File.exist?(path) || JSON.parse(File.read(path)).values.any? { |entry| entry["role"] == role }
     end
 
+    # The event log records each notice. A message in the inbox is not enough:
+    # a project without a project-manager role gets no message at all, and the
+    # log is the only place the notice is remembered.
     def unstaffed_notice?(role)
-      messages.files("project-manager").any? { |path| File.read(path).include?(format(UNSTAFFED, role)) }
+      path = paths.log_path
+      return false unless File.exist?(path)
+
+      File.readlines(path).any? { |line| unstaffed_line?(line, role) }
+    end
+
+    def unstaffed_line?(line, role)
+      _time, action, _worker, detail = line.split("\t")
+      action == "unstaffed" && detail.to_s.strip == role
     end
 
     # Older taskrc files lack the `goal` UDA. Add it before the first use.
