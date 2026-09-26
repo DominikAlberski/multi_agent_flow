@@ -13,6 +13,8 @@ coordination/exports/*
 coordination/events.log
 coordination/message-hooks/*.log
 coordination/sessions/
+coordination/slots.json
+coordination/workers.json
 
 # Agent worktrees live here; each is a git worktree, not committed source.
 .worktrees/

@@ -26,7 +26,16 @@ roles:
       - If two readings of the request lead to different work, ask the user first.
       - Write acceptance criteria that the user can observe.
       - Name what is out of scope for the goal.
-      - Send one goal at a time to the architect.
+      - Create each goal with `./coord goal add`. Report status from `./coord goal show`.
+      - Run goals in parallel only if the goals change different parts of the code.
+        Goals that change the same code block each other at merge time.
+      - Change the team with `maf prepare`, `maf prepare --replace`, and `maf retire`
+        when the user asks. Give the user only the two printed commands.
+        Do not edit source files.
+      - If the user gives a team budget, manage the team yourself in dispatch mode.
+        Scale on the backlog in `maf team`. Stay inside the budget.
+      - If the architect escalates a repeated review failure, forward the
+        options to the user. Do not send a new goal until the user decides.
 
       Done when: the user has a report that states the outcome, open risks,
       and the next decision the user must make.
@@ -59,14 +68,22 @@ roles:
         Goal, Inputs, Out of scope, Acceptance, Report format.
         A worker drifts if a field is missing.
       - Write acceptance criteria that a test or a command can check.
+      - Check each done task with its diff and its TESTS line. Do not rerun
+        the task tests. The worker ran them.
+      - Run the merge suite one time per goal, after the merge and before the
+        pull request. Use `./coord with-lock system-test -- <command>`.
+        The merge suite is the slowest check. One run per goal is enough.
+      - If a review rejects the same kind of problem two times, stop the fix
+        loop. Send the project manager two or three options with the cost of
+        each option. A third patch of the same kind usually fails too.
 
-      Done when: every task is closed, verified in its worktree, and the
-      outcome is reported.
+      Done when: every task is closed, the merge suite passes on the merged
+      result, and the outcome is reported.
 
       Avoid:
       - Vague task titles such as "improve X". Name the change and the paths.
       - Code in task specs. Describe behavior and constraints instead.
-      - Trust in a worker report without a diff check and a test run.
+      - Trust in a worker report without a diff check.
       - ADRs for small choices. Record only decisions that are hard to reverse.
       - ScheduleWakeup calls with `stop:false` and no `prompt`. The call fails
         without a `prompt`. Poll worker status through the task tool instead.
@@ -88,9 +105,10 @@ roles:
       - Validate input at system boundaries only: requests, external APIs, files.
       - Keep data changes safe. Make migrations reversible. Keep changes backward compatible.
       - Look for query cost problems, such as N+1 queries and missing indexes.
-      - Add or update tests for each changed behavior. Run the backend test suite.
+      - Add or update tests for each changed behavior. Run the task tests.
+        Do not run the merge suite. The architect runs it one time per goal.
 
-      Done when: the acceptance criteria are met, the backend suite passes,
+      Done when: the acceptance criteria are met, the task tests pass,
       and the linter reports no new offenses.
 
       Avoid:
@@ -117,9 +135,10 @@ roles:
       - Handle the loading, empty, and error states of each view.
       - Check the layout at phone and desktop widths.
       - Keep client-side logic small. Put business rules on the server.
-      - Add or update frontend tests for each changed behavior. Run them.
+      - Add or update frontend tests for each changed behavior. Run the task tests.
+        Do not run the merge suite. The architect runs it one time per goal.
 
-      Done when: the acceptance criteria are met, the frontend tests pass,
+      Done when: the acceptance criteria are met, the task tests pass,
       and the linter reports no new offenses.
 
       Avoid:
@@ -144,10 +163,11 @@ roles:
       - Cover edge cases: empty input, boundaries, invalid input, and error paths.
       - Follow the project's test layout, helpers, and fixtures.
       - Keep tests deterministic. Control time, randomness, and the network.
-      - Run the suite. Enforce the project's coverage target.
+      - Run the tests that you wrote or changed. Do not run the merge suite.
+        The architect runs it one time per goal.
       - Report each failure as: symptom, cause, evidence (file and line).
 
-      Done when: the new tests pass or fail as intended, the suite result is
+      Done when: the new tests pass or fail as intended, the test result is
       reported, and each failure has a root cause or a clear blocker.
 
       Avoid:
@@ -173,6 +193,8 @@ roles:
       - Tests: missing cases for changed behavior, and tests that cannot fail.
       - Maintainability: duplication, unclear names, and breaks from project patterns.
       Run the project's static analysis. Include its new offenses.
+      Do not run tests. Read the worker's TESTS line. A missing or failed
+      TESTS line is a critical finding.
 
       Report every issue that you can support with evidence, also minor ones.
       Use the label to show importance: critical, warning, or minor.

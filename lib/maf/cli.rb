@@ -8,6 +8,8 @@ require_relative "flow"
 require_relative "uninstall"
 require_relative "setup_agent"
 require_relative "menu"
+require_relative "team"
+require_relative "team_command"
 
 module Maf
   MANIFEST = ".agent-flow.json"
@@ -36,7 +38,10 @@ module Maf
       "update" => "                                        regenerate the files of the current agents",
       "agents" => "                                        list the current agents",
       "roles" => "                                        list the available roles",
-      "start" => "HARNESS ROLE[_WORKER] [--dispatch]      start one agent in its worktree",
+      "start" => "[HARNESS ROLE[_WORKER]] [--dispatch [--detach]]  start one agent in its worktree",
+      "prepare" => "HARNESS ROLE[_WORKER] [--dispatch] [--replace W]  prepare a worker (--dispatch also starts it)",
+      "retire" => "ROLE[_WORKER]                           remove a worker; its tasks return to the pool",
+      "team" => "[set --max N --allow HARNESS[:MODEL]]   show the team, or set its budget",
       "uninstall" => "[--check] [--yes] [--force]             remove the flow from the project",
       "menu" => "                                        interactive mode (also: maf without a command)"
     }.freeze
@@ -64,7 +69,10 @@ module Maf
     def run_remove = Maf.flow(*AgentArgs.convert(@args, "--remove"))
     def run_update = Maf.flow(*@args)
     def run_roles = Maf.flow("--list-roles")
-    def run_start = SetupAgent.run(@args)
+    def run_start = @args.empty? ? SetupAgent.run_here : SetupAgent.run(@args)
+    def run_prepare = Prepare.new(@args).run
+    def run_team = TeamCommand.new(@args, SetupAgent::Project.root).run
+    def run_retire = Retire.new(SetupAgent::Project.root, @args.first || abort("usage: maf retire ROLE[_WORKER]")).run
     def run_uninstall = Uninstall::Runner.new(["--project", Dir.pwd, *@args]).run
     def run_menu = Menu.new.run
 

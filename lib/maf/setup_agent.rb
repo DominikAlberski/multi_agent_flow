@@ -15,13 +15,18 @@
 # positional arguments go to the dispatcher (for example --interval,
 # --timeout, --cache-window). WORKER defaults to 1, or to "bot" with
 # --dispatch, so a dispatched and an interactive instance of one role get
-# separate worktrees.
+# separate worktrees. --detach (only with --dispatch) starts the dispatcher
+# in the background, logs to coordination/sessions/<worker>.log, and records
+# its pid in coordination/workers.json. `maf retire` stops it.
 #
 # HARNESS:ROLE must already exist in .agent-flow.json (maf add HARNESS:ROLE
 # adds one). Run from the project root.
 
 require "json"
 require "rbconfig"
+require "fileutils"
+require_relative "flow"
+require_relative "workers"
 
 abort "setup_agent: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
 
@@ -33,11 +38,35 @@ module SetupAgent
     manifest = Manifest.load(MANIFEST)
     manifest.verify!(args.harness, args.role)
     worktree = enter_worktree(args)
+    register(args, manifest.model_for(args.harness, args.role))
     launch(args, manifest, worktree)
   end
 
+  # `maf start` without arguments, inside a worktree that `maf prepare` made.
+  def self.run_here
+    root = Project.root
+    entry = Maf::Workers.at(root).find(File.basename(Dir.pwd))
+    abort "maf: #{Dir.pwd} is not a prepared worktree. Run: maf start HARNESS ROLE[_WORKER]" unless entry
+
+    Dir.chdir(root)
+    run(start_args(entry))
+  end
+
+  def self.start_args(entry)
+    args = [entry["harness"], "#{entry["role"]}_#{entry["worker_id"]}"]
+    args += ["--model", entry["model"]] if entry["model"]
+    entry["dispatch"] ? args + ["--dispatch"] : args
+  end
+
+  def self.register(args, saved_model)
+    entry = { "role" => args.role, "worker_id" => args.worker_id, "harness" => args.harness,
+              "model" => args.model || saved_model, "dispatch" => args.dispatch, "dir" => Dir.pwd }
+    Maf::Workers.at(Project.root).add(args.worker, entry.compact)
+  end
+
   def self.enter_worktree(args)
-    worktree = Worktree.ensure(args.role, args.worker_id)
+    worktree = Worktree.ensure(args.role, args.worker_id, args.harness)
+    RoleFile.copy(Dir.pwd, worktree.dir, args.harness, args.role)
     Dir.chdir(worktree.dir)
     worktree.export_env!
     worktree
@@ -56,20 +85,21 @@ module SetupAgent
   # then the flags. --dispatch and --model M are setup_agent's own flags; all
   # other flags go to the dispatcher and need --dispatch.
   class Args
-    Parsed = Struct.new(:harness, :role, :worker_id, :worker, :model, :dispatch, :dispatcher_args,
+    Parsed = Struct.new(:harness, :role, :worker_id, :worker, :model, :dispatch, :detach, :dispatcher_args,
                         keyword_init: true)
 
     def self.parse(argv)
-      dispatch, positional, flags = split(argv)
+      dispatch, detach, positional, flags = split(argv)
       model = take_model(flags)
       reject_stray(flags, dispatch)
-      Parsed.new(**identity(positional, model, dispatch), dispatch: dispatch, dispatcher_args: flags)
+      abort "setup_agent: --detach works only with --dispatch" if detach && !dispatch
+      Parsed.new(**identity(positional, model, dispatch), dispatch: dispatch, detach: detach, dispatcher_args: flags)
     end
 
     def self.split(argv)
-      rest = argv.reject { |arg| arg == "--dispatch" }
+      rest = argv - %w[--dispatch --detach]
       index = rest.index { |arg| arg.start_with?("--") } || rest.size
-      [rest.size != argv.size, rest[0...index], rest[index..-1]]
+      [argv.include?("--dispatch"), argv.include?("--detach"), rest[0...index], rest[index..-1]]
     end
 
     def self.identity(positional, model, dispatch)
@@ -112,7 +142,24 @@ module SetupAgent
       require_dispatcher!
       cmd = [RbConfig.ruby, "./dispatcher", args.role, "--harness", args.harness]
       cmd += ["--model", model] if model
-      Launcher.exec_or_die(cmd + args.dispatcher_args)
+      cmd += args.dispatcher_args
+      args.detach ? detach(cmd, args.worker) : Launcher.exec_or_die(cmd)
+    end
+
+    # setsid gives the dispatcher its own session, so it keeps running when
+    # the terminal or the harness session that started it ends.
+    def self.detach(cmd, worker)
+      log = File.join(ENV.fetch("COORD_DIR"), "sessions", "#{worker}.log")
+      pid = spawn_detached(cmd, log)
+      Maf::Workers.at(Project.root).update(worker, "pid" => pid)
+      puts "Started #{worker} in the background (pid #{pid}). Log: #{log}"
+    end
+
+    def self.spawn_detached(cmd, log)
+      FileUtils.mkdir_p(File.dirname(log))
+      io = { in: File::NULL, out: [log, "a"], err: %i[child out] }
+      pid = fork { Process.setsid && exec({ "DISPATCHER_LOG" => log }, *cmd, **io) }
+      Process.detach(pid) && pid
     end
 
     def self.require_dispatcher!
@@ -122,6 +169,19 @@ module SetupAgent
       hint = main ? "\n  Fix:\n    cd #{main}\n    git add dispatcher && git commit -m 'Add dispatcher'\n  Then re-run setup_agent." \
                   : " Commit dispatcher from your main project directory first, then re-run."
       abort "setup_agent: dispatcher missing in this worktree (worktrees only contain committed files).#{hint}"
+    end
+  end
+
+  # A role file that is not committed yet is missing in a new worktree, and
+  # the harness then starts without its role. Copy the main checkout's file.
+  module RoleFile
+    def self.copy(root, dir, harness, role)
+      relative = Flow.role_path(harness, role)
+      source = relative && File.join(root, relative)
+      return unless source && File.exist?(source) && !File.exist?(File.join(dir, relative))
+
+      FileUtils.mkdir_p(File.dirname(File.join(dir, relative)))
+      FileUtils.cp(source, File.join(dir, relative))
     end
   end
 
@@ -166,9 +226,11 @@ module SetupAgent
 
     # `coord worktree` is idempotent. Run it also for an existing worktree,
     # so the worktree gets runtime files that were added after it was created.
-    def self.ensure(role, worker_id)
+    # MAF_HARNESS tells coord which harness starts the worker, so coord checks
+    # the role file of that harness only.
+    def self.ensure(role, worker_id, harness)
       dir = dir_for(Dir.pwd, "#{role}-#{worker_id}")
-      abort "setup_agent: ./coord worktree failed" unless system("./coord", "worktree", role, worker_id)
+      abort "setup_agent: ./coord worktree failed" unless system({ "MAF_HARNESS" => harness }, "./coord", "worktree", role, worker_id)
       new(dir)
     end
 

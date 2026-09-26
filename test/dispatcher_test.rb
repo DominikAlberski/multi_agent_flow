@@ -627,3 +627,23 @@ class PollerTest < Minitest::Test
     assert_empty poller.unclaimed_task_ids
   end
 end
+
+# `maf retire` sends TERM to a detached dispatcher. The dispatcher must end
+# its wait between cycles at once, not after the full poll interval.
+class StopSignalTest < Minitest::Test
+  def test_term_ends_the_poll_loop_without_waiting_for_the_interval
+    dir = Dir.mktmpdir("dispatcher-stop-test")
+    script = File.expand_path("../assets/dispatcher", __dir__)
+    env = { "COORD_DIR" => dir, "DISPATCHER_LOG" => File.join(dir, "log") }
+    pid = spawn(env, RbConfig.ruby, script, "tester", "--command", "true", "--interval", "600",
+                "--no-poll-tasks", chdir: dir)
+    sleep 1
+    Process.kill("TERM", pid)
+    _, status = Process.wait2(pid)
+
+    assert status.success?
+    assert_includes File.read(File.join(dir, "log")), "stopped (TERM)"
+  ensure
+    FileUtils.remove_entry(dir) if dir
+  end
+end
