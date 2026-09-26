@@ -54,7 +54,7 @@ maf roles
 ```
 
 Tell the user about the `project-manager` role: the user talks to it, it sends
-one goal at a time to the architect, and the architect reports back to it.
+goals to the architect (`coord goal add`), and the architect reports back to it.
 Recommend it whenever the architect would otherwise take requests directly
 from the user. Ask the user to map roles to harnesses. Example answer:
 

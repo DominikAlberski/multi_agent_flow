@@ -22,6 +22,9 @@
 
 require "json"
 require "rbconfig"
+require "fileutils"
+require_relative "flow"
+require_relative "workers"
 
 abort "setup_agent: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
 
@@ -33,11 +36,35 @@ module SetupAgent
     manifest = Manifest.load(MANIFEST)
     manifest.verify!(args.harness, args.role)
     worktree = enter_worktree(args)
+    register(args, manifest.model_for(args.harness, args.role))
     launch(args, manifest, worktree)
   end
 
+  # `maf start` without arguments, inside a worktree that `maf prepare` made.
+  def self.run_here
+    root = Project.root
+    entry = Maf::Workers.at(root).find(File.basename(Dir.pwd))
+    abort "maf: #{Dir.pwd} is not a prepared worktree. Run: maf start HARNESS ROLE[_WORKER]" unless entry
+
+    Dir.chdir(root)
+    run(start_args(entry))
+  end
+
+  def self.start_args(entry)
+    args = [entry["harness"], "#{entry["role"]}_#{entry["worker_id"]}"]
+    args += ["--model", entry["model"]] if entry["model"]
+    entry["dispatch"] ? args + ["--dispatch"] : args
+  end
+
+  def self.register(args, saved_model)
+    entry = { "role" => args.role, "worker_id" => args.worker_id, "harness" => args.harness,
+              "model" => args.model || saved_model, "dispatch" => args.dispatch, "dir" => Dir.pwd }
+    Maf::Workers.at(Project.root).add(args.worker, entry.compact)
+  end
+
   def self.enter_worktree(args)
-    worktree = Worktree.ensure(args.role, args.worker_id)
+    worktree = Worktree.ensure(args.role, args.worker_id, args.harness)
+    RoleFile.copy(Dir.pwd, worktree.dir, args.harness, args.role)
     Dir.chdir(worktree.dir)
     worktree.export_env!
     worktree
@@ -125,6 +152,19 @@ module SetupAgent
     end
   end
 
+  # A role file that is not committed yet is missing in a new worktree, and
+  # the harness then starts without its role. Copy the main checkout's file.
+  module RoleFile
+    def self.copy(root, dir, harness, role)
+      relative = Flow.role_path(harness, role)
+      source = relative && File.join(root, relative)
+      return unless source && File.exist?(source) && !File.exist?(File.join(dir, relative))
+
+      FileUtils.mkdir_p(File.dirname(File.join(dir, relative)))
+      FileUtils.cp(source, File.join(dir, relative))
+    end
+  end
+
   class Manifest
     def self.load(path)
       abort_missing(path) unless File.exist?(path)
@@ -166,9 +206,11 @@ module SetupAgent
 
     # `coord worktree` is idempotent. Run it also for an existing worktree,
     # so the worktree gets runtime files that were added after it was created.
-    def self.ensure(role, worker_id)
+    # MAF_HARNESS tells coord which harness starts the worker, so coord checks
+    # the role file of that harness only.
+    def self.ensure(role, worker_id, harness)
       dir = dir_for(Dir.pwd, "#{role}-#{worker_id}")
-      abort "setup_agent: ./coord worktree failed" unless system("./coord", "worktree", role, worker_id)
+      abort "setup_agent: ./coord worktree failed" unless system({ "MAF_HARNESS" => harness }, "./coord", "worktree", role, worker_id)
       new(dir)
     end
 

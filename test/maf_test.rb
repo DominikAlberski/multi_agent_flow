@@ -240,7 +240,7 @@ end
 
 # maf start execs the harness. A mock opencode program on PATH records its
 # directory, arguments, and environment, so the test sees what maf started.
-class MafStartTest < Minitest::Test
+module MafProject
   MOCK = <<~MOCK
     #!%<ruby>s
     File.write(ENV.fetch("MOCK_LOG"), [Dir.pwd, ENV["COORD_ROLE"], ENV["COORD_WORKER"], *ARGV].join("\\n"))
@@ -280,8 +280,8 @@ class MafStartTest < Minitest::Test
            chdir: @project, exception: true, out: File::NULL)
   end
 
-  def maf(*args, input: "")
-    output = IO.popen(@env, [RbConfig.ruby, MAF, *args], "r+", chdir: @project, err: [:child, :out]) do |io|
+  def maf(*args, input: "", dir: @project)
+    output = IO.popen(@env, [RbConfig.ruby, MAF, *args], "r+", chdir: dir, err: [:child, :out]) do |io|
       io.write(input)
       io.close_write
       io.read
@@ -297,6 +297,10 @@ class MafStartTest < Minitest::Test
     assert_equal ["architect", worker], [role, coord_worker]
     assert_equal ["."] + %w[--agent architect --prompt] + ["Start your work loop now."], args
   end
+end
+
+class MafStartTest < Minitest::Test
+  include MafProject
 
   def test_start_launches_the_harness_in_the_worktree
     out, status = maf("start", "opencode", "architect")
@@ -317,5 +321,86 @@ class MafStartTest < Minitest::Test
 
     assert_equal 0, status, out
     assert_started("architect-1")
+  end
+end
+
+# maf prepare and maf retire let the project manager change the team. The
+# user then runs only `cd <worktree>` and `maf start`.
+class MafTeamTest < Minitest::Test
+  include MafProject
+
+  def worktree(worker) = File.join(@project, ".worktrees", worker)
+  def workers = JSON.parse(File.read(File.join(@project, "coordination", "workers.json")))
+  def coord(*args, env: {}) = IO.popen(@env.merge(env), [RbConfig.ruby, "coord", *args], chdir: @project, &:read)
+
+  def test_prepare_adds_the_role_and_the_worktree
+    out, status = maf("prepare", "opencode", "backend-developer_2")
+
+    assert_equal 0, status, out
+    assert_includes out, "cd #{worktree("backend-developer-2")}"
+    assert File.exist?(File.join(worktree("backend-developer-2"), ".opencode", "agents", "backend-developer.md"))
+    assert_equal "opencode", workers.dig("backend-developer-2", "harness")
+  end
+
+  def test_start_without_arguments_starts_the_prepared_worker
+    maf("prepare", "opencode", "architect_2")
+    out, status = maf("start", dir: worktree("architect-2"))
+
+    assert_equal 0, status, out
+    assert_started("architect-2")
+  end
+
+  def test_start_without_arguments_outside_a_worktree_explains_the_usage
+    out, status = maf("start")
+
+    refute_equal 0, status
+    assert_includes out, "not a prepared worktree"
+  end
+
+  def test_start_registers_the_worker
+    maf("start", "opencode", "architect")
+
+    assert_equal worktree("architect-1"), workers.dig("architect-1", "dir")
+  end
+
+  def test_prepare_with_replace_retires_the_old_worker
+    maf("prepare", "opencode", "architect_2")
+    out, status = maf("prepare", "opencode", "tester_2", "--replace", "architect_2")
+
+    assert_equal 0, status, out
+    refute Dir.exist?(worktree("architect-2"))
+    refute workers.key?("architect-2")
+    assert workers.key?("tester-2")
+  end
+
+  def test_retire_refuses_a_worker_that_still_runs
+    maf("prepare", "opencode", "architect_2")
+    pid = spawn("sleep", "30", chdir: worktree("architect-2"))
+    out, status = maf("retire", "architect_2")
+
+    refute_equal 0, status
+    assert_includes out, "still runs"
+  ensure
+    Process.kill("KILL", pid) if pid
+  end
+
+  def test_retire_refuses_uncommitted_work
+    maf("prepare", "opencode", "architect_2")
+    File.write(File.join(worktree("architect-2"), "work.rb"), "x = 1\n")
+    out, status = maf("retire", "architect_2")
+
+    refute_equal 0, status
+    assert_includes out, "uncommitted work"
+  end
+
+  def test_retire_returns_claimed_tasks_to_the_pool
+    skip "Taskwarrior ('task') not installed" unless system("task", "--version", out: File::NULL)
+    maf("prepare", "opencode", "architect_2")
+    id = coord("add", "--role", "architect", "--scope", "docs/**", "--title", "plan").strip
+    coord("claim", id, env: { "COORD_ROLE" => "architect", "COORD_WORKER" => "architect-2" })
+    out, status = maf("retire", "architect_2")
+
+    assert_equal 0, status, out
+    assert_includes coord("next", "architect"), id
   end
 end

@@ -101,6 +101,7 @@ multi_agent_flow/
     coord_test.rb             # behavioral tests for the coord CLI
     installer_test.rb         # tests for bootstrap.rb, flow.rb, setup_agent.rb
     maf_test.rb               # tests for the maf command
+    dashboard_test.rb         # tests for the dashboard data
     dispatcher_test.rb        # tests for the dispatcher
     uninstaller_test.rb       # tests for uninstall.rb
 ```
@@ -141,6 +142,7 @@ ruby test/coord_test.rb      # covers the coord CLI
 ruby test/installer_test.rb  # covers bootstrap.rb, flow.rb, setup_agent.rb
 ruby test/uninstaller_test.rb  # covers uninstall.rb
 ruby test/maf_test.rb        # covers the maf command
+ruby test/dashboard_test.rb  # covers the dashboard data
 ```
 
 Minitest, stdlib only. Tests that require `task` or `git` skip (exit 0) when
@@ -174,7 +176,7 @@ those tools are absent. If wiring into CI, install both to get full coverage.
   agents. It is exclusive only while the holding process is alive; a killed
   process's lock is reclaimed once its TTL elapses (default 3600s).
 - **The `project-manager` role** is the user's proxy: the user talks to it, it
-  relays one goal at a time to the architect, and relays the report back. Without
+  creates goals (`coord goal add`), sends them to the architect, and relays the report back. Without
   `project-manager`, the user talks to the architect directly.
 - **UI is deliberately deferred**: Obsidian (Kanban/Dataview) or
   `taskwarrior-tui` can read the same data without any agent changes.

@@ -9,12 +9,17 @@ This project uses a shared coordination layer for multiple coding agents
 
 ```
 ./coord init                                  # create coordination/ dirs
-./coord add --role ROLE --scope S --title T   # architect: add a task (prints id)
+./coord goal add --title T                    # create a goal, branch goal/<short-id> and its worktree
+./coord goal list                             # open goals with their open task count
+./coord goal show ID                          # one goal and its tasks
+./coord goal done ID                          # close a goal (refused while a task is open)
+./coord add --role ROLE --scope S --title T [--goal ID]  # architect: add a task (prints id)
 ./coord annotate ID "Goal: ... Inputs: ... Out of scope: ... Acceptance: ... Report format: ..."  # architect: add the task's spec, right after `add`
 ./coord next [ROLE] [--wait [--interval S]]   # list unclaimed tasks (or block until a task or message appears)
 ./coord next --mine                           # list your in-progress tasks
 ./coord conflicts                             # list pending tasks with overlapping scopes
 ./coord claim ID [--force]                    # atomically claim for COORD_WORKER
+./coord start-task ID                         # in your worktree: check out task/<short-id> from the goal branch
 ./coord unclaim ID                            # release a claim without finishing it
 ./coord done ID                               # complete
 ./coord annotate ID TEXT                      # task-scoped update
@@ -22,6 +27,7 @@ This project uses a shared coordination layer for multiple coding agents
 ./coord board                                 # regenerate Obsidian kanban
 ./coord worktree ROLE [WORKER]                # git worktree in .worktrees/<role>-<worker> + branch
                                               # in it: `source coord-env.sh` to share this board
+                                              # and to get this worktree's COORD_SLOT
 ```
 
 A claim with no activity for `COORD_LEASE_TTL` seconds (default 4 hours) is
@@ -39,8 +45,8 @@ run `coord unclaim ID` instead of leaving it to expire.
 - The architect creates tasks for a role and does not need to know how many
   instances exist. Run one instance per role unless you set `COORD_WORKER`.
 - Hierarchy (if `project-manager` is one of the installed roles): the user
-  talks to the project manager. The project manager sends one goal at a time
-  to the architect (`coord msg --from project-manager architect "..."`). The
+  talks to the project manager. The project manager creates each goal with
+  `coord goal add` and sends the goal id to the architect (`coord msg --from project-manager architect "..."`). The
   architect decomposes the goal into tasks, dispatches them, and reports the
   outcome back to the project manager. Workers and the architect never talk
   to the user directly.
@@ -58,7 +64,8 @@ the task's prior holder gets a message in their inbox naming who took it.
 
 ```
 ./coord msg --from A TO "text"                # leave a message for another agent
-./coord broadcast --from A "text"            # send to every known role except the sender
+./coord broadcast --from A "text"            # send to every worker role except the sender
+./coord broadcast --from A --to all "text"   # also reach the project manager and the architect
 ./coord inbox [AGENT]                         # read your messages (marks them read)
 ./coord inbox --peek                          # read without marking read
 ./coord inbox --all                           # include already-read messages
@@ -67,7 +74,8 @@ the task's prior holder gets a message in their inbox naming who took it.
 
 Read messages move to `coordination/inbox/<agent>/read/`.
 `coord broadcast` reaches every role that owns a pending task or is listed in
-`.agent-flow.json`, except the sender.
+`.agent-flow.json`, except the sender. `--to` selects the group: `workers`
+(default), `leads` (project manager and architect), or `all`.
 `coord msg` and `coord broadcast` fire a per-role hook at
 `coordination/message-hooks/<role>.sh` if one is installed. The hook is a plain shell
 script. It gets `COORD_ROLE`, `COORD_FROM`, and `COORD_MSG_FILE` in its
@@ -97,13 +105,17 @@ Only one local-model generation may run at a time on the shared Ollama host.
    In a worktree, run `source coord-env.sh` once so `COORD_DIR`/`TASKRC` point at
    the main project and every worktree shares one board.
    Never edit outside your task scope.
+   After a claim, run `coord start-task ID`. The command checks out branch
+   `task/<short-id>` from the goal branch. Commit the work on that branch.
+   Each goal starts from the base branch, never from another goal branch.
 2. One writer per path. The task `scope` defines the paths you own. This is a
    convention `coord add`/`conflicts` warns about, not a lock the filesystem
    enforces — a role whose duties say "never edit" (reviewer, architect,
    project manager) also gets a read-only tool grant where the harness
    supports one; other roles rely on scope discipline.
 3. Acquire the `ollama` lock before any local generation.
-4. Before you report, run the tests. Check the task's acceptance criteria.
+4. Before you report, run the task tests (see "Tests and shared resources").
+   Check the task's acceptance criteria.
    If the task spec has a Report format, use it. Otherwise report with
    `coord annotate ID "STATUS: done or blocked. FILES: <paths>.
    TESTS: <one-line result>. NOTES: <assumptions or risks>"`. Ask other
@@ -113,10 +125,10 @@ Only one local-model generation may run at a time on the shared Ollama host.
    Annotate the blocker and the missing parts. Message the architect. Stop. Do not retry a failing approach. Do not
    `unclaim` a blocked task — that returns it to the pool for another worker
    to hit the same wall.
-6. The architect inspects a done task's diff and reruns its tests in the
-   worker's worktree (`git -C .worktrees/<role>-<worker> diff`)
-   before trusting it. A bad result gets a new fix task, not a silent
-   re-close.
+6. The architect inspects a done task's diff in the worker's worktree
+   (`git -C .worktrees/<role>-<worker> diff`) and the TESTS line of the
+   report before trusting it. The architect does not rerun the task tests.
+   A bad result gets a new fix task, not a silent re-close.
 7. Prefer the shared knowledge graph over grep when `graphify-out/` exists
    (query it via MCP or `graphify query "..."`).
 8. If no task is available, use `coord next --wait` (or `coord inbox --wait`)
@@ -130,6 +142,22 @@ Only one local-model generation may run at a time on the shared Ollama host.
     search that you cannot finish in a few tool calls. Do not use subagents
     to verify your work.
 
+### Tests and shared resources
+
+- Task tests: the unit tests and the tests for the changed behavior.
+  The worker runs the task tests before the report.
+- Merge suite: the full suite, with system tests.
+  The architect runs the merge suite one time per goal, after the merge and
+  before the pull request. Nobody else runs the merge suite.
+- The reviewer does not run tests. The reviewer reads the TESTS line.
+- Run each command that needs a shared resource (browser, system tests,
+  one fixed port) under one lock name:
+  `./coord with-lock system-test -- <command>`. Do not invent other lock names.
+- Each worktree has a unique `COORD_SLOT` in `coord-env.sh`. The main
+  worktree is slot 0. If `coordination/worktree-env.rb` exists, `coord worktree`
+  adds its `export` lines to `coord-env.sh`. Use this hook for a unique test
+  database and server port per worktree. Do not share a test database.
+
 ### Shared memory
 
 - The vault script controls the graphify watcher. It is named `./vault`,
@@ -141,8 +169,9 @@ Only one local-model generation may run at a time on the shared Ollama host.
   plus any notes you add there. It is gitignored and rebuilt, so nothing you
   need to keep permanently belongs there. MCP is served by the separate
   `graphify-mcp` process (vault script's `mcp` subcommand), not by the watcher.
-- `docs/decisions/` holds architecture decisions (ADRs) and is the durable,
-  git-tracked record. Append, never rewrite history.
+- The decisions folder holds architecture decisions (ADRs) and is the durable,
+  git-tracked record. Use `.agent/decisions/` if it exists, else `docs/decisions/`.
+  Append, never rewrite history.
 - Containerized agents (e.g. `coi`) need `coordination/`, `coord`, and
   `coordination/taskrc` mounted from the host; they do not share state with
   the host or each other unless that filesystem is shared.

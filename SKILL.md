@@ -175,7 +175,8 @@ watcher, with its pid in `coordination/vault.pid` and its output in
 
 - Agents query the graph over MCP or `graphify query "..."` instead of grepping.
 - `obsidian/` is the human-facing Obsidian base (graph notes, canvas). It is
-  regenerated and gitignored — durable decisions belong in `docs/decisions/`,
+  regenerated and gitignored — durable decisions belong in the decisions folder
+  (`.agent/decisions/` if it exists, else `docs/decisions/`),
   not here.
 - `./coord board` regenerates `coordination/exports/board.md`. It is not part
   of the graphify export and is outside `obsidian/`. Open `coordination/exports/`
@@ -193,7 +194,8 @@ watcher, with its pid in `coordination/vault.pid` and its output in
    run `source coord-env.sh` so `COORD_DIR`/`TASKRC` point at the main project
    and every worktree shares one coordination/ dir and board.
 3. Acquire the `ollama` lock before any local generation.
-4. Record decisions in `docs/decisions/`; append, never rewrite. `obsidian/` is
+4. Record decisions in the decisions folder (`.agent/decisions/` or
+   `docs/decisions/`); append, never rewrite. `obsidian/` is
    regenerated graphify output, not a durable store.
 5. Report via `coord annotate`; coordinate via `coord msg`.
 6. If no task is available, use `coord next --wait` instead of polling by hand.

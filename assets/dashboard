@@ -49,6 +49,7 @@ module Dashboard
     def inbox_dir    = File.join(coord_dir, "inbox")
     def locks_dir    = File.join(coord_dir, "locks")
     def manifest     = ".agent-flow.json"
+    def workers_path = File.join(coord_dir, "workers.json")
     def lease_ttl
       v = Integer(ENV.fetch("COORD_LEASE_TTL", ""), exception: false)
       v&.positive? ? v : DEFAULT_LEASE
@@ -91,6 +92,7 @@ module Dashboard
         refresh_interval: @cfg.interval,
         lease_ttl:        @cfg.lease_ttl,
         declared_roles:   declared_roles,
+        workers:          workers,
         tasks:            task_summary(tasks),
         events:           recent_events,
         inboxes:          inbox_messages,
@@ -102,6 +104,15 @@ module Dashboard
 
     def declared_roles
       JSON.parse(File.read(@cfg.manifest)).fetch("agents", []).map { |entry| entry["role"] }.compact
+    rescue Errno::ENOENT, JSON::ParserError
+      []
+    end
+
+    # coordination/workers.json lists each worker that `maf prepare` or
+    # `maf start` set up. The last event shows when the worker last acted.
+    def workers
+      last = recent_events(500).to_h { |event| [event[:worker], event[:ts]] }
+      JSON.parse(File.read(@cfg.workers_path)).map { |id, entry| entry.merge("id" => id, "last_event" => last[id]) }
     rescue Errno::ENOENT, JSON::ParserError
       []
     end
@@ -126,7 +137,8 @@ module Dashboard
     def orphaned(tasks)
       roles = declared_roles
       return [] if roles.empty?
-      tasks.select { |t| t["role"] && !roles.include?(t["role"]) }
+      # Goals are not work for a role, so a goal never lacks a runner.
+      tasks.select { |t| t["role"] && t["role"] != "goal" && !roles.include?(t["role"]) }
     end
 
     def scope_conflicts(tasks)
@@ -253,6 +265,7 @@ module Dashboard
       </header>
       <div id="alerts" class="alerts"></div>
       <div id="stats" class="stats"></div>
+      <div class="card" style="margin-bottom:10px"><h3>Workers</h3><div id="workers"></div></div>
       <div id="roles" class="grid"></div>
       <div class="two">
         <div class="card"><h3>Recent Events</h3><div id="events"></div></div>
@@ -289,15 +302,22 @@ module Dashboard
           document.getElementById('stats').innerHTML=[
             {v:tasks.length,l:'Pending',c:''},{v:claimed.length,l:'In Progress',c:'info'},
             {v:backlog.length,l:'Backlog',c:''},{v:waiting.length,l:'Waiting',c:''},
-            {v:stale.length,l:'Stale',c:stale.length?'danger':''},{v:(d.declared_roles||[]).length,l:'Roles',c:''}
+            {v:stale.length,l:'Stale',c:stale.length?'danger':''},{v:(d.declared_roles||[]).length,l:'Roles',c:''},{v:(d.workers||[]).length,l:'Workers',c:''}
           ].map(s=>`<div class="stat"><div class="sv"${s.c?' style="color:var(--'+s.c+')"':''}>${s.v}</div><div class="sl">${s.l}</div></div>`).join('');
 
+          const ws=d.workers||[];
+          document.getElementById('workers').innerHTML=ws.length?ws.map(w=>{
+            const cur=tasks.filter(t=>t.worker===w.id&&t.start);
+            return`<div class="row">${cur.length?b('working','info'):b('idle','ok')} <strong>${esc(w.id)}</strong> ${esc(w.harness)}${w.dispatch?' (dispatch)':''}<div class="meta">${esc(w.role)}${w.last_event?' &middot; last event '+ago(w.last_event)+' ago':''}${cur.length?' &middot; '+esc(cur[0].description):''}</div></div>`
+          }).join(''):'<div class="muted">no workers yet. Run maf prepare or maf start.</div>';
+
+          const roles=d.declared_roles||[];
           const byRole={};
+          roles.forEach(r=>{byRole[r]={c:[],bl:[],w:[]}});
           tasks.forEach(t=>{const r=t.role||'unassigned';if(!byRole[r])byRole[r]={c:[],bl:[],w:[]};(t.wait&&new Date(t.wait)>now?byRole[r].w:t.start?byRole[r].c:byRole[r].bl).push(t)});
           const staleIds=new Set(stale.map(t=>t.uuid));
-          const roles=d.declared_roles||[];
           document.getElementById('roles').innerHTML=Object.entries(byRole).map(([role,g])=>{
-            const isOrph=roles.length>0&&!roles.includes(role);
+            const isOrph=roles.length>0&&role!=='goal'&&!roles.includes(role);
             const rows=[
               ...g.c.map(t=>`<div class="row">${staleIds.has(t.uuid)?b('stale','danger'):b('claimed','info')} <strong>${esc(t.description)}</strong><div class="meta">${esc(t.worker||'')} &middot; ${ago(t.start)} ago${t.scope?' &middot; '+esc(t.scope):''}</div></div>`),
               ...g.bl.map(t=>`<div class="row">${b('backlog','ok')} <strong>${esc(t.description)}</strong><div class="meta">${t.scope?esc(t.scope):''}</div></div>`),
@@ -368,4 +388,4 @@ module Dashboard
   end
 end
 
-Dashboard::Server.new(Dashboard::Config.new(ARGV)).run
+Dashboard::Server.new(Dashboard::Config.new(ARGV)).run if __FILE__ == $PROGRAM_NAME

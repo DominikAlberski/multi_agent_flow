@@ -203,6 +203,26 @@ Harness-specific notes:
 `WORKER` defaults to `1`. To run two instances of one role, start
 `backend-developer_2` too. Claims are atomic; two workers never take the same task.
 
+### Isolate test databases and ports
+
+Each worktree gets a unique number, `COORD_SLOT`, in its `coord-env.sh`.
+The main worktree is slot 0. To give each worktree its own test database
+and server port, add a project hook:
+
+```bash
+cp <multi_agent_flow>/assets/worktree-env.example.rb coordination/worktree-env.rb
+git add coordination/worktree-env.rb
+```
+
+`coord worktree` runs the hook and adds its `export NAME=VALUE` lines to
+`coord-env.sh`. The Rails example sets `TEST_ENV_NUMBER`, `PORT`, and
+`CAPYBARA_SERVER_PORT`. Use `TEST_ENV_NUMBER` in `config/database.yml`.
+Existing worktrees get the new variables on the next `coord worktree` or
+`maf start` run.
+
+Run the full suite with system tests under one lock:
+`./coord with-lock system-test -- bin/rails test:all`.
+
 ### Keep interactive Claude Code agents awake
 
 An idle Claude Code session does not poll the board by itself. `maf add`
@@ -323,15 +343,30 @@ Talk to the project manager session (terminal 1). Example:
 
 Expected sequence:
 
-1. The project manager sends the goal to the architect.
-2. The architect creates tasks with `./coord add` and assigns them to roles.
-3. Interactive workers take their tasks immediately. Dispatched workers start
+1. The project manager creates the goal with `./coord goal add`. The command
+   creates branch `goal/<short-id>` from the base branch and the goal worktree
+   `.worktrees/goal-<short-id>`.
+2. The project manager sends the goal id to the architect.
+3. The architect creates tasks with `./coord add --goal <id>` and assigns them to roles.
+4. Interactive workers take their tasks immediately. Dispatched workers start
    within about 60 seconds.
-4. Each worker writes code in its worktree and runs the tests.
-5. Each worker reports with `./coord annotate` and `./coord done`.
-6. The tester and the reviewer check the work.
-7. The architect reports to the project manager.
-8. The project manager reports to you.
+5. Each worker runs `./coord start-task <id>`, writes code on branch
+   `task/<short-id>`, runs the task tests, and commits.
+6. Each worker reports with `./coord annotate` and `./coord done`.
+7. The reviewer checks the diff. The architect merges each task branch into the goal branch.
+8. The architect runs the full suite one time in the goal worktree and closes the goal.
+9. The architect reports to the project manager. The project manager reports to you.
+
+Check the goals at any time:
+
+```sh
+./coord goal list
+./coord goal show <id>
+```
+
+Set the base branch in `.agent-flow.json` if it is not `main` or `origin/HEAD`:
+`"base_branch": "AI_development"`. Goals never start from another goal branch,
+so a defect in one goal does not block the others.
 
 If you did not set up a `project-manager` role, talk to the architect session
 directly.
@@ -365,7 +400,9 @@ watch -n 10 ./coord board
 `./dashboard` starts a local server at `http://localhost:4567`. The page
 auto-refreshes every 5 seconds. It shows everything `coord status` shows, plus
 signals the kanban cannot: expired-lease claims (crashed workers), unread inbox
-messages, stale locks, orphaned tasks, and scope conflicts.
+messages, stale locks, orphaned tasks, and scope conflicts. The Workers panel lists
+each worker from `coordination/workers.json` with its harness, role, current task,
+and last event. Each declared role has a card, also without tasks.
 
 ```sh
 ./dashboard           # default port 4567
@@ -440,12 +477,12 @@ hooks and their status.
 
 ## Merge the results
 
-Each agent commits on its own branch. You merge the branches into main.
+Each goal ends on its own branch `goal/<short-id>`. Open one pull request per goal:
 
 ```sh
-git branch --list 'worker/*'
-git diff main..worker/backend-developer-1
-git merge worker/backend-developer-1
+git branch --list 'goal/*'
+git diff main...goal/<short-id>
+gh pr create --base main --head goal/<short-id>
 ```
 
 ---
@@ -455,6 +492,39 @@ git merge worker/backend-developer-1
 1. Exit each interactive session.
 2. Press Ctrl-C in each dispatcher terminal.
 3. If the vault watcher runs, run `./vault stop`.
+
+### Change the team
+
+Tell the project manager what to change. Example:
+
+> "Replace backend developer 2 on claude with frontend developer 2 on opencode."
+
+The project manager runs one command:
+
+```sh
+maf prepare opencode frontend-developer_2 --replace backend-developer_2
+```
+
+The command does these steps:
+
+1. Checks that the old worker does not run and has no uncommitted work.
+2. Adds the role file for the harness, if it is missing (`maf add`).
+3. Creates the worktree and copies an uncommitted role file into it.
+4. Registers the worker in `coordination/workers.json`. The dashboard shows it.
+5. Returns the old worker's claimed tasks to the pool and removes its worktree.
+   The task branches stay, so the next worker continues the committed work.
+6. Tells the architect about the change.
+
+Then run the two printed commands in a new terminal:
+
+```sh
+cd .worktrees/frontend-developer-2
+maf start
+```
+
+If the old worker still runs, `maf prepare` stops without changes. Stop that
+session, then ask the project manager again. Without `--replace`, the command
+adds a worker. `maf retire backend-developer_2` removes a worker.
 
 Worktrees can stay for the next session. To remove a worktree:
 
@@ -555,24 +625,31 @@ Do these steps in the project:
 
 | Command | What it does |
 |---|---|
+| `maf prepare HARNESS ROLE[_WORKER] [--replace W]` | Prepare a worker: role file, worktree, registry. Prints the two start commands. |
+| `maf retire ROLE[_WORKER]` | Remove a worker. Its claimed tasks return to the pool. |
+| `maf start` (in a prepared worktree) | Start the worker that `maf prepare` made. |
 | `./coord init` | Create the `coordination/` folders. |
-| `./coord add --role ROLE --scope S --title T` | Create a task for a role. Prints the ID. |
+| `./coord goal add --title T [--base B]` | Create a goal, its branch `goal/<short-id>`, and its worktree. Prints the ID. |
+| `./coord goal list` / `goal show ID` | List open goals, or show one goal and its tasks. |
+| `./coord goal done ID` | Close a goal. Refused while a task of the goal is open. |
+| `./coord add --role ROLE --scope S --title T [--goal ID]` | Create a task for a role. Prints the ID. |
 | `./coord next [ROLE]` | List unclaimed tasks for a role (defaults to `$COORD_ROLE`). |
 | `./coord next --wait` | Block (polls every 60s) until a task or an unread message appears. |
 | `./coord next --mine` | List the tasks this worker has claimed. |
 | `./coord conflicts` | List pending tasks whose scopes overlap. |
 | `./coord claim ID` | Atomically claim a task for `$COORD_WORKER`. Refuses to steal an active claim. |
+| `./coord start-task ID` | In a worker worktree: check out `task/<short-id>` from the goal branch. |
 | `./coord unclaim ID` | Release a claim without finishing it. |
 | `./coord done ID` | Complete a task. |
 | `./coord annotate ID TEXT` | Add a note to a task (permanent). |
 | `./coord msg --from A TO TEXT` | Send a message to a role. |
-| `./coord broadcast --from A TEXT` | Send a message to every known role except the sender. |
+| `./coord broadcast --from A [--to workers\|leads\|all] TEXT` | Send a message to a group of roles. Default: workers. |
 | `./coord inbox [ROLE]` | Read messages (marks them read; `--peek` keeps them; `--wait` blocks). |
 | `./coord log [N]` | Show the last N coordination events. |
 | `./coord lock NAME --ttl S` | Take an advisory lock. |
 | `./coord unlock NAME` | Release a lock. |
 | `./coord with-lock NAME -- CMD` | Run a command under a lock. |
-| `./coord worktree ROLE [WORKER]` | Create a git worktree + branch for a role. Source `coord-env.sh` inside it. |
+| `./coord worktree ROLE [WORKER]` | Create a git worktree + branch for a role. Source `coord-env.sh` inside it. Warns if a harness has no file for the role. |
 | `./coord hooks [ROLE]` | List installed message hooks and their status. |
 | `./coord status` | Show tasks by role and state. |
 | `./coord board` | Write the Obsidian board file. |

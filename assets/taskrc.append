@@ -5,4 +5,5 @@ uda.role.type=string
 uda.worker.type=string
 uda.scope.type=string
 uda.taskref.type=string
+uda.goalid.type=string
 # <<< multi-agent-flow <<<

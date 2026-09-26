@@ -359,6 +359,47 @@ class TaskwarriorTest < Minitest::Test
     refute_empty Dir.glob(File.join(@env["COORD_DIR"], "inbox", "tester", "*.md"))
   end
 
+  def inbox(role) = Dir.glob(File.join(@env["COORD_DIR"], "inbox", role, "*.md"))
+
+  def write_team_manifest
+    roles = %w[project-manager architect tester]
+    manifest = { agents: roles.map { |role| { harness: "claude", role: role } } }
+    File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(manifest))
+  end
+
+  # Notices about ports or test databases are for workers. The project
+  # manager must not have to process each one.
+  def test_broadcast_reaches_only_workers_by_default
+    write_team_manifest
+    capture_io { Coord::CLI.new(["broadcast", "--from", "architect", "use port 3001"], env: @env).run }
+
+    refute_empty inbox("tester")
+    assert_empty inbox("project-manager")
+  end
+
+  def test_broadcast_to_all_reaches_the_leads
+    write_team_manifest
+    capture_io { Coord::CLI.new(["broadcast", "--from", "architect", "--to", "all", "goal moved"], env: @env).run }
+
+    refute_empty inbox("project-manager")
+    refute_empty inbox("tester")
+  end
+
+  def test_broadcast_rejects_an_unknown_audience
+    assert_raises(SystemExit) do
+      capture_io { Coord::CLI.new(["broadcast", "--from", "architect", "--to", "nobody", "x"], env: @env).run }
+    end
+  end
+
+  # A taskrc from an older coord has the marker block but not the goal UDA.
+  def test_init_adds_a_missing_uda_to_an_older_taskrc
+    taskrc = @env["TASKRC"]
+    File.write(taskrc, File.read(taskrc).sub("uda.goalid.type=string\n", ""))
+    Coord::CLI.new(["init"], env: @env).run
+
+    assert_includes File.read(taskrc), "uda.goalid.type=string\n"
+  end
+
   def test_log_records_messages_on_one_line
     text = "line one\nline\ttwo"
     capture_io { Coord::CLI.new(["msg", "--from", "architect", "reviewer", text], env: @env).run }
@@ -578,6 +619,48 @@ class WorktreeTest < Minitest::Test
     assert Dir.exist?(@worktree_dir)
     assert_equal "worker/tester", `git -C #{@worktree_dir} branch --show-current`.strip
   end
+
+  def env_file(slug) = File.read(File.join(worktrees_root, slug, "coord-env.sh"))
+
+  def test_each_worktree_gets_its_own_slot
+    worktree = Coord::Worktree.new(@root)
+    worktree.create("tester", nil)
+    worktree.create("reviewer", nil)
+
+    assert_includes env_file("tester"), "export COORD_SLOT=1\n"
+    assert_includes env_file("reviewer"), "export COORD_SLOT=2\n"
+  end
+
+  def test_a_reused_worktree_keeps_its_slot
+    worktree = Coord::Worktree.new(@root)
+    worktree.create("tester", nil)
+    worktree.create("reviewer", nil)
+    worktree.create("tester", nil)
+
+    assert_includes env_file("tester"), "export COORD_SLOT=1\n"
+  end
+
+  def test_the_project_hook_output_is_appended_to_the_env_file
+    File.write(File.join(@root, "coordination", "worktree-env.rb"),
+               'puts "export PORT=#{3000 + ENV.fetch("COORD_SLOT").to_i}"')
+    Coord::Worktree.new(@root).create("tester", nil)
+
+    assert_includes env_file("tester"), "export PORT=3001\n"
+  end
+
+  def test_a_failing_project_hook_does_not_stop_the_worktree
+    File.write(File.join(@root, "coordination", "worktree-env.rb"), "exit 1")
+    _out, err = capture_subprocess_io { Coord::Worktree.new(@root).create("tester", nil) }
+
+    assert_includes env_file("tester"), "export COORD_SLOT=1\n"
+    assert_includes err, "worktree-env.rb failed"
+  end
+
+  def test_a_worker_name_with_the_role_is_not_repeated
+    assert_equal "frontend-developer-2", Coord::Worktree.slug("frontend-developer", "frontend-developer-2")
+    assert_equal "frontend-developer-2", Coord::Worktree.slug("frontend-developer", "2")
+    assert_equal "tester", Coord::Worktree.slug("tester", nil)
+  end
 end
 
 # Regression: on a first run, `coord` and the flow's .gitignore block are not
@@ -637,5 +720,110 @@ class WorktreeFirstRunTest < Minitest::Test
     full = File.join(@root, path)
     FileUtils.mkdir_p(File.dirname(full))
     File.write(full, "x\n")
+  end
+end
+
+# Goals and task branches need both Taskwarrior and git: a goal gets its own
+# branch and worktree, and each task branches from its goal's branch.
+class GoalTest < Minitest::Test
+  def setup
+    skip "Taskwarrior ('task') not installed" unless Coord::TaskCli.new.available?
+    skip "git not installed" unless system("git", "--version", out: File::NULL)
+
+    @root = File.realpath(Dir.mktmpdir("coord-goal-test"))
+    init_repo
+    coord_dir = File.join(@root, "coordination")
+    @env = { "COORD_DIR" => coord_dir, "TASKRC" => File.join(coord_dir, "taskrc"),
+             "COORD_ROLE" => "architect", "COORD_WORKER" => "architect-1" }
+    Dir.chdir(@root) { coord("init") }
+  end
+
+  def teardown
+    FileUtils.remove_entry(@root) if @root
+  end
+
+  def init_repo
+    git(@root, "init", "-q", "-b", "main")
+    File.write(File.join(@root, ".gitignore"), "coordination/\n.worktrees/\n")
+    commit(@root, "init")
+  end
+
+  def git(dir, *args)
+    system("git", "-C", dir, *args, out: File::NULL, err: File::NULL) || raise("git #{args.join(" ")} failed")
+  end
+
+  def commit(dir, message)
+    git(dir, "add", "-A")
+    git(dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", message)
+  end
+
+  def coord(*args, dir: @root)
+    out, = capture_io { Dir.chdir(dir) { Coord::CLI.new(args, env: @env).run } }
+    out
+  end
+
+  def add_goal = coord("goal", "add", "--title", "Show prices").lines.last.strip
+  def short(uuid) = uuid[0, 8]
+
+  def test_goal_add_creates_a_goal_branch_and_worktree_from_the_base_branch
+    uuid = add_goal
+    dir = File.join(@root, ".worktrees", "goal-#{short(uuid)}")
+
+    assert_equal "goal/#{short(uuid)}", `git -C #{dir} branch --show-current`.strip
+    assert_includes coord("goal", "list"), "Show prices"
+  end
+
+  def test_goal_add_refuses_a_missing_base_branch
+    assert_raises(SystemExit) { coord("goal", "add", "--title", "x", "--base", "nope") }
+  end
+
+  def test_goal_show_lists_the_tasks_of_the_goal
+    uuid = add_goal
+    coord("add", "--role", "tester", "--scope", "test/**", "--goal", uuid, "--title", "price test")
+
+    assert_includes coord("goal", "show", uuid), "price test"
+  end
+
+  def test_goal_done_is_refused_while_a_task_is_open
+    uuid = add_goal
+    task = coord("add", "--role", "tester", "--scope", "test/**", "--goal", uuid, "--title", "t").strip
+
+    assert_raises(SystemExit) { coord("goal", "done", uuid) }
+    coord("done", task)
+    assert_includes coord("goal", "done", uuid), "goal/#{short(uuid)}"
+  end
+
+  def test_start_task_branches_from_the_goal_branch
+    uuid = add_goal
+    goal_dir = File.join(@root, ".worktrees", "goal-#{short(uuid)}")
+    commit(goal_dir, "goal work")
+    task = coord("add", "--role", "tester", "--scope", "test/**", "--goal", uuid, "--title", "t").strip
+    worker_dir = worker_worktree
+
+    coord("start-task", task, dir: worker_dir)
+
+    assert_equal "task/#{short(task)}", `git -C #{worker_dir} branch --show-current`.strip
+    assert_equal "goal work", `git -C #{worker_dir} log -1 --format=%s`.strip
+  end
+
+  def test_start_task_refuses_uncommitted_changes
+    task = coord("add", "--role", "tester", "--scope", "test/**", "--title", "t").strip
+    worker_dir = worker_worktree
+    File.write(File.join(worker_dir, ".gitignore"), "changed\n")
+
+    assert_raises(SystemExit) { coord("start-task", task, dir: worker_dir) }
+  end
+
+  def worker_worktree
+    coord("worktree", "tester", "1")
+    File.join(@root, ".worktrees", "tester-1")
+  end
+
+  def test_worktree_warns_when_a_harness_has_no_file_for_the_role
+    manifest = { agents: [{ harness: "claude", role: "architect" }, { harness: "opencode", role: "tester" }] }
+    File.write(File.join(@root, ".agent-flow.json"), JSON.generate(manifest))
+    _out, err = capture_io { Dir.chdir(@root) { Coord::CLI.new(%w[worktree tester 1], env: @env).run } }
+
+    assert_includes err, "maf add claude:tester"
   end
 end

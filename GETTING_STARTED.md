@@ -44,7 +44,7 @@ All shared state lives in a `coordination/` folder inside your project.
 Two roles have a special job:
 
 - **Architect**: splits a request into tasks and assigns them. It does not write code.
-- **Project manager** (optional): you talk to it. It sends one goal at a time to the
+- **Project manager** (optional): you talk to it. It creates goals and sends them to the
   architect and relays the report back.
 
 ---
@@ -411,7 +411,7 @@ take the same task.
 1. One writer per path. The task scope defines the paths. Agents must follow it.
 2. Use one git worktree per worker. `./coord worktree ROLE` creates one.
 3. Take the `ollama` lock before a local generation.
-4. Write decisions in `docs/decisions/`. Append; never rewrite history.
+4. Write decisions in `.agent/decisions/` if it exists, else `docs/decisions/`. Append; never rewrite history.
 5. Use `annotate` for progress. Use `msg` to talk to another agent.
 6. Write `annotate` and `msg` text in Simplified Technical English: one
    instruction per sentence, active voice, named subject, no idioms.
