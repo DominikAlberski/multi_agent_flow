@@ -119,6 +119,32 @@ prompt telling the session to read and follow that file; for `hermes`, it
 loads the role as a skill via `--skills <project>-<role>`. `HARNESS:ROLE` must
 already be in `.agent-flow.json` (`maf add HARNESS:ROLE` adds one); `WORKER` defaults to `1`.
 
+## Wake a Hermes agent at session end
+
+`maf add` installs `~/.hermes/agent-hooks/next-task.sh`. Hermes runs that script
+when a session ends. The script resumes the session when the role has unclaimed
+tasks. The hook stays inactive until the Hermes config declares it and the user
+approves it:
+
+```sh
+hermes config set hooks.on_session_end '[{"command":"<script path>","timeout":30}]'
+hermes chat --oneshot --accept-hooks -q ok
+hermes hooks doctor
+```
+
+The flow never edits `~/.hermes/config.yaml`: the file is comment-rich, and
+Hermes guards it as security-sensitive. Do not rewrite it by hand either.
+
+The `hermes config set` command replaces the whole `on_session_end` list. If the
+list is not empty, read it with `hermes config get hooks.on_session_end` first,
+then set the existing entries plus the new entry.
+
+The approval binds to the script version. Hermes records the script's mtime, so
+an updated script needs a new approval.
+
+`maf add` and `maf update` print the steps that are still missing, or
+`hook ready` when the hook is active.
+
 ## How agents use it
 
 Set `COORD_ROLE` so messages and locks are attributed:

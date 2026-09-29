@@ -21,6 +21,7 @@ LIB = File.join(ROOT, "lib", "maf")
 BOOTSTRAP = File.join(LIB, "bootstrap.rb")
 FLOW = ["-r", File.join(LIB, "flow.rb"), "-e", "Flow::Generator.new(ARGV).run", "--"].freeze
 require File.join(LIB, "setup_agent")
+require File.join(LIB, "flow")
 load File.join(ROOT, "assets", "vault")
 
 class InstallerTestCase < Minitest::Test
@@ -620,5 +621,99 @@ class SetupAgentTest < Minitest::Test
 
   def git(dir, *args)
     system("git", "-C", dir, *args, out: File::NULL, err: File::NULL) || flunk("git #{args.first} failed")
+  end
+end
+
+# HermesHook answers the two questions the installer must not guess: is the
+# hook declared in the Hermes config, and is it approved. Hermes ties the
+# approval to the script version, so an updated script needs a new approval.
+# Every method takes a path, so fixtures cover the logic with no Hermes install.
+class HermesHookTest < Minitest::Test
+  def setup
+    @dir = File.realpath(Dir.mktmpdir("hermes-hook-test"))
+    @script = File.join(@dir, "next-task.sh")
+    File.write(@script, "#!/bin/sh\n")
+    @config = File.join(@dir, "config.yaml")
+    @allowlist = File.join(@dir, "allowlist.json")
+  end
+
+  def teardown
+    FileUtils.remove_entry(@dir)
+  end
+
+  def test_declared_when_the_config_names_the_script
+    File.write(@config, "hooks:\n  on_session_end:\n    - command: #{@script}\n")
+
+    assert Flow::HermesHook.declared?(@config, @script)
+  end
+
+  def test_not_declared_without_a_config_file
+    refute Flow::HermesHook.declared?(@config, @script)
+  end
+
+  def test_not_declared_when_the_config_names_another_hook
+    File.write(@config, "hooks:\n  on_session_end:\n    - command: /tmp/other-hook.sh\n")
+
+    refute Flow::HermesHook.declared?(@config, @script)
+  end
+
+  def test_approved_for_a_matching_entry
+    write_allowlist(recorded: recorded)
+
+    assert Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+  end
+
+  # Hermes records the approval time rounded to microseconds. Ruby reports the
+  # file time with finer precision, so an exact match would never hold.
+  def test_approved_when_the_recorded_time_is_one_microsecond_late
+    write_allowlist(recorded: recorded(0.000_001))
+
+    assert Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+  end
+
+  def test_not_approved_after_the_script_changes
+    write_allowlist(recorded: recorded(-60))
+
+    refute Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+  end
+
+  def test_not_approved_for_another_event
+    write_allowlist(recorded: recorded, event: "pre_tool_call")
+
+    refute Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+  end
+
+  def test_not_approved_without_an_allowlist_file
+    refute Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+  end
+
+  def test_not_approved_without_a_recorded_time
+    write_allowlist(recorded: nil)
+
+    refute Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+  end
+
+  def test_not_approved_when_the_allowlist_is_corrupt
+    File.write(@allowlist, "{ not json")
+
+    refute Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+  end
+
+  def test_config_command_names_the_hook_and_the_event
+    command = Flow::HermesHook.config_command(@script)
+
+    assert_includes command, "hermes config set hooks.on_session_end"
+    assert_includes command, @script
+    assert_includes command, "timeout"
+  end
+
+  def recorded(offset = 0)
+    (File.mtime(@script) + offset).utc.iso8601(6)
+  end
+
+  def write_allowlist(recorded:, event: "on_session_end")
+    entry = { "approved_at" => Time.now.utc.iso8601(6), "command" => @script,
+              "event" => event, "script_mtime_at_approval" => recorded }
+    File.write(@allowlist, JSON.pretty_generate("approvals" => [entry]))
   end
 end

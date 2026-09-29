@@ -213,6 +213,52 @@ module Flow
     template && format(template, role)
   end
 
+  # HermesHook reports the state of the hook that picks up tasks when a Hermes
+  # session ends. Hermes keeps hooks in the global config.yaml and asks for a
+  # one-time consent, so the flow prints commands instead of editing the file.
+  # Every method takes a path, so a test can use fixtures.
+  module HermesHook
+    EVENT = "on_session_end"
+    SCRIPT_NAME = "next-task.sh"
+    TIMEOUT = 30
+    # Hermes rounds the recorded approval time to microseconds, so compare with
+    # a small tolerance. A rewritten hook moves the mtime far past it.
+    MTIME_TOLERANCE = 2
+
+    def self.declared?(config_yaml, script_path)
+      return false unless File.exist?(config_yaml)
+
+      content = File.read(config_yaml)
+      content.include?(script_path) || content.include?(SCRIPT_NAME)
+    end
+
+    def self.approved?(allowlist, script_path, mtime)
+      entry = approvals(allowlist).find { |item| item["command"] == script_path && item["event"] == EVENT }
+      return false unless entry
+
+      recorded = Time.iso8601(entry["script_mtime_at_approval"].to_s)
+      (mtime - recorded).abs <= MTIME_TOLERANCE
+    rescue ArgumentError, TypeError
+      false
+    end
+
+    def self.approvals(allowlist)
+      return [] unless File.exist?(allowlist)
+
+      JSON.parse(File.read(allowlist)).fetch("approvals", [])
+    rescue JSON::ParserError
+      []
+    end
+
+    def self.config_command(script_path)
+      %(hermes config set hooks.#{EVENT} '[{"command":"#{script_path}","timeout":#{TIMEOUT}}]')
+    end
+
+    def self.approve_command = "hermes chat --oneshot --accept-hooks -q ok"
+
+    def self.check_command = "hermes hooks doctor"
+  end
+
   class Generator
     def initialize(argv)
       @argv = argv
@@ -505,39 +551,71 @@ module Flow
     end
 
     def install_hermes_hooks
+      dest = install_hermes_hook_script
+      steps = hermes_hook_steps(dest, File.mtime(dest))
+      return puts("  hook ready:   #{dest}") if steps.empty?
+
+      print_hermes_hook_steps(dest, steps)
+      @hermes_hook_pending = true
+    end
+
+    def install_hermes_hook_script
       hooks_dir = File.join(Dir.home, ".hermes", "agent-hooks")
       FileUtils.mkdir_p(hooks_dir)
-      dest = File.join(hooks_dir, "next-task.sh")
+      dest = hermes_hook_script
       src  = File.join(ASSETS, "harness-hooks", "next-task-hermes.sh")
       if !File.exist?(dest) || File.read(dest) != File.read(src)
         FileUtils.cp(src, dest)
         FileUtils.chmod("+x", dest)
         puts "  hook install: #{dest}"
       end
-      config_yaml = File.join(Dir.home, ".hermes", "config.yaml")
-      return if hermes_hook_configured?(config_yaml, dest)
-
-      puts
-      puts "  Hermes hook: add the following block to ~/.hermes/config.yaml:"
-      puts "  (If a hooks: key already exists, merge on_session_end into it.)"
-      puts
-      puts hermes_hook_yaml_snippet(dest).gsub(/^/, "  ")
-      @hermes_hook_pending = true
+      dest
     end
 
-    def hermes_hook_configured?(config_yaml, script_path)
-      return false unless File.exist?(config_yaml)
-      content = File.read(config_yaml)
-      content.include?(script_path) || content.include?("next-task.sh")
+    def hermes_hook_script = File.join(Dir.home, ".hermes", "agent-hooks", HermesHook::SCRIPT_NAME)
+    def hermes_config_yaml = File.join(Dir.home, ".hermes", "config.yaml")
+    def hermes_allowlist = File.join(Dir.home, ".hermes", "shell-hooks-allowlist.json")
+
+    # The flow never edits the Hermes config: the file is comment-rich, and
+    # Hermes guards it as security-sensitive. Print the commands instead, and
+    # print only the step that is still missing.
+    def print_hermes_hook_steps(dest, steps)
+      puts
+      puts "  Hermes hook: #{dest}"
+      puts "  The hook does not run yet. Do these steps one time."
+      puts
+      steps.each_with_index { |step, index| puts hermes_hook_step(step, index) }
     end
 
-    def hermes_hook_yaml_snippet(script_path)
-      <<~YAML
-        hooks:
-          on_session_end:
-            - command: "#{script_path}"
-              timeout: 30
-      YAML
+    def hermes_hook_step(step, index)
+      lines = ["    #{index + 1}. #{step[:title]}", "         #{step[:command]}"]
+      lines << "         #{step[:note]}" if step[:note]
+      "#{lines.join("\n")}\n"
+    end
+
+    def hermes_hook_steps(dest, mtime)
+      steps = [hermes_declare_step(dest), hermes_approve_step(dest, mtime)]
+      steps.reject! { |step| step[:done] }
+      steps << hermes_check_step unless steps.empty?
+      steps
+    end
+
+    def hermes_declare_step(dest)
+      { done: HermesHook.declared?(hermes_config_yaml, dest),
+        title: "Declare the hook in the Hermes config:",
+        command: HermesHook.config_command(dest),
+        note: "Keep your other on_session_end entries. Add this entry to that list." }
+    end
+
+    def hermes_approve_step(dest, mtime)
+      { done: HermesHook.approved?(hermes_allowlist, dest, mtime),
+        title: "Approve the hook one time:",
+        command: HermesHook.approve_command,
+        note: "Hermes stores the consent for this version of the script." }
+    end
+
+    def hermes_check_step
+      { done: false, title: "Check the hook:", command: HermesHook.check_command, note: nil }
     end
 
     def print_instructions(results)
@@ -547,6 +625,16 @@ module Flow
       print_missing_models(results)
       print_unembeddable(results)
       print_sessions(results)
+      print_hermes_hook_reminder
+    end
+
+    # The hook steps print at install time, far above the last lines the user
+    # reads. Repeat the state here so the flow is not started with a dead hook.
+    def print_hermes_hook_reminder
+      return unless @hermes_hook_pending
+
+      puts "The Hermes hook is not active yet. Finish the steps above."
+      puts "Then run `maf update` to confirm the hook is ready."
     end
 
     def generated_line(result)

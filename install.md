@@ -102,6 +102,35 @@ Then run the same command without `--check`.
 
 `maf add` is idempotent. It skips files that are already correct.
 
+## Step 5b - Turn on the Hermes hook (Hermes roles only)
+
+Skip this step when no role uses the Hermes harness.
+
+`maf add` installs the hook script at `~/.hermes/agent-hooks/next-task.sh`.
+Hermes runs it when a session ends. The hook resumes the session when the role
+has unclaimed tasks.
+
+The hook stays inactive until the Hermes config declares it and the user
+approves it. `maf add` prints the commands. Run them in order.
+
+```sh
+hermes config set hooks.on_session_end '[{"command":"<script path>","timeout":30}]'
+hermes chat --oneshot --accept-hooks -q ok
+hermes hooks doctor
+```
+
+Do not edit `~/.hermes/config.yaml` by hand. The file holds comments and markers
+that a rewrite destroys.
+
+The first command replaces the whole `on_session_end` list. If the list is not
+empty, read it first with `hermes config get hooks.on_session_end`. Then set the
+list with the existing entries plus the new entry.
+
+The second command approves the hook one time. Hermes stores the consent for this
+version of the script. A new script version needs a new approval.
+
+Confirm that every check from `hermes hooks doctor` passes. Then continue.
+
 ## Step 6 - Verify
 
 ```sh

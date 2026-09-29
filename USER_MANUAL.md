@@ -279,10 +279,38 @@ for the user's own sessions (no `COORD_ROLE`) and for dispatched agents
 (`COORD_DISPATCHED=1`). To change the timing, set `BOARD_WATCH_INTERVAL` and
 `BOARD_WATCH_IDLE` (seconds) before you run `maf start`.
 
-Codex, Hermes, and opencode have no `asyncRewake` hook. Their role files tell
-the agent to block in `./coord next --wait --timeout 540` when it has no work.
-The command returns when a task or a message arrives. Use `--dispatch` to run
-these agents unattended.
+Codex and opencode have no wake hook. Their role files tell the agent to block
+in `./coord next --wait --timeout 540` when it has no work. The command returns
+when a task or a message arrives. Use `--dispatch` to run these agents
+unattended.
+
+### Wake a Hermes agent at session end
+
+Hermes runs `~/.hermes/agent-hooks/next-task.sh` when a session ends. The hook
+resumes the session when the role has unclaimed tasks. `maf add` installs the
+script. Two steps turn the hook on, because the flow never edits the Hermes
+config:
+
+```sh
+hermes config set hooks.on_session_end '[{"command":"<script path>","timeout":30}]'
+hermes chat --oneshot --accept-hooks -q ok
+hermes hooks doctor
+```
+
+The first command replaces the whole `on_session_end` list. If entries exist
+there already, read them with `hermes config get hooks.on_session_end` first.
+Then set the list with your entries plus the new one.
+
+The second command approves the hook one time. Hermes stores the consent for
+this version of the script. An updated script needs a new approval.
+
+`hermes hooks doctor` reports the state of the hook. All four checks must pass.
+
+`maf add` and `maf update` report the state too. They print the steps that are
+missing, or `hook ready` when the hook is active.
+
+The hook does nothing outside this flow. It exits at once unless `COORD_ROLE` is
+set, and `maf start` sets that variable.
 
 ---
 
