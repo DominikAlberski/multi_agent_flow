@@ -377,9 +377,12 @@ module Flow
       return unless @bootstrap
       return if @check
 
-      # Bootstrap adds the Claude Code hooks only if .claude/ exists. Flow
-      # writes .claude/agents/ after bootstrap, so create .claude/ first.
-      FileUtils.mkdir_p(File.join(@project, ".claude")) if @agents.any? { |a| a[:harness] == "claude" }
+      # Bootstrap adds the Claude Code hooks only if .claude/ exists, and the
+      # opencode plugin only if .opencode/ exists. Flow writes the role files
+      # after bootstrap, so create these dirs first.
+      %w[claude opencode].each do |harness|
+        FileUtils.mkdir_p(File.join(@project, ".#{harness}")) if @agents.any? { |a| a[:harness] == harness }
+      end
       args = [RbConfig.ruby, File.join(__dir__, "bootstrap.rb"), @project, "--roles", roles_arg]
       args << "--force" if @force
       ok = system(*args)
@@ -453,8 +456,9 @@ module Flow
       "#{intro(data)}\n\n#{duties_block(data)}\n\n#{format(WORKER_LOOP, role: role, no_task_instruction: no_task_line(harness))}"
     end
 
-    # Only Claude Code can wake an idle session (the board-watch hook). Other
+    # Claude Code wakes an idle session with the board-watch hook. Other
     # harnesses block in `coord next --wait`, which also returns on a message.
+    # The opencode board-watch plugin wakes opencode if the wait loop stops.
     def no_task_line(harness)
       harness == "claude" ? NO_TASK_STOP : NO_TASK_WAIT
     end

@@ -822,24 +822,24 @@ class WorktreeFirstRunTest < Minitest::Test
     refute_includes status, "coord-env.sh"
   end
 
-  CLAUDE_HOOK_FILES = %w[.claude/settings.json coordination/harness-hooks/board-watch.rb
-                         coordination/harness-hooks/next-task.rb].freeze
+  HOOK_FILES = %w[.claude/settings.json coordination/harness-hooks/board-watch.rb
+                  coordination/harness-hooks/next-task.rb .opencode/plugins/board-watch.js].freeze
 
   # Regression: an uncommitted .claude/settings.json never reached the
   # worktree, so Claude agents there ran without the board-watch hook.
-  def test_worktree_copies_uncommitted_claude_hooks
-    CLAUDE_HOOK_FILES.each { |path| write(path) }
+  def test_worktree_copies_uncommitted_harness_hooks
+    HOOK_FILES.each { |path| write(path) }
     Coord::Worktree.new(@root).create("tester", nil)
 
-    CLAUDE_HOOK_FILES.each { |path| assert File.exist?(File.join(@worktree_dir, path)), path }
+    HOOK_FILES.each { |path| assert File.exist?(File.join(@worktree_dir, path)), path }
   end
 
   def test_reused_worktree_gets_hooks_added_after_it_was_created
     Coord::Worktree.new(@root).create("tester", nil)
-    CLAUDE_HOOK_FILES.each { |path| write(path) }
+    HOOK_FILES.each { |path| write(path) }
     Coord::Worktree.new(@root).create("tester", nil)
 
-    CLAUDE_HOOK_FILES.each { |path| assert File.exist?(File.join(@worktree_dir, path)), path }
+    HOOK_FILES.each { |path| assert File.exist?(File.join(@worktree_dir, path)), path }
   end
 
   def write(path)

@@ -27,6 +27,10 @@
 # Env: BOARD_WATCH_INTERVAL (default 60), BOARD_WATCH_IDLE (default 120).
 # The script does nothing if COORD_DISPATCHED is set: the dispatcher owns
 # the loop for dispatched agents.
+#
+# With --once, the script checks the board one time and does not wait. If
+# the board has work that is due, the script prints the poke to stdout and
+# exits 2. The opencode plugin (board-watch-opencode.js) uses this mode.
 require "digest"
 require "fileutils"
 require "json"
@@ -211,6 +215,13 @@ module BoardWatch
       work ? poke(work) : 0
     end
 
+    def run_once
+      return 0 unless active?
+
+      work = Board.new(coord, board_env).work
+      work.any? && backoff.due?(work) ? poke(work, $stdout) : 0
+    end
+
     private
 
     def active? = !role.empty? && role != "unknown" && !@env["COORD_DISPATCHED"] && coord
@@ -238,19 +249,21 @@ module BoardWatch
                       "TASKRC" => @env.fetch("TASKRC", File.join(coord_dir, "taskrc")))
     end
 
-    def poke(work)
+    def poke(work, out = $stderr)
       backoff.record(work)
-      warn format(PROMPT, role: role, summary: work.summary)
+      out.puts format(PROMPT, role: role, summary: work.summary)
       2
     end
   end
 end
 
 if __FILE__ == $PROGRAM_NAME
+  once = ARGV.include?("--once")
   input = begin
-    JSON.parse($stdin.read.to_s)
+    once ? {} : JSON.parse($stdin.read.to_s)
   rescue JSON::ParserError
     {}
   end
-  exit BoardWatch::Main.new(ENV, input).run
+  main = BoardWatch::Main.new(ENV, input)
+  exit once ? main.run_once : main.run
 end

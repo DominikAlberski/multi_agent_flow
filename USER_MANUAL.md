@@ -279,10 +279,26 @@ for the user's own sessions (no `COORD_ROLE`) and for dispatched agents
 (`COORD_DISPATCHED=1`). To change the timing, set `BOARD_WATCH_INTERVAL` and
 `BOARD_WATCH_IDLE` (seconds) before you run `maf start`.
 
-Codex and opencode have no wake hook. Their role files tell the agent to block
-in `./coord next --wait --timeout 540` when it has no work. The command returns
-when a task or a message arrives. Use `--dispatch` to run these agents
-unattended.
+Codex and opencode role files tell the agent to block in
+`./coord next --wait --timeout 540` when it has no work. The command returns
+when a task or a message arrives. Codex has no wake hook. Use `--dispatch` to
+run Codex agents unattended.
+
+### Keep interactive opencode agents awake
+
+An opencode agent can end its turn and leave the wait loop. `maf add` installs
+the plugin `.opencode/plugins/board-watch.js` for projects with opencode
+agents. The plugin uses these rules:
+
+1. When the top-level session goes idle, the plugin checks the board at once.
+   Then the plugin checks the board every `BOARD_WATCH_INTERVAL` seconds.
+2. Each check runs `coordination/harness-hooks/board-watch.rb --once`. The
+   script applies the same work rules and backoff as the Claude Code watcher.
+3. If the board has work, the plugin sends the work prompt to the session.
+4. When the session is busy again, the checks stop.
+
+The plugin does nothing without `COORD_ROLE` and for dispatched agents
+(`COORD_DISPATCHED=1`). Subagent sessions do not start checks.
 
 ### Wake a Hermes agent at session end
 

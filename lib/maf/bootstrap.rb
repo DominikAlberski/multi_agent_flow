@@ -32,6 +32,8 @@ module Bootstrap
   NEXT_TASK_HOOK_SIGNATURE = "next-task.rb - Stop hook for Claude Code and Codex."
   NEXT_TASK_HERMES_SIGNATURE = "next-task-hermes.sh - on_session_end hook for Hermes Agent."
   BOARD_WATCH_SIGNATURE = "board-watch.rb - background board watcher for Claude Code sessions."
+  OPENCODE_BOARD_WATCH_SIGNATURE = "board-watch-opencode.js - opencode plugin that wakes an idle session"
+  OPENCODE_PLUGIN = File.join(".opencode", "plugins", "board-watch.js")
   COMMIT_GUARD_SIGNATURE = "commit-guard - git pre-commit hook for the multi-agent flow."
 
   # Claude Code harness hooks: [event, hook]. The sync next-task hook continues
@@ -46,7 +48,7 @@ module Bootstrap
 
   PLAN_STEPS = %i[plan_coordination_dirs plan_gitkeeps plan_coord plan_dispatcher
                   plan_vault plan_dashboard plan_taskrc plan_claude_md plan_contracts plan_gitignore
-                  plan_hook_scripts plan_claude_stop_hook plan_commit_guard].freeze
+                  plan_hook_scripts plan_opencode_plugin plan_claude_stop_hook plan_commit_guard].freeze
 
   # Project instruction files that stop Claude Code from reading AGENTS.md.
   CLAUDE_MD_FILES = ["CLAUDE.md", File.join(".claude", "CLAUDE.md")].freeze
@@ -327,11 +329,22 @@ module Bootstrap
          NEXT_TASK_HERMES_SIGNATURE],
         ["harness-hooks/board-watch.rb", File.join(@target, "coordination", "harness-hooks", "board-watch.rb"),
          BOARD_WATCH_SIGNATURE]
-      ].map do |src_name, dest, signature|
-        status = hook_script_status(dest, src_name, signature)
-        label = status == :refuse ? "#{dest} (exists and is not ours; use --force)" : dest
-        action(status, dest, label, src_name)
-      end
+      ].map { |src_name, dest, signature| hook_action(src_name, dest, signature) }
+    end
+
+    # The opencode plugin wakes an idle opencode session. Like the Claude
+    # hooks, it is installed only if the project has a .opencode/ dir.
+    def plan_opencode_plugin
+      return [] unless Dir.exist?(File.join(@target, ".opencode"))
+
+      [hook_action("harness-hooks/board-watch-opencode.js", File.join(@target, OPENCODE_PLUGIN),
+                   OPENCODE_BOARD_WATCH_SIGNATURE)]
+    end
+
+    def hook_action(src_name, dest, signature)
+      status = hook_script_status(dest, src_name, signature)
+      label = status == :refuse ? "#{dest} (exists and is not ours; use --force)" : dest
+      action(status, dest, label, src_name)
     end
 
     def hook_script_status(dest, src_name, signature)

@@ -27,7 +27,7 @@ If a text needs a new term, add the term here first.
 | commit guard | The git `pre-commit` hook. It refuses a commit by a role with `can_edit: false`. | `assets/git-hooks/pre-commit` |
 | lock | A named mutex. A worker holds the lock. | `coord lock`, lock field `worker` |
 | message hook | A user script that runs when a message is delivered to a role: `coordination/message-hooks/<role>.sh`. | `coord hooks` |
-| harness hook | A script that a harness runs on its own events (for example Stop, SessionStart): `coordination/harness-hooks/`. | `next-task.rb`, `board-watch.rb` |
+| harness hook | A script that a harness runs on its own events (for example Stop, SessionStart): `coordination/harness-hooks/`. | `next-task.rb`, `board-watch.rb`, `board-watch-opencode.js` |
 
 ## Rules
 

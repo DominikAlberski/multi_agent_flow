@@ -65,6 +65,16 @@ class UninstallRemovesTest < UninstallerTestCase
     refute Dir.exist?(File.join(@hermes, "#{File.basename(@dir)}-reviewer"))
   end
 
+  def test_removes_the_opencode_plugin
+    install
+    assert File.exist?(path(".opencode", "plugins", "board-watch.js"))
+
+    out, status = uninstall("--yes")
+
+    assert_equal 0, status, out
+    refute File.exist?(path(".opencode", "plugins", "board-watch.js"))
+  end
+
   # Older installs copied setup_agent into the project. maf start replaced it.
   def test_removes_a_setup_agent_from_an_older_install
     install
@@ -124,6 +134,16 @@ class UninstallKeepsTest < UninstallerTestCase
 
     assert_equal "#!/bin/sh\necho mine\n", File.read(path("coord"))
     assert File.exist?(path(".claude", "agents", "mine.md"))
+  end
+
+  # The installer refuses a foreign plugin, so write it after install.
+  def test_keeps_a_foreign_opencode_plugin
+    install
+    write(".opencode/plugins/board-watch.js", "export default {}\n")
+
+    uninstall("--yes")
+
+    assert_equal "export default {}\n", File.read(path(".opencode", "plugins", "board-watch.js"))
   end
 
   def test_check_changes_nothing

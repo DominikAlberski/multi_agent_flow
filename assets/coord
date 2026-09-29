@@ -1160,7 +1160,7 @@ module Coord
     ENV_FILE = WorktreeEnv::FILE
     WORKTREES_DIR = ".worktrees"
     RUNTIME_FILES = %w[coord .claude/settings.json coordination/harness-hooks/next-task.rb
-                       coordination/harness-hooks/board-watch.rb].freeze
+                       coordination/harness-hooks/board-watch.rb .opencode/plugins/board-watch.js].freeze
 
     def self.dir_for(root, slug)
       File.join(root, WORKTREES_DIR, slug)

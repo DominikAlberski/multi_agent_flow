@@ -162,12 +162,39 @@ class MainTest < Minitest::Test
   end
 
   # A fake coord prints one task ID, so the watcher finds work at once.
-  def test_pokes_the_role_from_coord_role
+  def with_fake_coord
     Dir.mktmpdir("board-watch-main") do |dir|
       File.write(File.join(dir, "coord"), "puts #{TASK_ID.inspect}\n")
       FileUtils.chmod("+x", File.join(dir, "coord"))
       env = { "COORD_ROLE" => "tester", "COORD_DIR" => File.join(dir, "coordination"), "BOARD_WATCH_INTERVAL" => "0" }
-      Dir.chdir(dir) { assert_output(nil, /role tester/) { assert_equal 2, BoardWatch::Main.new(env, {}).run } }
+      Dir.chdir(dir) { yield env }
     end
+  end
+
+  def test_pokes_the_role_from_coord_role
+    with_fake_coord do |env|
+      assert_output(nil, /role tester/) { assert_equal 2, BoardWatch::Main.new(env, {}).run }
+    end
+  end
+
+  def test_once_prints_the_poke_to_stdout
+    with_fake_coord do |env|
+      assert_output(/role tester/, "") { assert_equal 2, BoardWatch::Main.new(env, {}).run_once }
+    end
+  end
+
+  def test_once_does_not_repeat_an_unchanged_poke
+    with_fake_coord do |env|
+      env = env.merge("BOARD_WATCH_INTERVAL" => "60")
+      assert_output(/role tester/) { BoardWatch::Main.new(env, {}).run_once }
+
+      assert_equal 0, BoardWatch::Main.new(env, {}).run_once
+    end
+  end
+
+  def test_once_does_nothing_under_the_dispatcher
+    env = { "COORD_ROLE" => "tester", "COORD_DISPATCHED" => "1" }
+
+    assert_equal 0, BoardWatch::Main.new(env, {}).run_once
   end
 end

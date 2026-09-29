@@ -20,7 +20,7 @@ module Uninstall
   KEPT_DIRS = %w[graphify-out obsidian].freeze
 
   # Removed after all steps if empty. Children come before parents.
-  EMPTY_DIRS = [%w[.claude agents], %w[.claude], %w[.opencode agents], %w[.opencode],
+  EMPTY_DIRS = [%w[.claude agents], %w[.claude], %w[.opencode agents], %w[.opencode plugins], %w[.opencode],
                 %w[.codex prompts], %w[.codex], %w[.worktrees]].freeze
 
   GLOBAL_HOOKS = [File.join(Dir.home, ".codex", "hooks", "next-task.rb"),
@@ -88,7 +88,8 @@ module Uninstall
   class Scripts
     SIGNATURES = { "coord" => Bootstrap::COORD_SIGNATURE, "setup_agent" => Bootstrap::SETUP_AGENT_SIGNATURE,
                    "dispatcher" => Bootstrap::DISPATCHER_SIGNATURE, "dashboard" => Bootstrap::DASHBOARD_SIGNATURE,
-                   "vault" => Bootstrap::VAULT_SIGNATURE, "vault-daemon" => Bootstrap::VAULT_SIGNATURE }.freeze
+                   "vault" => Bootstrap::VAULT_SIGNATURE, "vault-daemon" => Bootstrap::VAULT_SIGNATURE,
+                   Bootstrap::OPENCODE_PLUGIN => Bootstrap::OPENCODE_BOARD_WATCH_SIGNATURE }.freeze
 
     def initialize(project) = @project = project
 

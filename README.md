@@ -96,7 +96,7 @@ multi_agent_flow/
     agents-contract.md        # contract appended to AGENTS.md
     gitignore.append          # marker-guarded ignore entries
     coordination/             # inbox / locks / exports skeleton
-    harness-hooks/            # next-task + board-watch scripts run by harnesses
+    harness-hooks/            # next-task + board-watch scripts and the opencode plugin
   test/
     coord_test.rb             # behavioral tests for the coord CLI
     installer_test.rb         # tests for bootstrap.rb, flow.rb, setup_agent.rb

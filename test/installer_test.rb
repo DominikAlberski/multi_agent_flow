@@ -189,6 +189,21 @@ class BootstrapTest < InstallerTestCase
     assert Dir.exist?(File.join(@dir, "coordination", "message-hooks"))
   end
 
+  def opencode_plugin = File.join(@dir, ".opencode", "plugins", "board-watch.js")
+
+  def test_installs_the_opencode_plugin_when_opencode_is_used
+    FileUtils.mkdir_p(File.join(@dir, ".opencode"))
+    2.times { assert_equal 0, bootstrap.last }
+
+    assert_includes File.read(opencode_plugin), "board-watch-opencode.js - opencode plugin"
+  end
+
+  def test_skips_the_opencode_plugin_without_opencode
+    assert_equal 0, bootstrap.last
+
+    refute File.exist?(opencode_plugin)
+  end
+
   # Claude Code reads AGENTS.md only when no project CLAUDE.md exists, so the
   # user's CLAUDE.md text moves into AGENTS.md and CLAUDE.md goes.
   def test_moves_claude_md_into_agents_md
