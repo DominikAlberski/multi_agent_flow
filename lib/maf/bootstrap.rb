@@ -32,6 +32,7 @@ module Bootstrap
   NEXT_TASK_HOOK_SIGNATURE = "next-task.rb - Stop hook for Claude Code and Codex."
   NEXT_TASK_HERMES_SIGNATURE = "next-task-hermes.sh - on_session_end hook for Hermes Agent."
   BOARD_WATCH_SIGNATURE = "board-watch.rb - background board watcher for Claude Code sessions."
+  COMMIT_GUARD_SIGNATURE = "commit-guard - git pre-commit hook for the multi-agent flow."
 
   # Claude Code harness hooks: [event, hook]. The sync next-task hook continues
   # a session at Stop. The asyncRewake board-watch hook wakes an idle session.
@@ -45,7 +46,7 @@ module Bootstrap
 
   PLAN_STEPS = %i[plan_coordination_dirs plan_gitkeeps plan_coord plan_dispatcher
                   plan_vault plan_dashboard plan_taskrc plan_claude_md plan_contracts plan_gitignore
-                  plan_hook_scripts plan_claude_stop_hook].freeze
+                  plan_hook_scripts plan_claude_stop_hook plan_commit_guard].freeze
 
   # Project instruction files that stop Claude Code from reading AGENTS.md.
   CLAUDE_MD_FILES = ["CLAUDE.md", File.join(".claude", "CLAUDE.md")].freeze
@@ -341,6 +342,31 @@ module Bootstrap
       :update
     end
 
+    COMMIT_GUARD = "git-hooks/pre-commit"
+
+    # The commit guard blocks commits by roles with can_edit false. A foreign
+    # pre-commit hook stays, even with --force: it may run the project checks.
+    def plan_commit_guard
+      dest = commit_guard_path
+      return [] unless dest
+
+      status = commit_guard_status(dest)
+      label = status == :refuse ? "#{dest} (a foreign pre-commit hook; the commit guard is off)" : dest
+      [action(status, dest, label, COMMIT_GUARD)]
+    end
+
+    def commit_guard_status(dest)
+      return :create unless File.exist?(dest)
+      return :refuse unless ours?(dest, COMMIT_GUARD_SIGNATURE)
+
+      changed_script?(dest, COMMIT_GUARD) ? :update : :skip
+    end
+
+    def commit_guard_path
+      hooks = IO.popen(["git", "-C", @target, "rev-parse", "--git-path", "hooks"], err: File::NULL, &:read).strip
+      $?.success? && !hooks.empty? ? File.join(File.expand_path(hooks, @target), "pre-commit") : nil
+    end
+
     def plan_claude_stop_hook
       return [] unless Dir.exist?(File.join(@target, ".claude"))
 
@@ -456,6 +482,7 @@ module Bootstrap
 
     def write_script(dest, name)
       src = File.join(@assets, name)
+      FileUtils.mkdir_p(File.dirname(dest))
       FileUtils.cp(src, dest)
       FileUtils.chmod("+x", dest)
       true

@@ -19,10 +19,12 @@ If a text needs a new term, add the term here first.
 | slot | A unique number per worktree. The main worktree is slot 0. A project uses the slot for a test database and a port. | `COORD_SLOT`, `coordination/worktree-env.rb` |
 | worker registry | The list of prepared workers: role, harness, model, and worktree of each worker. | `coordination/workers.json`, `maf prepare`, `maf retire` |
 | team budget | The limits for `maf prepare`: the maximum number of workers and the allowed harnesses and models. The project manager does not count. | `.agent-flow.json` key `team`, `maf team set` |
-| lead | The project manager or the architect. All other roles are workers for `coord broadcast`. | `coord broadcast --to leads` |
+| lead | The project manager or the architect. All other roles are workers for `coord broadcast`. A lead never claims a task. | `coord broadcast --to leads`, `LEADS` |
 | scope | The file paths that a task may change. Example: `test/queries/**`. | task field `scope`, `--scope` |
 | message | A note to a role. Unread messages are in `coordination/inbox/<role>/`. | `Messages`, `coord msg` |
 | claim | A worker takes a task. A claim expires after `COORD_LEASE_TTL` seconds. | `coord claim` |
+| presence | The record that a worker runs now: role, mode, pid. A worker is live while its pid runs. | `coordination/presence/<worker>.json`, `coord who` |
+| commit guard | The git `pre-commit` hook. It refuses a commit by a role with `can_edit: false`. | `assets/git-hooks/pre-commit` |
 | lock | A named mutex. A worker holds the lock. | `coord lock`, lock field `worker` |
 | message hook | A user script that runs when a message is delivered to a role: `coordination/message-hooks/<role>.sh`. | `coord hooks` |
 | harness hook | A script that a harness runs on its own events (for example Stop, SessionStart): `coordination/harness-hooks/`. | `next-task.rb`, `board-watch.rb` |

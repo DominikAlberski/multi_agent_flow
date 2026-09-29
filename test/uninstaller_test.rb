@@ -200,3 +200,31 @@ class UninstallWorktreeTest < UninstallerTestCase
     refute Dir.exist?(path(".worktrees"))
   end
 end
+
+class UninstallCommitGuardTest < UninstallerTestCase
+  def setup
+    super
+    skip "git not installed" unless system("git", "--version", out: File::NULL)
+    system("git", "-C", @dir, "init", "-q", exception: true)
+  end
+
+  def hook = path(".git", "hooks", "pre-commit")
+
+  def test_removes_the_commit_guard
+    install
+    assert File.exist?(hook)
+
+    uninstall("--yes")
+
+    refute File.exist?(hook)
+  end
+
+  def test_keeps_a_foreign_pre_commit_hook
+    write(".git/hooks/pre-commit", "#!/bin/sh\nmake lint\n")
+    install
+
+    uninstall("--yes")
+
+    assert_equal "#!/bin/sh\nmake lint\n", File.read(hook)
+  end
+end

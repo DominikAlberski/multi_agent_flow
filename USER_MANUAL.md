@@ -696,13 +696,13 @@ Do these steps in the project:
 | `./coord goal done ID` | Close a goal. Refused while a task of the goal is open. |
 | `./coord add --role ROLE --scope S --title T [--goal ID]` | Create a task for a role. Prints the ID. |
 | `./coord next [ROLE]` | List unclaimed tasks for a role (defaults to `$COORD_ROLE`). |
-| `./coord next --wait` | Block (polls every 60s) until a task or an unread message appears. |
+| `./coord next --wait` | Block (polls every 60s) until a task or an unread message appears. Refused for lead roles. |
 | `./coord next --mine` | List the tasks this worker has claimed. |
 | `./coord conflicts` | List pending tasks whose scopes overlap. |
-| `./coord claim ID` | Atomically claim a task for `$COORD_WORKER`. Refuses to steal an active claim. |
+| `./coord claim ID` | Atomically claim a task for `$COORD_WORKER`. Refuses to steal an active claim. Refused for lead roles. |
 | `./coord start-task ID` | In a worker worktree: check out `task/<short-id>` from the goal branch. |
 | `./coord unclaim ID` | Release a claim without finishing it. |
-| `./coord done ID` | Complete a task. |
+| `./coord done ID [--force]` | Complete a task. Refused while the task branch has own commits and lacks the goal branch head. |
 | `./coord annotate ID TEXT` | Add a note to a task (permanent). |
 | `./coord msg --from A TO TEXT` | Send a message to a role. |
 | `./coord broadcast --from A [--to workers\|leads\|all] TEXT` | Send a message to a group of roles. Default: workers. |
@@ -714,6 +714,7 @@ Do these steps in the project:
 | `./coord worktree ROLE [WORKER]` | Create a git worktree + branch for a role. Source `coord-env.sh` inside it. Warns if a harness has no file for the role. |
 | `./coord hooks [ROLE]` | List installed message hooks and their status. |
 | `./coord status` | Show tasks by role and state. |
+| `./coord who` | List each worker with its presence (live or gone) from `coordination/presence/`. |
 | `./coord board` | Write the Obsidian board file. |
 | `./coord export` | Write the raw tasks JSON. |
 | `maf start HARNESS ROLE[_WORKER]` | Worktree + env + role + launch the harness, in one command. |

@@ -18,12 +18,13 @@ This project uses a shared coordination layer for multiple coding agents
 ./coord next [ROLE] [--wait [--interval S]]   # list unclaimed tasks (or block until a task or message appears)
 ./coord next --mine                           # list your in-progress tasks
 ./coord conflicts                             # list pending tasks with overlapping scopes
-./coord claim ID [--force]                    # atomically claim for COORD_WORKER
+./coord claim ID [--force]                    # atomically claim for COORD_WORKER (refused for lead roles)
 ./coord start-task ID                         # in your worktree: check out task/<short-id> from the goal branch
 ./coord unclaim ID                            # release a claim without finishing it
-./coord done ID                               # complete
+./coord done ID [--force]                     # complete (refused while the task branch lacks the goal head)
 ./coord annotate ID TEXT                      # task-scoped update
 ./coord status                                # per-role summary
+./coord who                                   # each worker with its presence: live or gone
 ./coord board                                 # regenerate Obsidian kanban
 ./coord worktree ROLE [WORKER]                # git worktree in .worktrees/<role>-<worker> + branch
                                               # in it: `source coord-env.sh` to share this board
@@ -89,6 +90,12 @@ opening individual inboxes.
 If a `./dispatcher` serves your role, the dispatcher gives you your messages
 in the prompt. Do not run `coord inbox` in that case.
 
+`coord who` lists each worker from `coordination/presence/`. `maf start`
+records the session pid. The dispatcher records its own pid. A worker is
+live while its pid runs. If a receiver role has no live worker and no
+message hook, `coord msg` prints a warning. The message then waits until a
+session for that role starts. Start a dispatcher for that role, or add a hook.
+
 ### Resource locks
 
 Only one local-model generation may run at a time on the shared Ollama host.
@@ -110,11 +117,13 @@ Only one local-model generation may run at a time on the shared Ollama host.
    Each goal starts from the base branch, never from another goal branch.
 2. One writer per path. The task `scope` defines the paths you own. This is a
    convention `coord add`/`conflicts` warns about, not a lock the filesystem
-   enforces — a role whose duties say "never edit" (reviewer, architect,
-   project manager) also gets a read-only tool grant where the harness
-   supports one; other roles rely on scope discipline.
+   enforces. A role with `can_edit: false` (reviewer, architect, project
+   manager) gets a read-only tool grant where the harness supports one.
+   The git `pre-commit` hook refuses a commit by such a role.
 3. Acquire the `ollama` lock before any local generation.
-4. Before you report, run the task tests (see "Tests and shared resources").
+4. If the task has a goal, merge the goal branch into the task branch
+   (`git merge goal/<goal-short-id>`). `coord done` refuses a task branch
+   that lacks the goal branch head. Before you report, run the task tests (see "Tests and shared resources").
    Check the task's acceptance criteria.
    If the task spec has a Report format, use it. Otherwise report with
    `coord annotate ID "STATUS: done or blocked. FILES: <paths>.
@@ -131,8 +140,10 @@ Only one local-model generation may run at a time on the shared Ollama host.
    A bad result gets a new fix task, not a silent re-close.
 7. Prefer the shared knowledge graph over grep when `graphify-out/` exists
    (query it via MCP or `graphify query "..."`).
-8. If no task is available, use `coord next --wait` (or `coord inbox --wait`)
-   instead of a manual poll loop.
+8. Worker roles: if no task is available, use `coord next --wait` instead of
+   a manual poll loop. Lead roles (project manager, architect) never claim a
+   task. A lead role waits with `coord inbox --wait`. `coord claim` and
+   `coord next --wait` refuse a lead role.
 9. Write `coord msg`, `coord annotate`, and task titles in Simplified
    Technical English: one instruction per sentence, active voice, name the
    subject, max 20 words per sentence, no idioms.

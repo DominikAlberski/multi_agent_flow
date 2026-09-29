@@ -496,6 +496,61 @@ class PromptTest < Minitest::Test
   def test_tasks_prompt_names_the_role
     assert_includes Dispatcher::Prompt.tasks("tester"), "role tester"
   end
+
+  # A lead role owns no task. The prompt must not tell it to claim one.
+  def test_messages_prompt_for_a_lead_role_forbids_a_claim
+    prompt = Dispatcher::Prompt.messages([Dispatcher::Message.new("p", "project-manager", "GOAL x")], "architect")
+
+    assert_includes prompt, "Never claim a task"
+    refute_includes prompt, "claim a task, do the work"
+  end
+end
+
+class LeadOptionsTest < Minitest::Test
+  def test_a_lead_role_does_not_poll_tasks
+    refute Dispatcher::Options.parse(%w[architect --no-skill], { "COORD_DIR" => "/tmp/c" }).poll_tasks
+  end
+end
+
+class EditGrantTest < Minitest::Test
+  MANIFEST = { "agents" => [{ "harness" => "hermes", "role" => "reviewer", "can_edit" => false },
+                            { "harness" => "hermes", "role" => "tester", "can_edit" => true }] }.freeze
+
+  def setup
+    @dir = File.realpath(Dir.mktmpdir("dispatcher-grant-test"))
+    system("git", "init", "-q", @dir, exception: true)
+    File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(MANIFEST))
+  end
+
+  def teardown = FileUtils.remove_entry(@dir)
+
+  def command(role)
+    config = Dispatcher::Config.new(role: role, max_turns: 5, timeout: 60)
+    Dir.chdir(@dir) { Dispatcher::Harness::Hermes.build_command(config, "go", nil) }
+  end
+
+  def test_a_read_only_role_gets_the_limited_toolsets
+    assert_includes command("reviewer").each_cons(2).to_a, ["-t", Dispatcher::EditGrant::READ_ONLY_TOOLSETS]
+  end
+
+  def test_an_editing_role_keeps_every_toolset
+    refute_includes command("tester"), "-t"
+  end
+end
+
+class PresenceWriteTest < Minitest::Test
+  include DispatcherTestHelpers
+
+  def setup = @dir = Dir.mktmpdir("dispatcher-presence-test")
+  def teardown = FileUtils.remove_entry(@dir)
+
+  def test_a_cycle_records_the_dispatcher_as_present
+    Dispatcher::Main.new(config(command: "true", poll_tasks: false)).cycle
+    record = JSON.parse(File.read(File.join(@dir, "presence", "backend-developer-bot.json")))
+
+    assert_equal %w[backend-developer dispatch], record.values_at("role", "mode")
+    assert_equal Process.pid, record["pid"]
+  end
 end
 
 class SessionIdTest < Minitest::Test

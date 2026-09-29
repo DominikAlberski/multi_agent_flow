@@ -35,7 +35,13 @@ module Flow
 
   # Roles that dispatch or coordinate instead of implementing. They are never
   # advertised as dispatch targets in the architect prompt.
-  DISPATCH_EXCLUDE = %w[architect project-manager].freeze
+  LEADS = %w[project-manager architect].freeze
+  DISPATCH_EXCLUDE = LEADS
+
+  # Hermes toolsets for a role with can_edit false: no file, code_execution,
+  # or delegation toolset. The shell stays, because the role needs ./coord and git.
+  # NOTE: assets/dispatcher carries the same list; both run standalone.
+  READ_ONLY_TOOLSETS = "terminal,web,skills,todo,memory,session_search,clarify"
 
   # Applies to every `coord msg`, `coord annotate`, and task title/scope an
   # agent writes. Generated role files ship standalone (opencode/codex/hermes
@@ -71,7 +77,9 @@ module Flow
     4. Check out the task branch: `./coord start-task <id>`. It starts from the goal branch.
     5. Do the work. Stay inside the task scope.
     6. Before any local model generation: `./coord with-lock ollama -- <command>`.
-    7. Run the task tests. Do not run the merge suite. Check the task's acceptance criteria.
+    7. If the task has a goal, merge the goal branch into the task branch: `git merge goal/<goal-short-id>`.
+       Then run the task tests. Do not run the merge suite. Check the task's acceptance criteria.
+       `./coord done` refuses a task branch that lacks the goal branch head.
     8. Commit the work on the task branch. The architect merges the task branch.
     9. Report. If the task spec has a Report format, use it. Otherwise use:
          ./coord annotate <id> "STATUS: done or blocked. FILES: <paths>. TESTS: <one-line result>. NOTES: <assumptions or risks>"
@@ -167,7 +175,9 @@ module Flow
     - If the user gives you a team budget, record it: `maf team set --max <n> --allow <harness[:model]> ...`.
       Then manage the team yourself in dispatch mode. `maf prepare ... --dispatch` starts the worker in the background.
     - Check the team with `maf team`. It shows the budget, each worker, and the tasks by role.
-    - Staff the architect first. A goal needs the architect before any other worker.
+    - Staff the architect first, with `--dispatch`. A goal needs the architect before any other worker.
+      A dispatched architect starts on each message. An idle interactive architect reads nothing.
+    - Check who runs with `./coord who`. A role without a live worker does not read its messages.
     - If coord reports "No worker runs role <role>", add a worker for that role.
     - If a role has more than three backlog tasks and the budget has a free slot, add a worker for that role.
     - If a role has no tasks and no open goal needs it, retire its extra workers. Keep one worker per role that an open goal needs.
@@ -493,12 +503,19 @@ module Flow
       path = File.join(@project, ".agent-flow.json")
       data = kept_manifest_keys(path).merge(
         "generated_at" => Time.now.utc.iso8601,
-        "agents" => @agents.map { |a| { harness: a[:harness], role: a[:role], model: model_for(a) } }
+        "agents" => @agents.map { |a| manifest_entry(a) }
       )
       # Only record hermes_dir when it differs from the default: the default is
       # an absolute home path that would leak into a committed manifest.
       data["hermes_dir"] = @hermes_dir unless @hermes_dir == DEFAULT_HERMES_DIR
       File.write(path, JSON.pretty_generate(data))
+    end
+
+    # can_edit lets maf start, the dispatcher, and the git commit guard limit
+    # a role without the role definitions.
+    def manifest_entry(agent)
+      { harness: agent[:harness], role: agent[:role], model: model_for(agent),
+        can_edit: @roles.fetch(agent[:role]).fetch("can_edit") }
     end
 
     # Other tools own other keys (maf team: "team"; users: "base_branch").

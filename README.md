@@ -170,8 +170,9 @@ those tools are absent. If wiring into CI, install both to get full coverage.
 - **Scope overlap** is checked on `coord add` (warning) and `coord conflicts`
   (report). It is a path-prefix heuristic, not a full glob matcher. Scope is
   advisory: nothing but agent discipline stops a write outside it, except that
-  roles whose duties say "never edit" also get a restricted tool grant where the
-  harness supports one (Claude Code, opencode).
+  roles with `can_edit: false` get a restricted tool grant where the harness
+  supports one (Claude Code, opencode, Hermes), and the git `pre-commit` guard
+  refuses their commits.
 - **The `ollama` lock** is required when one local model host serves several
   agents. It is exclusive only while the holding process is alive; a killed
   process's lock is reclaimed once its TTL elapses (default 3600s).

@@ -400,6 +400,63 @@ class TaskwarriorTest < Minitest::Test
     assert_includes File.read(inbox("architect").first), "Task #{id} is done: finished work."
   end
 
+  def lead_env = @env.merge("COORD_ROLE" => "architect", "COORD_WORKER" => "architect-1")
+
+  # A lead role owns no task. A claim by a lead breaks the role split.
+  def test_claim_is_refused_for_a_lead_role
+    id = add("lead must not take this")
+    _out, err = capture_io { assert_raises(SystemExit) { Coord::CLI.new(["claim", id], env: lead_env).run } }
+
+    assert_includes err, "lead role"
+    assert_empty find(id)["worker"].to_s
+  end
+
+  def test_next_wait_is_refused_for_a_lead_role
+    _out, err = capture_io { assert_raises(SystemExit) { Coord::CLI.new(%w[next --wait], env: lead_env).run } }
+
+    assert_includes err, "./coord inbox --wait"
+  end
+
+  def session_env(role, worker, pid = Process.pid)
+    @env.merge("COORD_ROLE" => role, "COORD_WORKER" => worker, "COORD_SESSION_PID" => pid.to_s)
+  end
+
+  def who = capture_io { Coord::CLI.new(["who"], env: @env).run }.first
+
+  def test_presence_records_a_session_as_live
+    capture_io { Coord::CLI.new(["status"], env: session_env("reviewer", "reviewer-1")).run }
+
+    assert_match(/^reviewer-1\treviewer\tsession\tlive\t/, who)
+  end
+
+  def test_presence_shows_a_dead_pid_as_gone
+    pid = spawn("true").tap { |child| Process.wait(child) }
+    capture_io { Coord::CLI.new(["status"], env: session_env("reviewer", "reviewer-1", pid)).run }
+
+    assert_match(/^reviewer-1\treviewer\tsession\tgone\t/, who)
+  end
+
+  # The dispatcher owns the presence file of a dispatched worker.
+  def test_presence_skips_a_dispatched_run
+    env = session_env("reviewer", "reviewer-1").merge("COORD_DISPATCHED" => "1")
+    capture_io { Coord::CLI.new(["status"], env: env).run }
+
+    assert_equal "no presence records\n", who
+  end
+
+  def test_msg_warns_when_the_role_has_no_push_path
+    _out, err = capture_io { Coord::CLI.new(["msg", "--from", "tester", "architect", "decide"], env: @env).run }
+
+    assert_includes err, "architect has no live session and no message hook"
+  end
+
+  def test_msg_is_quiet_when_the_role_is_live
+    capture_io { Coord::CLI.new(["status"], env: session_env("architect", "architect-1")).run }
+    _out, err = capture_io { Coord::CLI.new(["msg", "--from", "tester", "architect", "decide"], env: @env).run }
+
+    refute_includes err, "no live session"
+  end
+
   def write_registry(workers)
     File.write(File.join(@env["COORD_DIR"], "workers.json"), JSON.generate(workers))
   end
@@ -896,6 +953,49 @@ class GoalTest < Minitest::Test
   def worker_worktree
     coord("worktree", "tester", "1")
     File.join(@root, ".worktrees", "tester-1")
+  end
+
+  # A task with own commits and a goal branch that moved on after the start.
+  def started_task_behind_goal
+    uuid = add_goal
+    task = coord("add", "--role", "tester", "--scope", "test/**", "--goal", uuid, "--title", "t").strip
+    worker_dir = worker_worktree
+    coord("start-task", task, dir: worker_dir)
+    commit(worker_dir, "task work")
+    commit(File.join(@root, ".worktrees", "goal-#{short(uuid)}"), "sibling task merged")
+    [uuid, task, worker_dir]
+  end
+
+  # Task tests on a branch without the sibling tasks miss semantic conflicts.
+  def test_done_is_refused_while_the_task_branch_lacks_the_goal_head
+    uuid, task, worker_dir = started_task_behind_goal
+
+    error = assert_raises(SystemExit) { coord("done", task, dir: worker_dir) }
+    assert_includes error.message, "git merge goal/#{short(uuid)}"
+  end
+
+  def test_done_passes_after_the_goal_branch_is_merged
+    uuid, task, worker_dir = started_task_behind_goal
+    git(worker_dir, "-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "--no-edit", "goal/#{short(uuid)}")
+
+    assert_includes coord("done", task, dir: worker_dir), "done #{task}"
+  end
+
+  def test_done_force_skips_the_goal_head_check
+    _uuid, task, worker_dir = started_task_behind_goal
+
+    assert_includes coord("done", "--force", task, dir: worker_dir), "done #{task}"
+  end
+
+  # A review task commits nothing, so it has nothing to integrate.
+  def test_done_passes_for_a_task_branch_without_own_commits
+    uuid = add_goal
+    task = coord("add", "--role", "tester", "--scope", "test/**", "--goal", uuid, "--title", "t").strip
+    worker_dir = worker_worktree
+    coord("start-task", task, dir: worker_dir)
+    commit(File.join(@root, ".worktrees", "goal-#{short(uuid)}"), "sibling task merged")
+
+    assert_includes coord("done", task, dir: worker_dir), "done #{task}"
   end
 
   def test_worktree_warns_when_a_harness_has_no_file_for_the_role

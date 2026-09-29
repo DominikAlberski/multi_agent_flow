@@ -244,7 +244,7 @@ class FlowTest < InstallerTestCase
 
     assert_equal 0, status, out
     assert File.exist?(agent_file)
-    assert_equal [{ "harness" => "opencode", "role" => "backend-developer", "model" => nil }],
+    assert_equal [{ "harness" => "opencode", "role" => "backend-developer", "model" => nil, "can_edit" => true }],
                  manifest["agents"]
   end
 
@@ -460,6 +460,18 @@ class VaultTest < Minitest::Test
 end
 
 class SetupAgentTest < Minitest::Test
+  # A lead role owns no task. Its launch prompt must not tell it to claim one.
+  def test_hermes_prompt_for_a_lead_role_forbids_a_claim
+    prompt = SetupAgent::Launcher::Hermes.prompt("project-manager")
+
+    assert_includes prompt, "Never claim a task"
+    assert_includes prompt, "./coord inbox --wait"
+  end
+
+  def test_hermes_prompt_for_a_worker_role_claims_tasks
+    assert_includes SetupAgent::Launcher::Hermes.prompt("tester"), "Claim a task"
+  end
+
   def test_role_without_a_worker_suffix_defaults_to_one
     parsed = SetupAgent::Args.parse(%w[opencode backend-developer])
 
@@ -715,5 +727,74 @@ class HermesHookTest < Minitest::Test
     entry = { "approved_at" => Time.now.utc.iso8601(6), "command" => @script,
               "event" => event, "script_mtime_at_approval" => recorded }
     File.write(@allowlist, JSON.pretty_generate("approvals" => [entry]))
+  end
+end
+
+# The commit guard is a git pre-commit hook. It blocks commits by roles with
+# can_edit false. `git merge` does not run pre-commit, so merges still pass.
+class CommitGuardTest < InstallerTestCase
+  HOOK = File.join(ROOT, "assets", "git-hooks", "pre-commit")
+
+  def setup
+    super
+    skip "git not installed" unless system("git", "--version", out: File::NULL)
+    git("init", "-q", "-b", "main")
+    commit("init")
+  end
+
+  def git(*args, env: {})
+    system(env, "git", "-C", @dir, "-c", "user.email=t@t", "-c", "user.name=t", *args,
+           out: File::NULL, err: File::NULL)
+  end
+
+  def commit(message, env: {}) = git("commit", "-q", "--allow-empty", "-m", message, env: env)
+  def hook_path = File.join(@dir, ".git", "hooks", "pre-commit")
+
+  def install_guard
+    FileUtils.cp(HOOK, hook_path)
+    agents = [{ role: "reviewer", can_edit: false }, { role: "tester", can_edit: true }]
+    File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(agents: agents))
+  end
+
+  def test_refuses_a_commit_by_a_read_only_role
+    install_guard
+
+    refute commit("review edit", env: { "COORD_ROLE" => "reviewer" })
+  end
+
+  def test_allows_a_commit_by_an_editing_role_and_by_a_human
+    install_guard
+
+    assert commit("tester edit", env: { "COORD_ROLE" => "tester" })
+    assert commit("human edit")
+  end
+
+  def test_allows_a_merge_by_a_read_only_role
+    install_guard
+    git("checkout", "-q", "-b", "task/1")
+    commit("task work")
+    git("checkout", "-q", "main")
+    commit("other work")
+
+    assert git("merge", "-q", "--no-edit", "task/1", env: { "COORD_ROLE" => "reviewer" })
+  end
+
+  def bootstrap(*args) = run_ruby(BOOTSTRAP, @dir, "--roles", "architect", *args)
+
+  def test_bootstrap_installs_the_guard
+    out, status = bootstrap
+
+    assert_equal 0, status, out
+    assert File.executable?(hook_path)
+    assert_includes File.read(hook_path), "commit-guard - git pre-commit hook"
+  end
+
+  def test_bootstrap_keeps_a_foreign_hook_even_with_force
+    File.write(hook_path, "#!/bin/sh\nmake lint\n")
+
+    out, = bootstrap("--force")
+
+    assert_equal "#!/bin/sh\nmake lint\n", File.read(hook_path)
+    assert_includes out, "the commit guard is off"
   end
 end

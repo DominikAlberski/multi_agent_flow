@@ -119,6 +119,36 @@ module Dispatcher
     end
   end
 
+  # Lead roles own no tasks. They get an inbox prompt and no task polling.
+  # NOTE: assets/coord carries the same list; both run standalone.
+  LEADS = %w[project-manager architect].freeze
+
+  # EditGrant reads each agent's can_edit from .agent-flow.json. On Hermes,
+  # a role with can_edit false starts without the file-writing toolsets.
+  # NOTE: lib/maf/flow.rb carries the same toolset list; both run standalone.
+  module EditGrant
+    READ_ONLY_TOOLSETS = "terminal,web,skills,todo,memory,session_search,clarify"
+
+    def self.read_only?(role)
+      Project.manifest.fetch("agents", []).any? { |agent| agent["role"] == role && agent["can_edit"] == false }
+    end
+  end
+
+  # Presence writes coordination/presence/<worker>.json once per cycle, so
+  # `coord who` shows the dispatcher as live while its pid runs.
+  module Presence
+    def self.write(config)
+      dir = File.join(config.coord_dir, "presence")
+      FileUtils.mkdir_p(dir)
+      File.write(File.join(dir, "#{config.worker}.json"), JSON.generate(record(config)))
+    end
+
+    def self.record(config)
+      { "role" => config.role, "worker" => config.worker, "mode" => "dispatch", "pid" => Process.pid,
+        "seen_at" => Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ") }
+    end
+  end
+
   # HermesSkill resolves the skill flow.rb generated for a role: the name is
   # <project>-<role>, and the dir is the manifest's hermes_dir (set by
   # `flow.rb --hermes-dir`) or flow.rb's default ~/.hermes/skills.
@@ -332,6 +362,7 @@ module Dispatcher
         cmd = %w[hermes chat --oneshot --yolo --format stream-json -Q]
         cmd += ["--skills", config.skill] if config.skill
         cmd += ["--model", config.model] if config.model
+        cmd += ["-t", EditGrant::READ_ONLY_TOOLSETS] if EditGrant.read_only?(config.role)
         cmd += ["--max-turns", config.max_turns.to_s, "--run-budget", run_budget(config).to_s]
         cmd + resume(session_id, "--resume") + ["-q", prompt]
       end
@@ -521,9 +552,16 @@ module Dispatcher
       annotate it, and finish it with ./coord done. When no task is left, stop.
     TEXT
 
+    LEAD_ONE_SHOT = <<~TEXT
+      You run as role %<role>s in one-shot mode. Follow your role file and the coordination rules in AGENTS.md.
+      You are a lead role. Never claim a task. Do not use --wait: nobody is waiting on this session.
+      Handle the messages above. When every message is handled, stop.
+    TEXT
+
     def self.messages(messages, role)
       bodies = messages.map { |message| "--- message from #{message.from} ---\n#{message.text}\n" }
-      "The dispatcher took these messages from your inbox:\n\n#{bodies.join("\n")}\n#{format(ONE_SHOT, role: role)}"
+      rules = LEADS.include?(role) ? LEAD_ONE_SHOT : ONE_SHOT
+      "The dispatcher took these messages from your inbox:\n\n#{bodies.join("\n")}\n#{format(rules, role: role)}"
     end
 
     def self.tasks(role) = "Unclaimed tasks exist for your role.\n\n#{format(ONE_SHOT, role: role)}"
@@ -595,6 +633,7 @@ module Dispatcher
     # At most one agent run per cycle: the message prompt already tells the
     # agent to work through `coord next`.
     def cycle
+      Presence.write(@config)
       worked = dispatch_messages || (@config.poll_tasks && dispatch_tasks)
       Log.line("no work this cycle") if @config.verbose && !worked
     end
@@ -671,6 +710,7 @@ module Dispatcher
     def self.finish(config, env)
       config.coord_dir = File.expand_path(env.fetch("COORD_DIR", "coordination"))
       config.worker = env.fetch("COORD_WORKER", "#{config.role}-bot")
+      config.poll_tasks = false if LEADS.include?(config.role)
       config.skill = nil if config.no_skill
       config.skill ||= HermesSkill.name(config.role) if !config.no_skill && HermesSkill.installed?(config.role)
       config

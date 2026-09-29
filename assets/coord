@@ -39,6 +39,10 @@ module Coord
   DEFAULT_LEASE_TTL = 4 * 3600
   DEFAULT_POLL_INTERVAL = 60
 
+  # Lead roles plan and talk to the user. They never own a task, so they wait
+  # on their inbox, not on the task board.
+  LEADS = %w[project-manager architect].freeze
+
   USAGE = <<~TEXT
     coord - multi-agent coordination
 
@@ -51,9 +55,9 @@ module Coord
       coord start-task ID                  check out branch task/<id> from its goal branch
       coord next [ROLE] [--mine] [--wait [--interval S] [--timeout S]]
       coord conflicts                      list pending tasks with overlapping scopes
-      coord claim ID [--force]             claim for COORD_WORKER (atomic)
+      coord claim ID [--force]             claim for COORD_WORKER (atomic; refused for lead roles)
       coord unclaim ID                     release a claim without finishing it
-      coord done ID
+      coord done ID [--force]              complete (refused while the task branch lacks the goal head)
       coord annotate ID TEXT...
       coord msg [--from A] TO TEXT...
       coord broadcast [--from A] [--to workers|leads|all] TEXT...
@@ -66,6 +70,7 @@ module Coord
       coord with-lock NAME [--ttl SECONDS] -- CMD...
       coord worktree ROLE [WORKER]          create a git worktree + branch for a role
       coord status
+      coord who                            list workers with their presence (live or gone)
       coord board
       coord export
       coord help
@@ -81,7 +86,7 @@ module Coord
     "lock" => :cmd_lock, "unlock" => :cmd_unlock, "with-lock" => :cmd_with_lock,
     "worktree" => :cmd_worktree, "goal" => :cmd_goal, "start-task" => :cmd_start_task,
     "status" => :cmd_status, "board" => :cmd_board, "export" => :cmd_export,
-    "help" => :cmd_help
+    "who" => :cmd_who, "help" => :cmd_help
   }.freeze
 
   ADD_OPTS = { "--role" => :role, "--scope" => :scope, "--ref" => :ref,
@@ -99,6 +104,7 @@ module Coord
     def board = @board ||= Board.new(tasks, paths)
     def event_log = @event_log ||= EventLog.new(paths)
     def hooks = @hooks ||= Hooks.new(paths)
+    def presence = @presence ||= Presence.new(paths)
   end
 
   # Paths resolves every coordination path from one root.
@@ -121,6 +127,7 @@ module Coord
     def taskdata_dir = File.join(coord_dir, "taskdata")
     def log_path = File.join(coord_dir, "events.log")
     def hook_log(role) = File.join(message_hooks_dir, "#{role}.log")
+    def presence_dir = File.join(coord_dir, "presence")
     def manifest_path = File.join(File.dirname(File.expand_path(coord_dir)), ".agent-flow.json")
   end
 
@@ -696,6 +703,67 @@ module Coord
     end
   end
 
+  # Presence records which workers run now, in coordination/presence/<worker>.json.
+  # `maf start` exports COORD_SESSION_PID (the harness pid, kept across exec),
+  # so every coord call from that session can record it. The dispatcher writes
+  # its own file (mode "dispatch"); a dispatched run (COORD_DISPATCHED) writes
+  # none. A worker is live while its pid runs. A session in a container shows
+  # as gone, because the host cannot see its pid.
+  class Presence
+    def initialize(paths)
+      @paths = paths
+    end
+
+    def touch(role, worker, env)
+      pid = env["COORD_SESSION_PID"].to_i
+      return unless pid.positive? && recordable?(role, worker, env)
+
+      write(worker, "role" => role, "worker" => worker, "mode" => "session", "pid" => pid)
+    end
+
+    def live?(role) = entries.any? { |entry| entry["role"] == role && self.class.alive?(entry["pid"]) }
+
+    def report
+      return puts("no presence records") if entries.empty?
+
+      entries.each { |entry| puts line(entry) }
+    end
+
+    def self.alive?(pid)
+      pid.to_i.positive? && Process.kill(0, pid.to_i) && true
+    rescue Errno::ESRCH
+      false
+    rescue Errno::EPERM
+      true
+    end
+
+    private
+
+    def recordable?(role, worker, env)
+      !env["COORD_DISPATCHED"] && ([role, worker] & ["unknown", ""]).empty? && Dir.exist?(@paths.coord_dir)
+    end
+
+    def write(worker, data)
+      FileUtils.mkdir_p(@paths.presence_dir)
+      path = File.join(@paths.presence_dir, "#{worker}.json")
+      File.write(path, JSON.generate(data.merge("seen_at" => Time.now.utc.iso8601)))
+    end
+
+    def entries = Dir.glob(File.join(@paths.presence_dir, "*.json")).sort.filter_map { |path| read(path) }
+
+    def read(path)
+      JSON.parse(File.read(path))
+    rescue JSON::ParserError, Errno::ENOENT
+      nil
+    end
+
+    def line(entry)
+      state = self.class.alive?(entry["pid"]) ? "live" : "gone"
+      fields = entry.values_at("worker", "role", "mode") + [state, "pid=#{entry["pid"]}", "seen=#{entry["seen_at"]}"]
+      fields.join("\t")
+    end
+  end
+
   # EventLog is a shared, append-only log in coordination/events.log. Every
   # claim, completion, unclaim, message, and broadcast appends one line so any
   # agent can see the history of coordination without reading individual inbox
@@ -775,7 +843,6 @@ module Coord
   # Leads plan and talk to the user. Workers do the tasks. A notice about
   # ports or test databases is for workers only.
   module Audiences
-    LEADS = %w[project-manager architect].freeze
     PICK = {
       "workers" => ->(role) { !LEADS.include?(role) },
       "leads" => ->(role) { LEADS.include?(role) },
@@ -971,6 +1038,31 @@ module Coord
       return Git.run(@dir, "checkout", "-q", branch) if Git.branch?(@dir, branch)
 
       Git.run(@dir, "checkout", "-q", "-b", branch, base)
+    end
+  end
+
+  # TaskSync checks that a task branch contains the head of its goal branch.
+  # Task tests on a branch without the merged sibling tasks miss semantic
+  # conflicts, so `coord done` refuses a stale branch. A task branch without
+  # own commits (a review task) has nothing to integrate and passes.
+  class TaskSync
+    def initialize(dir)
+      @dir = dir
+    end
+
+    def stale(task)
+      goal = task["goalid"]
+      return nil if goal.to_s.empty?
+
+      pair = [Goals.branch(goal), "task/#{Goals.short(task["uuid"])}"]
+      pair if pair.all? { |name| Git.branch?(@dir, name) } && behind?(*pair)
+    end
+
+    private
+
+    def behind?(goal, branch)
+      own = `git -C #{Shellwords.escape(@dir)} rev-list --count #{goal}..#{branch} 2>/dev/null`.to_i
+      own.positive? && !Git.run(@dir, "merge-base", "--is-ancestor", goal, branch)
     end
   end
 
@@ -1273,6 +1365,7 @@ module Coord
       interval = @args.interval
       timeout = @args.timeout
       role = require_role!(@args.shift || @role, "next ROLE, or export COORD_ROLE")
+      refuse_lead!(role, "has no tasks to wait for") if wait
       return board.mine_tasks(role, @worker) if mine
 
       return board.next_tasks(role) unless wait
@@ -1299,6 +1392,7 @@ module Coord
       id = @args.require_arg("claim", "ID")
       force = @args.flag?("--force")
       require_worker!(@worker, "claim ID (needs COORD_WORKER or COORD_ROLE)")
+      refuse_lead!(@role, "never claims a task")
       holder = locks.with_mutex("task-#{id}", worker: @worker) { tasks.claim(id, @worker, force: force) }
       notify_prior_holder(id, holder) if holder && holder.worker != @worker
       event_log.append("claim", @worker, id)
@@ -1313,8 +1407,10 @@ module Coord
     end
 
     def cmd_done
+      force = @args.flag?("--force")
       id = @args.require_arg("done", "ID")
       task = tasks.find(id)
+      refuse_stale!(task) unless force
       tasks.done(id)
       event_log.append("done", @worker, id)
       report_done(task)
@@ -1434,6 +1530,7 @@ module Coord
     end
 
     def cmd_status = board.status
+    def cmd_who = presence.report
     def cmd_board = board.board
 
     def cmd_export
@@ -1538,13 +1635,39 @@ module Coord
 
     def deliver(to, from, text)
       path = messages.send_message(to, from, text)
-      hooks.run(to, from: from, message_path: path)
+      push(to, from, path)
     end
 
     def deliver_broadcast(from, text, roles)
       results = messages.broadcast(from, text, roles)
-      results.each { |role, path| hooks.run(role, from: from, message_path: path) }
+      results.each { |role, path| push(role, from, path) }
       event_log.append("broadcast", @worker, text)
+    end
+
+    NO_PUSH = "coord: %<role>s has no live session and no message hook. The message waits until a %<role>s " \
+              "session starts. Fix: maf start HARNESS %<role>s --dispatch --detach, " \
+              "or add an executable coordination/message-hooks/%<role>s.sh"
+
+    # A message is pushed by a hook or read by a live session. Without both,
+    # it waits unseen. Say so at send time, not hours later.
+    def push(role, from, path)
+      return if hooks.run(role, from: from, message_path: path) || presence.live?(role)
+
+      warn format(NO_PUSH, role: role)
+    end
+
+    LEAD_HINT = "coord: role %<role>s is a lead role and %<what>s. Wait for messages with ./coord inbox --wait."
+
+    def refuse_lead!(role, what)
+      abort format(LEAD_HINT, role: role, what: what) if LEADS.include?(role)
+    end
+
+    STALE = "coord: branch %<task>s lacks the head of %<goal>s. In your worktree, run `git merge %<goal>s`. " \
+            "Run the task tests again. Then run ./coord done again. Use --force only if the merge is not wanted."
+
+    def refuse_stale!(task)
+      goal, branch = TaskSync.new(@project_root).stale(task)
+      abort format(STALE, task: branch, goal: goal) if goal
     end
 
     def hook_files(role)
@@ -1592,10 +1715,12 @@ module Coord
       @worker = env.fetch("COORD_WORKER", @role)
       @taskrc = env.fetch("TASKRC", File.join(@coord_dir, "taskrc"))
       @project_root = Dir.pwd
+      @env = env
       ENV["TASKRC"] = @taskrc
     end
 
     def run
+      presence.touch(@role, @worker, @env)
       dispatch(@args.shift || "help")
     rescue Error => e
       abort "coord: #{e.message}"

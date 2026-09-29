@@ -211,9 +211,9 @@ watcher, with its pid in `coordination/vault.pid` and its output in
 ## Operating rules (also written into the project contract)
 
 1. One writer per path; the task `scope` defines ownership. This is a
-   convention `coord` warns about, not an enforced lock; roles whose duties
-   say "never edit" also get a restricted tool grant where the harness
-   supports one.
+   convention `coord` warns about, not an enforced lock. Roles with
+   `can_edit: false` get a restricted tool grant where the harness supports
+   one, and the git `pre-commit` guard refuses their commits.
 2. Work in a per-agent branch or git worktree (`coord worktree ROLE`, or
    `maf start HARNESS ROLE` which also does this). Worktrees live inside the
    project at `.worktrees/<role>-<worker_id>` (gitignored). In the worktree,
@@ -224,7 +224,13 @@ watcher, with its pid in `coordination/vault.pid` and its output in
    `docs/decisions/`); append, never rewrite. `obsidian/` is
    regenerated graphify output, not a durable store.
 5. Report via `coord annotate`; coordinate via `coord msg`.
-6. If no task is available, use `coord next --wait` instead of polling by hand.
+6. Worker roles: if no task is available, use `coord next --wait` instead of
+   polling by hand. Lead roles (project manager, architect) never claim a task;
+   they wait with `coord inbox --wait`.
+7. Before `coord done`, merge the goal branch into the task branch and rerun
+   the task tests. `coord done` refuses a task branch without the goal head.
+8. `coord who` shows which workers are live. `coord msg` warns when the
+   receiver role has no live worker and no message hook.
 
 ## Notes
 

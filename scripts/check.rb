@@ -43,7 +43,16 @@ module Check
     "coord" => "coord - shared coordination layer",
     "dispatcher" => "dispatcher - task board and inbox monitor that starts one-shot agents.",
     "vault" => "vault - shared knowledge base watcher (graphify + Obsidian + MCP).",
-    "dashboard" => "dashboard - local observability web UI for multi-agent coordination."
+    "dashboard" => "dashboard - local observability web UI for multi-agent coordination.",
+    "git-hooks/pre-commit" => "commit-guard - git pre-commit hook for the multi-agent flow."
+  }.freeze
+
+  # Standalone scripts repeat the lead role list and the read-only Hermes
+  # toolsets. Each file must carry the same literal.
+  SHARED_LITERALS = {
+    "LEADS = %w[project-manager architect].freeze" => %w[assets/coord assets/dispatcher lib/maf/flow.rb],
+    %(READ_ONLY_TOOLSETS = "terminal,web,skills,todo,memory,session_search,clarify") =>
+      %w[assets/dispatcher lib/maf/flow.rb]
   }.freeze
 
   module_function
@@ -118,8 +127,18 @@ module Check
     false
   end
 
-  CHECKS = %i[check_udas check_markers check_no_duplicate_block check_worktree_paths
-              check_script_signatures].freeze
+def check_shared_literals
+  bad = SHARED_LITERALS.flat_map do |literal, files|
+    files.reject { |rel| File.read(File.join(ROOT, rel)).include?(literal) }
+  end
+  return true if bad.empty?
+
+  warn "FAIL: shared literal out of sync in: #{bad.uniq.join(", ")}"
+  false
+end
+
+CHECKS = %i[check_udas check_markers check_no_duplicate_block check_worktree_paths
+            check_script_signatures check_shared_literals].freeze
 
   def run
     ok = check_files_exist && CHECKS.map { |name| send(name) }.all?

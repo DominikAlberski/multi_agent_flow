@@ -1,0 +1,32 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# commit-guard - git pre-commit hook for the multi-agent flow.
+#
+# Refuses a commit when COORD_ROLE names a role with `can_edit: false` in
+# .agent-flow.json (project manager, architect, reviewer). A role file tells
+# these roles not to edit code. This hook stops their edits from reaching a
+# branch. `git merge` does not run pre-commit, so the architect can still
+# merge task branches. A commit without COORD_ROLE (a human) always passes.
+require "json"
+
+module CommitGuard
+  MESSAGE = "commit-guard: role %s has can_edit false and cannot commit. " \
+            "Send the change to a worker role as a task."
+
+  # The main checkout holds the manifest. In a worktree, the common git dir
+  # is absolute. In the main checkout, it is relative to the checkout.
+  def self.root = File.dirname(File.expand_path(`git rev-parse --git-common-dir`.strip))
+
+  def self.agents
+    path = File.join(root, ".agent-flow.json")
+    File.exist?(path) ? JSON.parse(File.read(path)).fetch("agents", []) : []
+  rescue JSON::ParserError
+    []
+  end
+
+  def self.read_only?(role) = agents.any? { |agent| agent["role"] == role && agent["can_edit"] == false }
+end
+
+role = ENV["COORD_ROLE"].to_s
+abort format(CommitGuard::MESSAGE, role) if !role.empty? && CommitGuard.read_only?(role)

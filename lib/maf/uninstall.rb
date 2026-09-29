@@ -99,6 +99,17 @@ module Uninstall
     end
   end
 
+  # The commit guard lives in the git hooks dir, outside the working tree.
+  class CommitGuard
+    def initialize(project) = @project = project
+
+    def steps
+      path = Git.lines(@project, "rev-parse", "--git-path", "hooks").first
+      hook = path && File.join(File.expand_path(path, @project), "pre-commit")
+      hook && Owned.signed?(hook, Bootstrap::COMMIT_GUARD_SIGNATURE) ? [Owned.remove(hook)] : []
+    end
+  end
+
   # .agent-flow.json lists the generated agents. Hermes skills live outside
   # the project, so only the manifest tells which ones belong to it.
   class Manifest
@@ -272,7 +283,7 @@ module Uninstall
 
     def plan
       manifest = Manifest.new(project)
-      [VaultWatcher.new(project), Worktrees.new(project, @opts[:force]), Scripts.new(project),
+      [VaultWatcher.new(project), Worktrees.new(project, @opts[:force]), Scripts.new(project), CommitGuard.new(project),
        RoleFiles.new(project, manifest), ClaudeSettings.new(project), MarkedFiles.new(project),
        Coordination.new(project), manifest].flat_map(&:steps)
     end
