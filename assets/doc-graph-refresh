@@ -7,10 +7,10 @@
 # name. The hook starts the script detached, so the commit returns at once.
 # The script exits 0 in every case: a failed refresh must never fail a commit.
 #
-# The script writes the shared graph in the MAIN checkout, resolved from
-# git-common-dir. A refresh started in a worktree therefore writes the one
-# shared graph. It builds in a temp dir and swaps on success, so a failed
-# extract keeps the old graph.
+# The script scans the checkout that runs the hook, then writes the shared
+# graph in the MAIN checkout, resolved from git-common-dir. A refresh started
+# in a worktree therefore writes the one shared graph. It builds in a temp
+# dir and swaps on success, so a failed extract keeps the old graph.
 #
 # Usage: coordination/doc-graph-refresh post-commit|post-merge
 
@@ -143,7 +143,7 @@ module DocGraph
     end
 
     def self.build(tmp)
-      ok = system("graphify", "extract", DocGraph.main, "--backend", "gemini", "--out", tmp)
+      ok = system("graphify", "extract", Dir.pwd, "--backend", "gemini", "--out", tmp)
       ok && File.exist?(File.join(tmp, GRAPH, "graph.json"))
     end
   end
