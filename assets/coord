@@ -121,7 +121,7 @@ module Coord
     def locks_dir = File.join(coord_dir, "locks")
     def exports_dir = File.join(coord_dir, "exports")
     def lock_dir(name) = File.join(locks_dir, "#{name}.d")
-    def lock_meta(name) = File.join(locks_dir, "#{name}.json")
+    def lock_meta(name) = File.join(lock_dir(name), "meta.json")
     def export_path = File.join(exports_dir, "tasks.json")
     def board_path = File.join(exports_dir, "board.md")
     def taskdata_dir = File.join(coord_dir, "taskdata")
@@ -542,7 +542,6 @@ module Coord
 
     def release(name)
       FileUtils.rm_rf(@paths.lock_dir(name))
-      FileUtils.rm_f(@paths.lock_meta(name))
     end
 
     private
@@ -567,7 +566,18 @@ module Coord
       return unless Dir.exist?(@paths.lock_dir(name))
       raise Error, "locked by #{holder(name)} (coord unlock #{name})" unless stale?(name)
 
-      release(name)
+      evict(name)
+    end
+
+    # Rename is atomic: of several processes that see the same stale lock, one
+    # renames it away. The others get ENOENT and never delete a fresh lock.
+    # Metadata lives inside the lock dir, so it moves with the rename.
+    def evict(name)
+      tomb = "#{@paths.lock_dir(name)}.stale-#{Process.pid}-#{Time.now.to_f}"
+      File.rename(@paths.lock_dir(name), tomb)
+      FileUtils.rm_rf(tomb)
+    rescue Errno::ENOENT
+      nil
     end
 
     # A lock whose metadata is missing is either a crashed writer or a

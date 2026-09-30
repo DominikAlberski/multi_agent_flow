@@ -174,8 +174,9 @@ those tools are absent. If wiring into CI, install both to get full coverage.
   supports one (Claude Code, opencode, Hermes), and the git `pre-commit` guard
   refuses their commits.
 - **The `ollama` lock** is required when one local model host serves several
-  agents. It is exclusive only while the holding process is alive; a killed
-  process's lock is reclaimed once its TTL elapses (default 3600s).
+  agents. Exclusion is TTL-based: coord stores no pid. A lock is reclaimed once its
+  TTL elapses (default 3600s), even if the holder is still alive. A killed
+  holder keeps the lock until the TTL elapses.
 - **The `project-manager` role** is the user's proxy: the user talks to it, it
   creates goals (`coord goal add`), sends them to the architect, and relays the report back. Without
   `project-manager`, the user talks to the architect directly.

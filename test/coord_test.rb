@@ -276,15 +276,24 @@ class TaskwarriorTest < Minitest::Test
 
   def test_lock_records_the_worker_as_holder
     capture_io { Coord::CLI.new(["lock", "db", "--worker", "backend-2"], env: @env).run }
-    meta = JSON.parse(File.read(File.join(@env["COORD_DIR"], "locks", "db.json")))
+    meta = JSON.parse(File.read(File.join(@env["COORD_DIR"], "locks", "db.d", "meta.json")))
     assert_equal "backend-2", meta["worker"]
   end
 
   def test_lock_defaults_the_holder_to_coord_worker
     capture_io { Coord::CLI.new(["lock", "db"], env: @env).run }
-    meta = JSON.parse(File.read(File.join(@env["COORD_DIR"], "locks", "db.json")))
+    meta = JSON.parse(File.read(File.join(@env["COORD_DIR"], "locks", "db.d", "meta.json")))
     assert_equal "backend-1", meta["worker"]
   end
+
+def test_stale_lock_is_reclaimed_and_leaves_no_tombstone
+  dir = File.join(@env["COORD_DIR"], "locks", "db.d")
+  FileUtils.mkdir_p(dir)
+  File.write(File.join(dir, "meta.json"), JSON.generate(worker: "old", ts: 0, ttl: 1))
+  capture_io { Coord::CLI.new(["lock", "db", "--worker", "new"], env: @env).run }
+  assert_equal "new", JSON.parse(File.read(File.join(dir, "meta.json")))["worker"]
+  assert_equal ["db.d"], Dir.children(File.join(@env["COORD_DIR"], "locks")) - [".gitkeep"]
+end
 
   def test_log_records_the_worker_as_message_sender
     capture_io { Coord::CLI.new(["msg", "reviewer", "hello"], env: @env).run }
