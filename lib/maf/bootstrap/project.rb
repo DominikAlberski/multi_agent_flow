@@ -4,7 +4,8 @@ module Bootstrap
   # Project holds the target directory and answers questions about the files
   # in it. Planners and the writer share one Project.
   class Project
-    APPEND_FILES = { taskrc: "taskrc.append", contract: "agents-contract.md", gitignore: "gitignore.append" }.freeze
+    APPEND_FILES = { taskrc: "taskrc.append", contract: "agents-contract.md", gitignore: "gitignore.append",
+                     post_commit: "git-hooks/post-commit", post_merge: "git-hooks/post-merge" }.freeze
 
     attr_reader :target, :assets
 

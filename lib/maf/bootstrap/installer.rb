@@ -8,7 +8,8 @@ module Bootstrap
     PLAN_STEPS = [
       %i[layout dirs], %i[layout gitkeeps], %i[scripts coord], %i[scripts dispatcher], %i[scripts vault],
       %i[scripts dashboard], %i[text taskrc], %i[text claude_md], %i[text contracts], %i[text gitignore],
-      %i[scripts hooks], %i[scripts opencode_plugin], %i[claude plan], %i[scripts commit_guard]
+      %i[scripts hooks], %i[scripts opencode_plugin], %i[claude plan], %i[scripts commit_guard],
+      %i[scripts doc_graph], %i[scripts doc_graph_hooks]
     ].freeze
 
     def initialize(argv)

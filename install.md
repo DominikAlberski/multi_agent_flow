@@ -131,6 +131,20 @@ version of the script. A new script version needs a new approval.
 
 Confirm that every check from `hermes hooks doctor` passes. Then continue.
 
+## Step 5c - Set the Gemini key for the doc-graph refresh
+
+`maf add` appends a flow block to the `post-commit` and `post-merge` git hooks.
+A markdown commit or merge starts `coordination/doc-graph-refresh` detached.
+The script runs `graphify extract . --backend gemini` and re-exports
+`obsidian/`. It needs `GEMINI_API_KEY`:
+
+```sh
+export GEMINI_API_KEY=<key>
+```
+
+The hook starts no LLM call without the key. It logs a skip in
+`coordination/doc-graph.log`. The hook never fails a commit.
+
 ## Step 6 - Verify
 
 ```sh

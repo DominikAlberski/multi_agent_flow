@@ -28,8 +28,8 @@ module Uninstall
     def plan
       manifest = Manifest.new(project)
       [VaultWatcher.new(project), Worktrees.new(project, @opts[:force]), Scripts.new(project), CommitGuard.new(project),
-       RoleFiles.new(project, manifest), ClaudeSettings.new(project), MarkedFiles.new(project),
-       Coordination.new(project), manifest].flat_map(&:steps)
+       DocGraphHooks.new(project), RoleFiles.new(project, manifest), ClaudeSettings.new(project),
+       MarkedFiles.new(project), Coordination.new(project), manifest].flat_map(&:steps)
     end
 
     def apply(steps)

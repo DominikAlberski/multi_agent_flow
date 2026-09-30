@@ -1,0 +1,7 @@
+# >>> multi-agent-flow >>>
+# Doc-graph refresh: start it detached; the hook never fails a commit.
+_doc_graph_main=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd)
+if [ -n "$_doc_graph_main" ] && [ -x "$_doc_graph_main/coordination/doc-graph-refresh" ]; then
+    nohup "$_doc_graph_main/coordination/doc-graph-refresh" post-commit >/dev/null 2>&1 &
+fi
+# <<< multi-agent-flow <<<

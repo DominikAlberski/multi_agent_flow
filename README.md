@@ -92,6 +92,8 @@ multi_agent_flow/
     dispatcher                # polls task board + inbox, starts one-shot agents (Ruby)
     vault                     # graphify + Obsidian + MCP watcher control (Ruby)
     dashboard                 # web dashboard: stuck-detection UI (Ruby/Sinatra)
+    doc-graph-refresh         # graphify rebuild runner called by the git hooks (Ruby)
+    git-hooks/                # pre-commit guard, post-commit/post-merge refresh blocks
     taskrc.append             # Taskwarrior UDA block
     agents-contract.md        # contract appended to AGENTS.md
     gitignore.append          # marker-guarded ignore entries
@@ -104,6 +106,7 @@ multi_agent_flow/
     dashboard_test.rb         # tests for the dashboard data
     dispatcher_test.rb        # tests for the dispatcher
     uninstaller_test.rb       # tests for uninstall.rb
+    doc_graph_refresh_test.rb # tests for the doc-graph refresh script
 ```
 
 ---
@@ -125,6 +128,22 @@ to any agent as direct context.
 
 ---
 
+## Doc-graph refresh
+
+A commit or merge that changes a markdown file refreshes the shared knowledge
+graph. `maf add` appends a flow block to the `post-commit` and `post-merge`
+hooks. The block starts `coordination/doc-graph-refresh` detached, so the commit
+returns at once.
+
+The refresh runs `graphify extract . --backend gemini` and then
+`graphify export obsidian --dir obsidian`. It builds in a temp dir and swaps on
+success, so a failed extract keeps the old graph. It needs `GEMINI_API_KEY`.
+Without the key it logs a skip in `coordination/doc-graph.log` and exits. A
+non-markdown commit makes no LLM call. A refresh started in a worktree writes
+the shared graph in the main checkout.
+
+---
+
 ## Contributor reference
 
 After editing the UDA block or the worktree-path formula:
@@ -143,6 +162,7 @@ ruby test/installer_test.rb  # covers bootstrap.rb, flow.rb, setup_agent.rb
 ruby test/uninstaller_test.rb  # covers uninstall.rb
 ruby test/maf_test.rb        # covers the maf command
 ruby test/dashboard_test.rb  # covers the dashboard data
+ruby test/doc_graph_refresh_test.rb  # covers the doc-graph refresh
 ```
 
 Minitest, stdlib only. Tests that require `task` or `git` skip (exit 0) when

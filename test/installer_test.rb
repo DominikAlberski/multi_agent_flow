@@ -813,3 +813,61 @@ class CommitGuardTest < InstallerTestCase
     assert_includes out, "the commit guard is off"
   end
 end
+
+# The doc-graph refresh runs from the shared git hooks. A foreign post-commit
+# hook (graphify installs one) must stay; the installer owns only its block.
+class DocGraphHookTest < InstallerTestCase
+  def setup
+    super
+    skip "git not installed" unless system("git", "--version", out: File::NULL)
+    system("git", "-C", @dir, "init", "-q", exception: true)
+  end
+
+  def bootstrap(*args) = run_ruby(BOOTSTRAP, @dir, "--roles", "architect", *args)
+
+  def hook(name) = File.join(@dir, ".git", "hooks", name)
+
+  def test_installs_the_refresh_script
+    out, status = bootstrap
+
+    assert_equal 0, status, out
+    script = File.join(@dir, "coordination", "doc-graph-refresh")
+    assert File.executable?(script)
+    assert_includes File.read(script), "doc-graph-refresh - rebuild the knowledge graph after a markdown change."
+  end
+
+  def test_appends_the_block_to_both_hooks
+    bootstrap
+
+    %w[post-commit post-merge].each do |name|
+      assert_includes File.read(hook(name)), "doc-graph-refresh\" #{name}"
+      assert File.executable?(hook(name))
+    end
+  end
+
+  def test_keeps_a_foreign_post_commit_hook
+    FileUtils.mkdir_p(File.dirname(hook("post-commit")))
+    File.write(hook("post-commit"), "#!/bin/sh\nmake lint\n")
+
+    bootstrap
+
+    content = File.read(hook("post-commit"))
+    assert content.start_with?("#!/bin/sh\nmake lint\n")
+    assert_includes content, ">>> multi-agent-flow >>>"
+  end
+
+  def test_check_lists_the_new_hook
+    out, = bootstrap("--check")
+
+    assert_includes out, "doc-graph-refresh"
+    assert_includes out, "post-commit"
+    assert_includes out, "post-merge"
+  end
+
+  def test_rerun_keeps_one_block
+    bootstrap
+    bootstrap
+
+    assert_equal 1, File.read(hook("post-commit")).scan(">>> multi-agent-flow >>>").size
+  end
+end

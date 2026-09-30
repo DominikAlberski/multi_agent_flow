@@ -66,6 +66,23 @@ module Bootstrap
       true
     end
 
+    # Append or replace the flow block in a git hook. A hook we did not create
+    # stays; a new hook gets a shebang and the executable bit.
+    def merge_hook(file, source)
+      block = @project.append_content(source)
+      text = File.exist?(file) ? File.read(file) : "#!/bin/sh\n"
+      text = text.include?(MARKER) ? MarkedBlock.new(text).replace(block) : appended(text, block)
+      write_hook(file, text)
+    end
+
+    def appended(text, block) = "#{text.rstrip}\n\n#{block.chomp}\n"
+
+    def write_hook(file, text)
+      File.write(file, text)
+      FileUtils.chmod("+x", file)
+      true
+    end
+
     # Drops the old contract block and any `@AGENTS.md` import: AGENTS.md
     # gets its own contract, and a self-import is a loop.
     def move_claude_md(file, _source = nil)

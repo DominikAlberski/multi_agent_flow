@@ -27,6 +27,11 @@ coord-env.sh
 coordination/vault.pid
 coordination/vault.log
 
+# Written by `coordination/doc-graph-refresh`.
+coordination/doc-graph.log
+coordination/doc-graph.lock
+coordination/doc-graph.pending
+
 # Knowledge graph build output and the generated Obsidian vault
 graphify-out/
 obsidian/

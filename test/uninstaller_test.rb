@@ -248,3 +248,34 @@ class UninstallCommitGuardTest < UninstallerTestCase
     assert_equal "#!/bin/sh\nmake lint\n", File.read(hook)
   end
 end
+
+# The doc-graph refresh block lives in the shared post-commit and post-merge
+# hooks. The uninstaller removes only the block and keeps foreign content.
+class UninstallDocGraphHookTest < UninstallerTestCase
+  def setup
+    super
+    skip "git not installed" unless system("git", "--version", out: File::NULL)
+    system("git", "-C", @dir, "init", "-q", exception: true)
+  end
+
+  def hook(name) = path(".git", "hooks", name)
+
+  def test_removes_the_block_from_both_hooks
+    install
+
+    out, status = uninstall("--yes")
+
+    assert_equal 0, status, out
+    refute File.exist?(hook("post-commit"))
+    refute File.exist?(hook("post-merge"))
+  end
+
+  def test_keeps_foreign_hook_content
+    write(".git/hooks/post-commit", "#!/bin/sh\nmake lint\n")
+    install
+
+    uninstall("--yes")
+
+    assert_equal "#!/bin/sh\nmake lint\n", File.read(hook("post-commit"))
+  end
+end

@@ -2,7 +2,8 @@
 
 module Bootstrap
   # ScriptPlanner plans every script copied from assets/: the top-level
-  # scripts, the harness hooks, the opencode plugin, and the commit guard.
+  # scripts, the harness hooks, the opencode plugin, the commit guard, and
+  # the doc-graph refresh with its git hooks.
   class ScriptPlanner
     COMMIT_GUARD = "git-hooks/pre-commit"
     HOOKS = [
@@ -10,6 +11,8 @@ module Bootstrap
       ["harness-hooks/next-task-hermes.sh", NEXT_TASK_HERMES_SIGNATURE],
       ["harness-hooks/board-watch.rb", BOARD_WATCH_SIGNATURE]
     ].freeze
+    # Hook event name -> the asset source symbol that holds the block.
+    DOC_GRAPH_HOOKS = { "post-commit" => :post_commit, "post-merge" => :post_merge }.freeze
 
     def initialize(project)
       @project = project
@@ -35,6 +38,18 @@ module Bootstrap
 
     def hooks
       HOOKS.map { |name, signature| script(name, signature, @project.path("coordination", name)) }
+    end
+
+    # The doc-graph refresh script rebuilds the shared graph after a markdown
+    # change. The git hooks start it.
+    def doc_graph
+      script("doc-graph-refresh", DOC_GRAPH_SIGNATURE, @project.path("coordination", "doc-graph-refresh"))
+    end
+
+    # Append the flow block to the post-commit and post-merge hooks. A foreign
+    # hook (graphify installs one) stays; the flow owns only its block.
+    def doc_graph_hooks
+      DOC_GRAPH_HOOKS.map { |name, source| hook(name, source) }
     end
 
     # The opencode plugin wakes an idle opencode session. Like the Claude
@@ -77,8 +92,36 @@ module Bootstrap
     end
 
     def commit_guard_path
-      hooks = IO.popen(["git", "-C", @project.target, "rev-parse", "--git-path", "hooks"], err: File::NULL, &:read).strip
-      $?.success? && !hooks.empty? ? File.join(File.expand_path(hooks, @project.target), "pre-commit") : nil
+      hooks = git_hooks_dir
+      hooks && File.join(hooks, "pre-commit")
+    end
+
+    def hook(name, source)
+      dest = hook_path(name)
+      return @project.action(:skip, "git hook #{name} (no git repository)") unless dest
+
+      @project.action(hook_status(dest, source), dest, dest, source)
+    end
+
+    def hook_status(dest, source)
+      return :merge_hook unless File.exist?(dest)
+      return :skip if block_current?(dest, source)
+
+      :merge_hook
+    end
+
+    def block_current?(dest, source)
+      MarkedBlock.new(File.read(dest)).current?(@project.append_content(source))
+    end
+
+    def hook_path(name)
+      hooks = git_hooks_dir
+      hooks && File.join(hooks, name)
+    end
+
+    def git_hooks_dir
+      path = IO.popen(["git", "-C", @project.target, "rev-parse", "--git-path", "hooks"], err: File::NULL, &:read).strip
+      $?.success? && !path.empty? ? File.expand_path(path, @project.target) : nil
     end
   end
 end

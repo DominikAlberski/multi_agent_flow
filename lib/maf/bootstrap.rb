@@ -35,6 +35,7 @@ module Bootstrap
   OPENCODE_BOARD_WATCH_SIGNATURE = "board-watch-opencode.js - opencode plugin that wakes an idle session"
   OPENCODE_PLUGIN = File.join(".opencode", "plugins", "board-watch.js")
   COMMIT_GUARD_SIGNATURE = "commit-guard - git pre-commit hook for the multi-agent flow."
+  DOC_GRAPH_SIGNATURE = "doc-graph-refresh - rebuild the knowledge graph after a markdown change."
 
   # Claude Code harness hooks: [event, hook]. The sync next-task hook continues
   # a session at Stop. The asyncRewake board-watch hook wakes an idle session.
@@ -58,7 +59,7 @@ module Bootstrap
   WRITERS = { mkdir: :make_dir, touch: :touch_file, create: :write_script, update: :write_script,
               create_taskrc: :write_taskrc, upgrade_taskrc: :upgrade_taskrc,
               append: :append_marked, replace: :replace_marked, move_claude_md: :move_claude_md,
-              configure_claude_hook: :configure_claude_settings }.freeze
+              configure_claude_hook: :configure_claude_settings, merge_hook: :merge_hook }.freeze
 
   REQUIRED_DEPS = {
     "task" => {

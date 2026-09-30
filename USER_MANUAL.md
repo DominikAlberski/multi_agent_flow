@@ -513,6 +513,14 @@ Commands:
 The watcher runs `graphify update .` (incremental, no LLM) and
 `graphify export obsidian --dir obsidian` every `VAULT_POLL` seconds (default 30).
 
+A markdown commit or merge also refreshes the graph. `maf add` appends a flow
+block to the `post-commit` and `post-merge` hooks. The block starts
+`coordination/doc-graph-refresh` detached. The refresh runs
+`graphify extract . --backend gemini` and re-exports `obsidian/`. It needs
+`GEMINI_API_KEY` in the environment of the agent session. Without the key it
+logs a skip in `coordination/doc-graph.log`. A non-markdown commit makes no LLM
+call.
+
 MCP: set `./vault mcp` as the command in your MCP client config. `graphify-mcp`
 is a separate stdio binary; it is not a background flag.
 
@@ -648,6 +656,7 @@ The uninstaller removes:
 - Generated role files in `.claude/agents/`, `.opencode/agents/`, `.codex/prompts/`,
   and the project's Hermes skills.
 - The flow hooks in `.claude/settings.json`.
+- The flow blocks in the `post-commit` and `post-merge` git hooks.
 - The marked blocks in `AGENTS.md` and `.gitignore`.
 - `.agent-flow.json`.
 
