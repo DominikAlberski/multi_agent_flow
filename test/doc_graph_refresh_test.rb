@@ -37,10 +37,11 @@ class DocGraphRefreshTest < Minitest::Test
     system("git", "-C", @dir, *args, out: File::NULL, err: File::NULL, exception: true)
   end
 
-  def commit(message, name, content)
-    File.write(File.join(@dir, name), content)
-    git("add", name)
-    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message)
+  def commit(message, name, content, dir = @dir)
+    File.write(File.join(dir, name), content)
+    system("git", "-C", dir, "add", name, out: File::NULL, err: File::NULL, exception: true)
+    system("git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@t",
+           "commit", "-q", "-m", message, out: File::NULL, err: File::NULL, exception: true)
   end
 
   def write_stub
@@ -52,6 +53,8 @@ class DocGraphRefreshTest < Minitest::Test
       if ARGV.first == "extract"
         out = ARGV[ARGV.index("--out") + 1]
         File.open(ENV.fetch("CALLS"), "a") { |io| io.puts("seeded") } if File.exist?(File.join(out, "graphify-out", "graph.json"))
+        cached = File.exist?(File.join(out, "graphify-out", "cache", "seeded.txt"))
+        File.open(ENV.fetch("CALLS"), "a") { |io| io.puts("cached=\#{cached}") }
         FileUtils.mkdir_p(File.join(out, "graphify-out"))
         File.write(File.join(out, "graphify-out", "graph.json"), ENV.fetch("STUB_GRAPH", "{}"))
       end
@@ -59,10 +62,10 @@ class DocGraphRefreshTest < Minitest::Test
     FileUtils.chmod(0o755, File.join(@bin, "graphify"))
   end
 
-  def run_script(event, extra = {})
+  def run_script(event, extra = {}, dir = @dir)
     env = { "PATH" => "#{@bin}:#{ENV.fetch("PATH", "")}", "CALLS" => @calls,
             "GEMINI_API_KEY" => "test" }.merge(extra)
-    Open3.capture2e(env, RbConfig.ruby, SCRIPT, event, chdir: @dir)
+    Open3.capture2e(env, RbConfig.ruby, SCRIPT, event, chdir: dir)
   end
 
   def calls = File.exist?(@calls) ? File.read(@calls) : ""
@@ -136,24 +139,80 @@ class DocGraphRefreshTest < Minitest::Test
     assert_includes calls, "extract"
   end
 
-  # A refresh that starts while the lock is held sets the pending flag. The
-  # holder loops, so the second change is not lost.
+  # Defect 1: a hook in a worktree extracts the worktree tree and writes the
+  # shared graph in the main checkout.
+  def test_a_worktree_hook_writes_the_main_graph
+    commit("doc", "doc.md", "hello")
+    tree = File.join(@dir, "wt")
+    system("git", "-C", @dir, "worktree", "add", "-q", tree, out: File::NULL, err: File::NULL, exception: true)
+    commit("wt doc", "note.md", "worktree text", tree)
+
+    out, status = run_script("post-commit", {}, tree)
+
+    assert_equal 0, status.exitstatus, out
+    assert_includes calls, "extract #{File.realpath(tree)}"
+    assert_equal "{}", File.read(graph)
+  end
+
+  # Defect 3: the main cache is passed on to the extract in the temp out dir.
+  def test_the_cache_dir_is_passed_to_extract
+    seed = File.join(@dir, "graphify-out", "cache", "seeded.txt")
+    FileUtils.mkdir_p(File.dirname(seed))
+    File.write(seed, "keep")
+    commit("doc", "doc.md", "hello")
+
+    out, status = run_script("post-commit")
+
+    assert_equal 0, status.exitstatus, out
+    assert_includes calls, "cached=true"
+    assert_equal "keep", File.read(seed)
+  end
+
+  # Defect 2: a second run that finds the lock held writes its tree to the
+  # pending file. The holder drains that tree, so the change is not lost.
   def test_a_second_run_is_serialised_and_not_lost
     load SCRIPT
     dir = @dir
-    calls = 0
+    calls = []
+    pending = File.join(dir, "coordination", "doc-graph.pending")
     DocGraph.singleton_class.define_method(:markdown?) { |_event| true }
+    DocGraph.define_singleton_method(:toplevel) { "#{dir}/tree-1" }
     DocGraph.define_singleton_method(:main) { dir }
-    DocGraph::Refresh.define_singleton_method(:run) do
-      calls += 1
-      FileUtils.touch(File.join(dir, "coordination", "doc-graph.pending")) if calls == 1
+    DocGraph::Refresh.define_singleton_method(:run) do |tree|
+      calls << tree
+      File.write(pending, "#{dir}/tree-2\n") if calls == ["#{dir}/tree-1"]
     end
     ENV["GEMINI_API_KEY"] = "test"
 
     DocGraph.run("post-commit")
 
-    assert_equal 2, calls
-    refute File.exist?(File.join(dir, "coordination", "doc-graph.pending"))
+    assert_equal ["#{dir}/tree-1", "#{dir}/tree-2"], calls
+    refute File.exist?(pending)
     refute File.exist?(File.join(dir, "coordination", "doc-graph.lock"))
+  end
+
+  # Defect 2: a mark that lands while the holder releases the lock is not lost.
+  # The holder takes the lock again and extracts the pending tree.
+  def test_a_mark_written_during_release_is_not_lost
+    load SCRIPT
+    dir = @dir
+    calls = []
+    released = 0
+    pending = File.join(dir, "coordination", "doc-graph.pending")
+    DocGraph.singleton_class.define_method(:ready?) { |_event| true }
+    DocGraph.define_singleton_method(:toplevel) { "#{dir}/tree-1" }
+    DocGraph.define_singleton_method(:main) { dir }
+    FileUtils.mkdir_p(File.dirname(pending))
+    DocGraph::Lock.define_singleton_method(:acquire) { true }
+    DocGraph::Lock.define_singleton_method(:release) do
+      released += 1
+      File.write(pending, "#{dir}/late\n") if released == 1
+    end
+    DocGraph::Refresh.define_singleton_method(:run) { |tree| calls << tree }
+
+    DocGraph.run("post-commit")
+
+    assert_equal ["#{dir}/tree-1", "#{dir}/late"], calls
+    refute File.exist?(pending)
   end
 end

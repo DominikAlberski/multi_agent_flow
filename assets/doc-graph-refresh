@@ -35,7 +35,7 @@ module DocGraph
     return unless EVENTS.include?(event)
     return skip(event) unless ready?(event)
 
-    Lock.hold { loop_until_clear }
+    refresh
   end
 
   def self.ready?(event)
@@ -53,12 +53,29 @@ module DocGraph
     Git.changed(event).any? { |file| file.match?(MARKDOWN) }
   end
 
-  # A change during a run sets the pending flag. The holder loops until the
-  # flag stays clear, so no change is lost.
-  def self.loop_until_clear
+  # A run that found the lock held marks its tree pending and returns. After
+  # release the holder drains the pending tree, so no change is lost.
+  def self.refresh
+    return Lock.mark_pending unless Lock.acquire
+
+    begin
+      drain_pending
+    ensure
+      Lock.release
+    end
+    refresh if Lock.pending?
+  end
+
+  def self.drain_pending
+    tree = Lock.pending_tree || toplevel
     Lock.clear_pending
-    Refresh.run
-    loop_until_clear if Lock.pending?
+    Refresh.run(tree)
+    drain_pending if Lock.pending?
+  end
+
+  def self.toplevel
+    path = Git.read("rev-parse", "--show-toplevel")
+    path.empty? ? Dir.pwd : path
   end
 
   def self.main
@@ -86,19 +103,10 @@ module DocGraph
     end
   end
 
-  # Lock serialises refreshes with a lock dir and a pending flag.
+  # Lock serialises refreshes with a lock dir and a pending flag. The flag
+  # holds the toplevel path of the newest requester, so the next holder
+  # extracts that tree.
   module Lock
-    def self.hold
-      return mark_pending unless acquire
-
-      begin
-        yield
-      ensure
-        clear_pending
-        release
-      end
-    end
-
     def self.acquire
       FileUtils.mkdir_p(File.dirname(path(LOCK)))
       Dir.mkdir(path(LOCK))
@@ -115,8 +123,15 @@ module DocGraph
 
     def self.mark_pending
       FileUtils.mkdir_p(File.dirname(path(PENDING)))
-      FileUtils.touch(path(PENDING))
+      File.write(path(PENDING), "#{DocGraph.toplevel}\n")
       Log.write("refresh already running; marked pending")
+    end
+
+    def self.pending_tree
+      tree = File.read(path(PENDING)).strip
+      tree.empty? ? nil : tree
+    rescue SystemCallError
+      nil
     end
 
     def self.clear_pending = FileUtils.rm_f(path(PENDING))
@@ -126,10 +141,10 @@ module DocGraph
 
   # Refresh builds the graph in a temp dir, swaps it in, then re-exports.
   module Refresh
-    def self.run
+    def self.run(tree)
       tmp = Dir.mktmpdir("doc-graph-refresh")
       seed(tmp)
-      refresh(tmp)
+      refresh(tmp, tree)
     rescue StandardError => e
       Log.write("refresh failed: #{e.message}")
     ensure
@@ -143,15 +158,15 @@ module DocGraph
       FileUtils.cp_r(graph, File.join(tmp, GRAPH)) if File.exist?(graph)
     end
 
-    def self.refresh(tmp)
-      return Log.write("extract failed; kept the old graph") unless build(tmp)
+    def self.refresh(tmp, tree)
+      return Log.write("extract failed; kept the old graph") unless build(tmp, tree)
 
       Swap.move(File.join(tmp, GRAPH), DocGraph.graph_path)
       Export.run
     end
 
-    def self.build(tmp)
-      ok = system("graphify", "extract", Dir.pwd, "--backend", "gemini", "--out", tmp)
+    def self.build(tmp, tree)
+      ok = system("graphify", "extract", tree, "--backend", "gemini", "--out", tmp)
       ok && File.exist?(File.join(tmp, GRAPH, "graph.json"))
     end
   end
