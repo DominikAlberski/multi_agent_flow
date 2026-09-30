@@ -6,8 +6,8 @@
 # Run: ruby test/doc_graph_refresh_test.rb
 #
 # The tests run the script as a subprocess against a disposable git repo. A
-# stub `graphify` on PATH records every call and writes a fake graph. One test
-# loads the script in-process to drive the lock and the pending flag.
+# stub `graphify` on PATH records every call and writes a fake graph. Two tests
+# load the script in-process to drive the lock, the pending flag and the retry.
 require "minitest/autorun"
 require "tmpdir"
 require "fileutils"
@@ -64,7 +64,7 @@ class DocGraphRefreshTest < Minitest::Test
 
   def run_script(event, extra = {}, dir = @dir)
     env = { "PATH" => "#{@bin}:#{ENV.fetch("PATH", "")}", "CALLS" => @calls,
-            "GEMINI_API_KEY" => "test" }.merge(extra)
+            "GEMINI_API_KEY" => "test", "DOC_GRAPH_RETRY_WAIT" => "0" }.merge(extra)
     Open3.capture2e(env, RbConfig.ruby, SCRIPT, event, chdir: dir)
   end
 
@@ -166,6 +166,32 @@ class DocGraphRefreshTest < Minitest::Test
     assert_equal 0, status.exitstatus, out
     assert_includes calls, "cached=true"
     assert_equal "keep", File.read(seed)
+  end
+
+  # A free-tier Gemini key allows 5 requests per minute. One chunk at a time
+  # keeps the request rate low, so the extract does not hit HTTP 429.
+  def test_the_extract_runs_the_chunks_one_at_a_time
+    commit("doc", "doc.md", "hello")
+
+    out, status = run_script("post-commit")
+
+    assert_equal 0, status.exitstatus, out
+    assert_includes calls, "--max-concurrency 1"
+  end
+
+  # The retry is the fallback when the one-at-a-time extract still fails. The
+  # extract runs at most three times, with a wait between the tries.
+  def test_a_failed_extract_retries_at_most_three_times
+    load SCRIPT
+    attempts = 0
+    DocGraph::Refresh.define_singleton_method(:extract_ok?) { |_tmp, _tree| attempts += 1; false }
+    DocGraph::Refresh.define_singleton_method(:sleep) { |_seconds| }
+    DocGraph::Log.define_singleton_method(:write) { |_message| }
+
+    result = DocGraph::Refresh.build("/tmp/out", "/tmp/tree")
+
+    refute result
+    assert_equal 3, attempts
   end
 
   # Defect 2: a second run that finds the lock held writes its tree to the

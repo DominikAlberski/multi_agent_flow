@@ -9,8 +9,9 @@
 #
 # The script scans the checkout that runs the hook, then writes the shared
 # graph in the MAIN checkout, resolved from git-common-dir. A refresh started
-# in a worktree therefore writes the one shared graph. It builds in a temp
-# dir and swaps on success, so a failed extract keeps the old graph.
+# in a worktree therefore writes the one shared graph. It seeds the build with
+# the current graph, runs the semantic chunks one at a time, and swaps on
+# success, so a failed extract keeps the old graph.
 #
 # Usage: coordination/doc-graph-refresh post-commit|post-merge
 
@@ -141,6 +142,9 @@ module DocGraph
 
   # Refresh builds the graph in a temp dir, swaps it in, then re-exports.
   module Refresh
+    ATTEMPTS = 3
+    RETRY_WAIT = 30
+
     def self.run(tree)
       tmp = Dir.mktmpdir("doc-graph-refresh")
       seed(tmp)
@@ -165,9 +169,22 @@ module DocGraph
       Export.run
     end
 
-    def self.build(tmp, tree)
-      ok = system("graphify", "extract", tree, "--backend", "gemini", "--out", tmp)
-      ok && File.exist?(File.join(tmp, GRAPH, "graph.json"))
+    # Retry the whole extract on a rate limit. One chunk at a time keeps the
+    # request rate low; the retry covers a burst that still exceeds the quota.
+    def self.build(tmp, tree, attempt = 1)
+      return true if extract_ok?(tmp, tree)
+      return false if attempt >= ATTEMPTS
+
+      Log.write("extract attempt #{attempt} failed; retrying")
+      sleep(retry_wait)
+      build(tmp, tree, attempt + 1)
+    end
+
+    def self.retry_wait = Integer(ENV.fetch("DOC_GRAPH_RETRY_WAIT", RETRY_WAIT))
+
+    def self.extract_ok?(tmp, tree)
+      system("graphify", "extract", tree, "--backend", "gemini", "--max-concurrency", "1", "--out", tmp) &&
+        File.exist?(File.join(tmp, GRAPH, "graph.json"))
     end
   end
 
