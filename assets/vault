@@ -41,6 +41,7 @@ module Vault
   MIN_POLL = 5
   POLL = [(ENV["VAULT_POLL"] || 30).to_i, MIN_POLL].max
   EXTRACT_CMD = ["graphify", "extract", ".", "--code-only"].freeze
+  DOC_GRAPH_LOCK = File.join("coordination", "doc-graph.lock")
   UPDATE_CMD = ["graphify", "update", "."].freeze
   EXPORT_CMD = ["graphify", "export", "obsidian", "--dir", DIR].freeze
 
@@ -106,7 +107,7 @@ module Vault
     # (Obsidian reloads every rewritten note), then sleep. Returns the graph
     # mtime that was last exported.
     def self.tick(exported_at)
-      system(*UPDATE_CMD)
+      system(*UPDATE_CMD) unless File.exist?(DOC_GRAPH_LOCK)
       mtime = File.exist?(GRAPH) ? File.mtime(GRAPH) : nil
       export if mtime && mtime != exported_at
       sleep POLL

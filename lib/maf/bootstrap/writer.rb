@@ -66,14 +66,26 @@ module Bootstrap
       true
     end
 
-    # Append or replace the flow block in a git hook. A hook we did not create
-    # stays; a new hook gets a shebang and the executable bit.
-    # The block goes at the top, after the shebang. A foreign hook can exit
-    # early in a worktree (graphify does), so an appended block would never run.
+    SH_SHEBANG = %r{\A#!\s*(?:/usr/bin/env\s+)?(?:\S*/)?(?:ba)?sh(?:\s|\z)}
+
     def merge_hook(file, source)
+      return skip_foreign_hook(file) if foreign_interpreter?(file)
+
       block = @project.append_content(source)
       body = File.exist?(file) ? MarkedBlock.new(File.read(file)).remove : "#!/bin/sh\n"
       write_hook(file, prepend_block(body, block))
+    end
+
+    def foreign_interpreter?(file)
+      return false unless File.exist?(file)
+
+      first = File.open(file, &:gets).to_s
+      first.start_with?("#!") && !first.match?(SH_SHEBANG)
+    end
+
+    def skip_foreign_hook(file)
+      Bootstrap.say("skip   #{file}: foreign hook with a non-sh shebang, doc-graph refresh is off")
+      false
     end
 
     def prepend_block(body, block)
