@@ -68,14 +68,25 @@ module Bootstrap
 
     # Append or replace the flow block in a git hook. A hook we did not create
     # stays; a new hook gets a shebang and the executable bit.
+    # The block goes at the top, after the shebang. A foreign hook can exit
+    # early in a worktree (graphify does), so an appended block would never run.
     def merge_hook(file, source)
       block = @project.append_content(source)
-      text = File.exist?(file) ? File.read(file) : "#!/bin/sh\n"
-      text = text.include?(MARKER) ? MarkedBlock.new(text).replace(block) : appended(text, block)
-      write_hook(file, text)
+      body = File.exist?(file) ? MarkedBlock.new(File.read(file)).remove : "#!/bin/sh\n"
+      write_hook(file, prepend_block(body, block))
     end
 
-    def appended(text, block) = "#{text.rstrip}\n\n#{block.chomp}\n"
+    def prepend_block(body, block)
+      shebang, rest = split_shebang(body)
+      "#{shebang}#{block.chomp}\n#{rest.lstrip}"
+    end
+
+    def split_shebang(body)
+      lines = body.lines
+      return ["", body] unless lines.first&.start_with?("#!")
+
+      [lines.first, lines[1..].join]
+    end
 
     def write_hook(file, text)
       File.write(file, text)

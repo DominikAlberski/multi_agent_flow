@@ -852,8 +852,9 @@ class DocGraphHookTest < InstallerTestCase
     bootstrap
 
     content = File.read(hook("post-commit"))
-    assert content.start_with?("#!/bin/sh\nmake lint\n")
+    assert_includes content, "make lint"
     assert_includes content, ">>> multi-agent-flow >>>"
+    assert_operator content.index(">>> multi-agent-flow >>>"), :<, content.index("make lint")
   end
 
   def test_check_lists_the_new_hook
