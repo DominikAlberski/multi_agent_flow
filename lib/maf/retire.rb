@@ -31,6 +31,7 @@ module Maf
       check!
       released = release_tasks
       remove_worktree
+      remove_presence
       Workers.at(@root).remove(@worker)
       Team.notify(@root, "Team change: worker #{@worker} left. #{released} task(s) returned to the pool.")
       puts "Worker #{@worker} retired. #{released} task(s) returned to the pool."
@@ -60,6 +61,11 @@ module Maf
     def release(id)
       Team.coord(@root, "unclaim", id)
       Team.coord(@root, "annotate", id, "Worker #{@worker} was retired. Continue on the existing task branch.")
+    end
+
+    def remove_presence
+      coord_dir = File.join(@root, "coordination")
+      FileUtils.rm_f(File.join(coord_dir, "presence", "#{@worker}.json"))
     end
 
     def dirty?

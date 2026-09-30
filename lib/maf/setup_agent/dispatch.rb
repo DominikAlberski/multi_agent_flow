@@ -26,7 +26,7 @@ module SetupAgent
     def self.spawn_detached(cmd, log)
       FileUtils.mkdir_p(File.dirname(log))
       io = { in: File::NULL, out: [log, "a"], err: %i[child out] }
-      pid = fork { Process.setsid && exec({ "DISPATCHER_LOG" => log }, *cmd, **io) }
+      pid = fork { Process.setsid && exec({ "DISPATCHER_LOG" => log, "PWD" => Dir.pwd }, *cmd, **io) }
       Process.detach(pid) && pid
     end
 

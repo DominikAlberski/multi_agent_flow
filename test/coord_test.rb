@@ -9,6 +9,7 @@
 # integration tests against a disposable, project-local task database (never
 # the global ~/.task); they skip cleanly if `task` is not installed.
 require "minitest/autorun"
+require_relative "board_guard"
 require "tmpdir"
 # `coord` has no .rb suffix (it's an installed executable), so `require` can't
 # find it; `load` takes the literal path instead.
@@ -475,6 +476,39 @@ end
     capture_io { Coord::CLI.new(["status"], env: session_env("reviewer", "reviewer-1", pid)).run }
 
     assert_match(/^reviewer-1\treviewer\tsession\tgone\t/, who)
+  end
+
+  def presence_path = File.join(@env["COORD_DIR"], "presence", "reviewer-1.json")
+
+  def record_presence
+    capture_io { Coord::CLI.new(["status"], env: session_env("reviewer", "reviewer-1")).run }
+    JSON.parse(File.read(presence_path))
+  end
+
+  def test_presence_shows_a_reused_pid_as_gone
+    record = record_presence.merge("started" => "Mon Jan  1 00:00:00 2001")
+    File.write(presence_path, JSON.generate(record))
+
+    assert_match(/^reviewer-1\treviewer\tsession\tgone\t/, who)
+  end
+
+  def test_presence_without_identity_stays_readable
+    File.write(presence_path, JSON.generate(record_presence.except("started")))
+
+    assert_match(/^reviewer-1\treviewer\tsession\tlive\t/, who)
+  end
+
+  def test_next_skips_a_task_the_caller_holds
+    id = add("mine")
+    env = session_env("backend-developer", "backend-developer-1")
+    capture_io { Coord::CLI.new(["claim", id], env: env).run }
+    ENV["COORD_LEASE_TTL"] = "1"
+    sleep 1.1
+    out = capture_io { Coord::CLI.new(["next", "backend-developer"], env: env).run }.first
+
+    refute_includes out, id
+  ensure
+    ENV.delete("COORD_LEASE_TTL")
   end
 
   # The dispatcher owns the presence file of a dispatched worker.

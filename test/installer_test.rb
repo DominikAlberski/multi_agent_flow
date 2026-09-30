@@ -561,6 +561,18 @@ class SetupAgentTest < Minitest::Test
                   "--interval", "30"], ran
   end
 
+  def test_detached_dispatcher_gets_the_worktree_as_pwd
+    Dir.mktmpdir do |dir|
+      worktree = File.realpath(dir)
+      log = File.join(worktree, "out.log")
+      Dir.chdir(worktree) do
+        SetupAgent::Dispatch.spawn_detached(["sh", "-c", "echo $PWD"], log)
+        sleep 0.1 until File.exist?(log) && !File.zero?(log)
+      end
+      assert_equal worktree, File.read(log).strip
+    end
+  end
+
   def test_dispatch_aborts_without_a_committed_dispatcher
     parsed = SetupAgent::Args.parse(%w[claude reviewer --dispatch])
     Dir.mktmpdir do |dir|

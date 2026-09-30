@@ -551,6 +551,16 @@ class PresenceWriteTest < Minitest::Test
     assert_equal %w[backend-developer dispatch], record.values_at("role", "mode")
     assert_equal Process.pid, record["pid"]
   end
+
+  def test_the_presence_record_holds_the_process_start_time
+    record = Dispatcher::Presence.record(config)
+
+    refute_empty record["started"]
+  end
+
+  def test_the_agent_environment_carries_the_dispatcher_directory
+    assert_equal Dir.pwd, Dispatcher::Main.run_env(config)["PWD"]
+  end
 end
 
 class SessionIdTest < Minitest::Test

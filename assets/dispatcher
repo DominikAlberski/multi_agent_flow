@@ -143,9 +143,15 @@ module Dispatcher
       File.write(File.join(dir, "#{config.worker}.json"), JSON.generate(record(config)))
     end
 
+    def self.started_at(pid)
+      IO.popen(["ps", "-o", "lstart=", "-p", pid.to_s], err: File::NULL, &:read).to_s.strip
+    rescue SystemCallError
+      ""
+    end
+
     def self.record(config)
       { "role" => config.role, "worker" => config.worker, "mode" => "dispatch", "pid" => Process.pid,
-        "seen_at" => Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ") }
+        "started" => started_at(Process.pid), "seen_at" => Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ") }
     end
   end
 
@@ -615,7 +621,7 @@ module Dispatcher
 
     def self.run_env(config)
       env = { "COORD_DIR" => config.coord_dir, "COORD_ROLE" => config.role, "COORD_WORKER" => config.worker,
-              "COORD_DISPATCHED" => "1" }
+              "COORD_DISPATCHED" => "1", "PWD" => Dir.pwd }
       taskrc = File.join(config.coord_dir, "taskrc")
       File.exist?(taskrc) ? env.merge("TASKRC" => taskrc) : env
     end

@@ -444,8 +444,8 @@ module Coord
       @cli.create(add_args(title, opts))
     end
 
-    def next_for(role)
-      pending.select { |task| task["role"] == role && claimable?(task) && actionable?(task) }
+    def next_for(role, worker = nil)
+      pending.select { |task| task["role"] == role && claimable?(task) && actionable?(task) && !held_by?(task, worker) }
     end
 
     def mine(role, worker)
@@ -480,6 +480,8 @@ module Coord
     private
 
     def actionable?(task) = !Schedule.waiting?(task)
+
+    def held_by?(task, worker) = !worker.to_s.empty? && task["worker"] == worker
 
     def claimable?(task) = task["worker"].to_s.empty? || Lease.expired?(task)
 
@@ -728,15 +730,29 @@ module Coord
       pid = env["COORD_SESSION_PID"].to_i
       return unless pid.positive? && recordable?(role, worker, env)
 
-      write(worker, "role" => role, "worker" => worker, "mode" => "session", "pid" => pid)
+      write(worker, "role" => role, "worker" => worker, "mode" => "session", "pid" => pid,
+                     "started" => self.class.started_at(pid))
     end
 
-    def live?(role) = entries.any? { |entry| entry["role"] == role && self.class.alive?(entry["pid"]) }
+    def live?(role) = entries.any? { |entry| entry["role"] == role && self.class.live_entry?(entry) }
 
     def report
       return puts("no presence records") if entries.empty?
 
       entries.each { |entry| puts line(entry) }
+    end
+
+    def self.started_at(pid)
+      IO.popen(["ps", "-o", "lstart=", "-p", pid.to_s], err: File::NULL, &:read).to_s.strip
+    rescue SystemCallError
+      ""
+    end
+
+    def self.live_entry?(entry)
+      return false unless alive?(entry["pid"])
+
+      recorded = entry["started"].to_s
+      recorded.empty? || recorded == started_at(entry["pid"])
     end
 
     def self.alive?(pid)
@@ -768,7 +784,7 @@ module Coord
     end
 
     def line(entry)
-      state = self.class.alive?(entry["pid"]) ? "live" : "gone"
+      state = self.class.live_entry?(entry) ? "live" : "gone"
       fields = entry.values_at("worker", "role", "mode") + [state, "pid=#{entry["pid"]}", "seen=#{entry["seen_at"]}"]
       fields.join("\t")
     end
@@ -884,8 +900,8 @@ module Coord
       rows.each { |role, list| puts summary_line(role, list) }
     end
 
-    def next_tasks(role)
-      list = @tasks.next_for(role)
+    def next_tasks(role, worker = nil)
+      list = @tasks.next_for(role, worker)
       return puts("no unclaimed tasks for #{role}") if list.empty?
 
       list.each { |task| puts task_line(task) }
@@ -1378,14 +1394,14 @@ module Coord
       refuse_lead!(role, "has no tasks to wait for") if wait
       return board.mine_tasks(role, @worker) if mine
 
-      return board.next_tasks(role) unless wait
+      return board.next_tasks(role, @worker) unless wait
 
       # A fresh Tasks instance per check: Tasks#pending memoizes (so one
       # `coord board` run only shells out to `task` once), but reusing the
       # single Wiring-memoized instance across poll iterations would freeze
       # the result at the first, possibly-empty, snapshot forever.
       # A message ends the wait too: an agent blocked here must not miss it.
-      wait_for(interval, timeout, -> { Tasks.new.next_for(role) + messages.files(role) }) do
+      wait_for(interval, timeout, -> { Tasks.new.next_for(role, @worker) + messages.files(role) }) do
         board.next_tasks(role)
         announce_messages(role)
       end

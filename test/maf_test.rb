@@ -8,6 +8,7 @@
 # The tests run bin/maf as a subprocess in a disposable project directory.
 # maf uses the current directory as the project.
 require "minitest/autorun"
+require_relative "board_guard"
 require "tmpdir"
 require "fileutils"
 require "json"
@@ -501,6 +502,17 @@ class MafTeamTest < Minitest::Test
     assert_raises(Errno::ESRCH) { Process.kill(0, pid) }
   ensure
     Process.kill("KILL", pid) rescue nil if pid
+  end
+
+  def test_retire_removes_the_presence_file
+    maf("prepare", "opencode", "architect_2")
+    path = File.join(@project, "coordination", "presence", "architect-2.json")
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, JSON.generate("worker" => "architect-2", "pid" => Process.pid))
+    _out, status = maf("retire", "architect_2")
+
+    assert_equal 0, status
+    refute File.exist?(path)
   end
 
   def test_retire_returns_claimed_tasks_to_the_pool
