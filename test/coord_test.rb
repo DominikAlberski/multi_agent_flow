@@ -498,14 +498,27 @@ end
     assert_match(/^reviewer-1\treviewer\tsession\tlive\t/, who)
   end
 
-  def test_presence_survives_a_timezone_change_between_write_and_read
-    ENV["TZ"] = "Asia/Tokyo"
-    record_presence
-    ENV["TZ"] = "America/New_York"
-
-    assert_match(/^reviewer-1\treviewer\tsession\tlive\t/, who)
+  def with_env(key, value)
+    saved = ENV[key]
+    ENV[key] = value
+    yield
   ensure
-    ENV.delete("TZ")
+    saved.nil? ? ENV.delete(key) : ENV[key] = saved
+  end
+
+  def test_presence_survives_a_timezone_change_between_write_and_read
+    with_env("TZ", "Asia/Tokyo") { record_presence }
+
+    with_env("TZ", "America/New_York") do
+      assert_match(/^reviewer-1\treviewer\tsession\tlive\t/, who)
+    end
+  end
+
+  def test_board_guard_reads_task_pairs_from_a_board_with_taskrc_set
+    rc = File.join(@dir, "verbose_rc")
+    File.write(rc, "data.location=#{File.join(@dir, "verbose_data")}\n")
+
+    with_env("TASKRC", rc) { assert_kind_of Array, BoardGuard.tasks }
   end
 
   def test_presence_without_identity_and_old_seen_at_is_gone
@@ -515,46 +528,43 @@ end
     assert_match(/^reviewer-1\treviewer\tsession\tgone\t/, who)
   end
 
+  def next_output(worker, *args)
+    env = session_env("backend-developer", worker)
+    capture_io { Coord::CLI.new(["next", *args], env: env).run }.first
+  end
+
   def hold_until_expired(worker)
     id = add("held")
     capture_io { Coord::CLI.new(["claim", id], env: session_env("backend-developer", worker)).run }
-    ENV["COORD_LEASE_TTL"] = "1"
     sleep 1.1
     id
   end
 
   def test_next_lists_an_expired_claim_of_another_worker
-    id = hold_until_expired("backend-developer-2")
-    out = capture_io { Coord::CLI.new(["next", "backend-developer"], env: session_env("backend-developer", "backend-developer-1")).run }.first
+    with_env("COORD_LEASE_TTL", "1") do
+      id = hold_until_expired("backend-developer-2")
 
-    assert_includes out, id
-  ensure
-    ENV.delete("COORD_LEASE_TTL")
-  end
-
-  def test_next_wait_skips_an_expired_claim_of_the_caller
-    hold_until_expired("backend-developer-1")
-    env = session_env("backend-developer", "backend-developer-1")
-    error = assert_raises(SystemExit) do
-      capture_io { Coord::CLI.new(["next", "--wait", "--interval", "1", "--timeout", "1"], env: env).run }
+      assert_includes next_output("backend-developer-1", "backend-developer"), id
     end
-
-    assert_equal 1, error.status
-  ensure
-    ENV.delete("COORD_LEASE_TTL")
   end
 
   def test_next_skips_a_task_the_caller_holds
-    id = add("mine")
-    env = session_env("backend-developer", "backend-developer-1")
-    capture_io { Coord::CLI.new(["claim", id], env: env).run }
-    ENV["COORD_LEASE_TTL"] = "1"
-    sleep 1.1
-    out = capture_io { Coord::CLI.new(["next", "backend-developer"], env: env).run }.first
+    with_env("COORD_LEASE_TTL", "1") do
+      id = hold_until_expired("backend-developer-1")
 
-    refute_includes out, id
-  ensure
-    ENV.delete("COORD_LEASE_TTL")
+      refute_includes next_output("backend-developer-1", "backend-developer"), id
+    end
+  end
+
+  def test_next_wait_output_skips_an_expired_claim_of_the_caller
+    with_env("COORD_LEASE_TTL", "1") do
+      held = hold_until_expired("backend-developer-1")
+      Thread.new { sleep 0.3; add("fresh task") }
+      out = next_output("backend-developer-1", "--wait", "--interval", "1", "--timeout", "5")
+
+      assert_includes out, "fresh task"
+      refute_includes out, held
+    end
   end
 
   # The dispatcher owns the presence file of a dispatched worker.

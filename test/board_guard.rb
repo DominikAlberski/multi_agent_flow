@@ -5,6 +5,7 @@ require "json"
 require "open3"
 
 # BoardGuard fails a suite run that changes the board named by TASKRC and COORD_DIR.
+# The guard needs a private board: another agent on a shared board fails the run.
 module BoardGuard
   def self.snapshot
     coord_dir = ENV["COORD_DIR"].to_s
@@ -14,12 +15,10 @@ module BoardGuard
   end
 
   def self.tasks
-    out, = Open3.capture2e("task", "rc.confirmation=no", "export")
+    out, = Open3.capture2("task", "rc.confirmation=no", "export")
     JSON.parse(out).map { |task| task.values_at("uuid", "modified") }
-  rescue JSON::ParserError
-    out
   rescue Errno::ENOENT
-    ""
+    []
   end
 
   BEFORE = snapshot

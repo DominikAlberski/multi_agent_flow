@@ -755,8 +755,10 @@ module Coord
       return false unless alive?(entry["pid"])
 
       recorded = entry["started"].to_s
-      return recorded == started_at(entry["pid"]) unless recorded.empty?
+      recorded.empty? ? legacy_live?(entry) : recorded == started_at(entry["pid"])
+    end
 
+    def self.legacy_live?(entry)
       Time.now - Time.parse(entry["seen_at"].to_s) < LEGACY_LIVE_WINDOW
     rescue ArgumentError
       false
@@ -1409,7 +1411,7 @@ module Coord
       # the result at the first, possibly-empty, snapshot forever.
       # A message ends the wait too: an agent blocked here must not miss it.
       wait_for(interval, timeout, -> { Tasks.new.next_for(role, @worker) + messages.files(role) }) do
-        board.next_tasks(role)
+        board.next_tasks(role, @worker)
         announce_messages(role)
       end
     end

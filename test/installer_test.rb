@@ -562,14 +562,18 @@ class SetupAgentTest < Minitest::Test
                   "--interval", "30"], ran
   end
 
+  def wait_for_log(log, limit: 10)
+    deadline = Time.now + limit
+    sleep 0.1 until (File.exist?(log) && !File.zero?(log)) || Time.now > deadline
+  end
+
   def test_detached_dispatcher_gets_the_worktree_as_pwd
     Dir.mktmpdir do |dir|
       worktree = File.realpath(dir)
       log = File.join(worktree, "out.log")
       Dir.chdir(worktree) do
         SetupAgent::Dispatch.spawn_detached(["printenv", "PWD"], log)
-        deadline = Time.now + 10
-        sleep 0.1 until (File.exist?(log) && !File.zero?(log)) || Time.now > deadline
+        wait_for_log(log)
       end
       assert_equal worktree, File.read(log).strip
     end
