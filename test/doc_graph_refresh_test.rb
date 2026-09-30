@@ -51,6 +51,7 @@ class DocGraphRefreshTest < Minitest::Test
       exit 1 if ARGV.first == "extract" && ENV["STUB_FAIL"] == "1"
       if ARGV.first == "extract"
         out = ARGV[ARGV.index("--out") + 1]
+        File.open(ENV.fetch("CALLS"), "a") { |io| io.puts("seeded") } if File.exist?(File.join(out, "graphify-out", "graph.json"))
         FileUtils.mkdir_p(File.join(out, "graphify-out"))
         File.write(File.join(out, "graphify-out", "graph.json"), ENV.fetch("STUB_GRAPH", "{}"))
       end
@@ -97,6 +98,18 @@ class DocGraphRefreshTest < Minitest::Test
     assert_includes calls, "extract"
     assert_includes calls, "export obsidian --dir obsidian"
     assert_equal "NEW", File.read(graph)
+  end
+
+  # The build reuses the current graph as its cache. Without the seed every
+  # markdown commit re-extracts the whole corpus.
+  def test_the_build_is_seeded_with_the_current_graph
+    FileUtils.mkdir_p(File.dirname(graph))
+    File.write(graph, "OLD")
+    commit("doc", "doc.md", "hello")
+
+    run_script("post-commit")
+
+    assert_includes calls, "seeded"
   end
 
   def test_a_failed_extract_keeps_the_old_graph

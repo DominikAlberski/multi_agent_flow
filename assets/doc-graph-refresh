@@ -128,11 +128,19 @@ module DocGraph
   module Refresh
     def self.run
       tmp = Dir.mktmpdir("doc-graph-refresh")
+      seed(tmp)
       refresh(tmp)
     rescue StandardError => e
       Log.write("refresh failed: #{e.message}")
     ensure
       FileUtils.remove_entry(tmp) if tmp
+    end
+
+    # Seed the build with the current graph, so the extract reuses the cache
+    # and processes only the files that changed.
+    def self.seed(tmp)
+      graph = DocGraph.graph_path
+      FileUtils.cp_r(graph, File.join(tmp, GRAPH)) if File.exist?(graph)
     end
 
     def self.refresh(tmp)
