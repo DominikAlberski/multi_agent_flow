@@ -9,6 +9,7 @@
 # shell scripts. The Poller is tested against a real `coord` board
 # (disposable, project-local) if Taskwarrior is installed; otherwise it skips.
 require "minitest/autorun"
+require_relative "board_guard"
 require "tmpdir"
 require "fileutils"
 require "json"

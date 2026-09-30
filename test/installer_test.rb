@@ -11,6 +11,7 @@
 # so its parsing can be unit tested. No external tools (task, git, graphify)
 # are required.
 require "minitest/autorun"
+require_relative "board_guard"
 require "tmpdir"
 require "fileutils"
 require "json"
@@ -566,8 +567,9 @@ class SetupAgentTest < Minitest::Test
       worktree = File.realpath(dir)
       log = File.join(worktree, "out.log")
       Dir.chdir(worktree) do
-        SetupAgent::Dispatch.spawn_detached(["sh", "-c", "echo $PWD"], log)
-        sleep 0.1 until File.exist?(log) && !File.zero?(log)
+        SetupAgent::Dispatch.spawn_detached(["printenv", "PWD"], log)
+        deadline = Time.now + 10
+        sleep 0.1 until (File.exist?(log) && !File.zero?(log)) || Time.now > deadline
       end
       assert_equal worktree, File.read(log).strip
     end

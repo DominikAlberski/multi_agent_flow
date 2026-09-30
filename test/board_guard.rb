@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "minitest"
+require "json"
 require "open3"
 
 # BoardGuard fails a suite run that changes the board named by TASKRC and COORD_DIR.
@@ -14,6 +15,8 @@ module BoardGuard
 
   def self.tasks
     out, = Open3.capture2e("task", "rc.confirmation=no", "export")
+    JSON.parse(out).map { |task| task.values_at("uuid", "modified") }
+  rescue JSON::ParserError
     out
   rescue Errno::ENOENT
     ""
