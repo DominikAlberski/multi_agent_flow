@@ -14,6 +14,28 @@ require "tmpdir"
 # find it; `load` takes the literal path instead.
 load File.expand_path("../assets/coord", __dir__)
 
+# An agent session exports TASKRC/COORD_DIR for the shared board. A test must
+# never use them. This module points the process at the test's own board and
+# restores the session values after the test.
+module CoordEnvIsolation
+  KEYS = %w[TASKRC COORD_DIR COORD_ROLE COORD_WORKER].freeze
+
+  def isolate_env(env)
+    @inherited_env = KEYS.to_h { |key| [key, ENV[key]] }
+    KEYS.each { |key| ENV[key] = env[key] }
+  end
+
+  def restore_env
+    return unless @inherited_env
+
+    @inherited_env.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+  end
+
+  def assert_isolated_env(env)
+    KEYS.each { |key| assert_equal env[key], ENV[key], "the test leaked #{key}" }
+  end
+end
+
 class ScopesTest < Minitest::Test
   def test_prefix_overlap_is_detected
     assert Coord::Scopes.overlap?("src/**", "src/utils/**")
@@ -76,6 +98,8 @@ class LeaseTest < Minitest::Test
 end
 
 class TaskwarriorTest < Minitest::Test
+  include CoordEnvIsolation
+
   def setup
     skip "Taskwarrior ('task') not installed" unless Coord::TaskCli.new.available?
 
@@ -83,11 +107,19 @@ class TaskwarriorTest < Minitest::Test
     coord_dir = File.join(@dir, "coordination")
     @env = { "COORD_DIR" => coord_dir, "TASKRC" => File.join(coord_dir, "taskrc"),
              "COORD_ROLE" => "backend-developer", "COORD_WORKER" => "backend-1" }
+    isolate_env(@env)
     Coord::CLI.new(["init"], env: @env).run
   end
 
   def teardown
+    restore_env
     FileUtils.remove_entry(@dir)
+  end
+
+  # A suite that inherits the session board writes strays to it. The process
+  # must point at the disposable board for the whole test.
+  def test_the_suite_uses_its_own_board
+    assert_isolated_env(@env)
   end
 
   def tasks = Coord::Tasks.new
@@ -861,6 +893,8 @@ end
 # Goals and task branches need both Taskwarrior and git: a goal gets its own
 # branch and worktree, and each task branches from its goal's branch.
 class GoalTest < Minitest::Test
+  include CoordEnvIsolation
+
   def setup
     skip "Taskwarrior ('task') not installed" unless Coord::TaskCli.new.available?
     skip "git not installed" unless system("git", "--version", out: File::NULL)
@@ -870,10 +904,12 @@ class GoalTest < Minitest::Test
     coord_dir = File.join(@root, "coordination")
     @env = { "COORD_DIR" => coord_dir, "TASKRC" => File.join(coord_dir, "taskrc"),
              "COORD_ROLE" => "architect", "COORD_WORKER" => "architect-1" }
+    isolate_env(@env)
     Dir.chdir(@root) { coord("init") }
   end
 
   def teardown
+    restore_env
     FileUtils.remove_entry(@root) if @root
   end
 

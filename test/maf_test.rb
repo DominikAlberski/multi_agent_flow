@@ -25,14 +25,20 @@ class MafTest < Minitest::Test
     FileUtils.remove_entry(@dir)
   end
 
+  # The agent session that runs the suite exports TASKRC and COORD_DIR for the
+  # shared board. Point the child at the disposable board instead.
+  def maf_env
+    { "VAULT_SKIP" => "1", "TASKRC" => File.join(@dir, "coordination", "taskrc"),
+      "COORD_DIR" => File.join(@dir, "coordination"), "COORD_ROLE" => nil, "COORD_WORKER" => nil }
+  end
+
   def maf_at(path, *args)
-    output = IO.popen([RbConfig.ruby, path, *args], chdir: @dir, err: [:child, :out], &:read)
+    output = IO.popen(maf_env, [RbConfig.ruby, path, *args], chdir: @dir, err: [:child, :out], &:read)
     [output, $?.exitstatus]
   end
 
   def maf(*args)
-    output = IO.popen({ "VAULT_SKIP" => "1" }, [RbConfig.ruby, MAF, *args],
-                      chdir: @dir, err: [:child, :out], &:read)
+    output = IO.popen(maf_env, [RbConfig.ruby, MAF, *args], chdir: @dir, err: [:child, :out], &:read)
     [output, $?.exitstatus]
   end
 
@@ -269,6 +275,9 @@ module MafProject
   def install_project
     @project = File.join(@dir, "project")
     FileUtils.mkdir_p(@project)
+    @env = @env.merge("TASKRC" => File.join(@project, "coordination", "taskrc"),
+                      "COORD_DIR" => File.join(@project, "coordination"),
+                      "COORD_ROLE" => nil, "COORD_WORKER" => nil)
     git("init", "-q")
     maf("add", "opencode:architect")
     git("add", "-A")
@@ -332,6 +341,31 @@ class MafTeamTest < Minitest::Test
   def worktree(worker) = File.join(@project, ".worktrees", worker)
   def workers = JSON.parse(File.read(File.join(@project, "coordination", "workers.json")))
   def coord(*args, env: {}) = IO.popen(@env.merge(env), [RbConfig.ruby, "coord", *args], chdir: @project, &:read)
+
+  # Regression: the suite used to pass an inherited TASKRC/COORD_DIR to coord,
+  # so `coord add` wrote a stray task to the agent session's real board. The
+  # helper must override both variables.
+  def test_coord_does_not_write_to_an_inherited_board
+    sentinel = File.join(@dir, "sentinel")
+    FileUtils.mkdir_p(File.join(sentinel, "coordination"))
+    File.write(File.join(sentinel, "coordination", "taskrc"),
+               "data.location=#{File.join(sentinel, "coordination", "taskdata")}\nuda.role.type=string\n")
+
+    with_env("TASKRC" => File.join(sentinel, "coordination", "taskrc"),
+             "COORD_DIR" => File.join(sentinel, "coordination")) do
+      refute_empty coord("add", "--role", "architect", "--scope", "docs/**", "--title", "leak check").strip
+    end
+
+    refute Dir.exist?(File.join(sentinel, "coordination", "taskdata"))
+  end
+
+  def with_env(pairs)
+    saved = pairs.keys.to_h { |key| [key, ENV[key]] }
+    pairs.each { |key, value| ENV[key] = value }
+    yield
+  ensure
+    saved.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+  end
 
   def test_prepare_adds_the_role_and_the_worktree
     out, status = maf("prepare", "opencode", "backend-developer_2")

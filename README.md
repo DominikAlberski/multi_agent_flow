@@ -156,6 +156,13 @@ Verifies: UDA block in `assets/coord` matches `assets/taskrc.append`; marker
 blocks are present in all generated files; worktree path formula is identical in
 `assets/coord` and `lib/maf/setup_agent.rb`.
 
+An agent session exports `TASKRC` and `COORD_DIR` for the shared board. Unset
+them before the tests, so a test never writes to that board:
+
+```sh
+env -u TASKRC -u COORD_DIR -u COORD_ROLE -u COORD_WORKER ruby test/coord_test.rb
+```
+
 ```sh
 ruby test/coord_test.rb      # covers the coord CLI
 ruby test/installer_test.rb  # covers bootstrap.rb, flow.rb, setup_agent.rb
