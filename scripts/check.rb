@@ -31,7 +31,7 @@ module Check
   # formula is duplicated on purpose. Keep the two identical.
   WORKTREE_FILES = {
     coord: File.join(ROOT, "assets", "coord"),
-    setup_agent: File.join(ROOT, "lib", "maf", "setup_agent.rb")
+    setup_agent: File.join(ROOT, "lib", "maf", "setup_agent", "worktree.rb")
   }.freeze
   WORKTREE_SUFFIX_DEF = 'WORKTREES_DIR = ".worktrees"'
   WORKTREE_DIR_EXPR = 'File.join(root, WORKTREES_DIR, slug)'
