@@ -1,0 +1,15 @@
+# frozen_string_literal: true
+
+module Flow
+  # HookFiles copies a hook script from the assets and makes it executable.
+  module HookFiles
+    def self.copy(src, dest)
+      FileUtils.mkdir_p(File.dirname(dest))
+      return if File.exist?(dest) && File.read(dest) == File.read(src)
+
+      FileUtils.cp(src, dest)
+      FileUtils.chmod("+x", dest)
+      puts "  hook install: #{dest}"
+    end
+  end
+end
