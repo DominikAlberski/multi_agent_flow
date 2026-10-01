@@ -9,7 +9,7 @@ module Maf
   # pool, removes the worktree, and deletes the registry entry. The task
   # branches stay, so the next worker continues from the committed work.
   class Retire
-    RUNTIME_PREFIXES = %w[coord coordination/ .claude/ .opencode/ .codex/ dispatcher dashboard vault].freeze
+    RUNTIME_PREFIXES = %w[.maf/ .claude/ .opencode/ .codex/].freeze
 
     def initialize(root, spec)
       @root = root
@@ -64,7 +64,7 @@ module Maf
     end
 
     def remove_presence
-      coord_dir = File.join(@root, "coordination")
+      coord_dir = File.join(@root, ".maf", "coordination")
       FileUtils.rm_f(File.join(coord_dir, "presence", "#{@worker}.json"))
     end
 

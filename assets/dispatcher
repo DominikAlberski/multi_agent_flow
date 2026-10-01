@@ -11,18 +11,18 @@
 #    dispatcher polls the inbox and the task board on a fixed interval.
 #
 # Usage:
-#   ./dispatcher ROLE [--harness NAME | --command TEMPLATE] [--model M]
+#   dispatcher ROLE [--harness NAME | --command TEMPLATE] [--model M]
 #                     [--skill NAME | --no-skill] [--interval S] [--max-turns N]
 #                     [--timeout S] [--idle-timeout S] [--grace S]
 #                     [--completion-signal TEXT] [--abort-signal TEXT]
 #                     [--cache-window S] [--no-poll-tasks]
 #                     [--once] [--verbose]
 #
-#   ./dispatcher tester                            # hermes (default)
-#   ./dispatcher reviewer --harness claude --model sonnet
-#   ./dispatcher backend-developer --harness opencode --model openrouter/qwen3-coder
-#   ./dispatcher reviewer --harness codex
-#   ./dispatcher reviewer --once                   # one poll cycle, then exit
+#   dispatcher tester                            # hermes (default)
+#   dispatcher reviewer --harness claude --model sonnet
+#   dispatcher backend-developer --harness opencode --model openrouter/qwen3-coder
+#   dispatcher reviewer --harness codex
+#   dispatcher reviewer --once                   # one poll cycle, then exit
 #
 # Flags:
 #   --harness NAME     Built-in adapter: hermes (default), claude, codex, or
@@ -69,13 +69,13 @@
 # changed task set dispatches at once.
 #
 # Sessions and the prompt cache: the session ID is saved to
-# coordination/sessions/<worker>.session and resumed on the next run, so the
+# .maf/coordination/sessions/<worker>.session and resumed on the next run, so the
 # agent keeps its context without staying alive. LLM providers cache the
 # session prefix for a limited time after the last request (1 hour for
 # Claude Code). A resume after that time resends the whole context at full
 # price. So the dispatcher resumes only inside --cache-window. Outside it,
 # the dispatcher starts a fresh session. Every run ends by writing a short
-# handoff note to coordination/sessions/<worker>.handoff.md, and a fresh
+# handoff note to .maf/coordination/sessions/<worker>.handoff.md, and a fresh
 # session starts with that note. If the harness reports an unknown session,
 # the dispatcher also starts fresh. Other failures keep the session.
 #
@@ -87,7 +87,7 @@
 # it with. Two dispatchers for one role need different COORD_WORKER values.
 #
 # Environment:
-#   COORD_DIR       Path to coordination/ (default: ./coordination).
+#   COORD_DIR       Path to .maf/coordination/ (default: .maf/coordination).
 #   COORD_WORKER    Worker ID for the agent (default: <role>-bot).
 #   DISPATCHER_LOG  Append log lines to this file (default: stderr).
 #
@@ -100,7 +100,8 @@ require "rbconfig"
 require "shellwords"
 
 module Dispatcher
-  MANIFEST = ".agent-flow.json"
+  MANIFEST = ".maf/config.json"
+  COORD_BIN = ".maf/bin/coord"
   MAX_ATTEMPTS = 3
   MAX_BACKOFF = 3600
   REPORT_RETRIES = 1
@@ -138,7 +139,7 @@ module Dispatcher
   # NOTE: assets/coord carries the same list; both run standalone.
   LEADS = %w[project-manager architect].freeze
 
-  # EditGrant reads each agent's can_edit from .agent-flow.json. On Hermes,
+  # EditGrant reads each agent's can_edit from .maf/config.json. On Hermes,
   # a role with can_edit false starts without the file-writing toolsets.
   # NOTE: lib/maf/flow.rb carries the same toolset list; both run standalone.
   module EditGrant
@@ -149,7 +150,7 @@ module Dispatcher
     end
   end
 
-  # Presence writes coordination/presence/<worker>.json once per cycle, so
+  # Presence writes .maf/coordination/presence/<worker>.json once per cycle, so
   # `coord who` shows the dispatcher as live while its pid runs.
   module Presence
     def self.write(config)
@@ -298,7 +299,7 @@ module Dispatcher
     end
 
     def self.commands(poller, role)
-      board = LEADS.include?(role) ? {} : { "./coord next #{role}" => -> { poller.next_output } }
+      board = LEADS.include?(role) ? {} : { "coord next #{role}" => -> { poller.next_output } }
       board.merge("git log --oneline -10" => -> { git_log })
     end
 
@@ -340,8 +341,8 @@ module Dispatcher
     # Run coord with this Ruby, so an old system Ruby on the shebang path
     # never parses it.
     def coord_command
-      local = File.expand_path("coord")
-      [RbConfig.ruby, File.executable?(local) ? local : File.join(Project.root, "coord")]
+      local = File.expand_path(COORD_BIN)
+      [RbConfig.ruby, File.executable?(local) ? local : File.join(Project.root, COORD_BIN)]
     end
   end
 
@@ -495,7 +496,7 @@ module Dispatcher
   end
 
   # TokenUsage reads the token usage of one run and adds it to the totals of
-  # the worker in coordination/usage/<worker>.json. Claude Code, Hermes, and
+  # the worker in .maf/coordination/usage/<worker>.json. Claude Code, Hermes, and
   # Codex report usage. A run without usage data adds nothing. A usage error
   # never fails a run.
   class TokenUsage
@@ -697,7 +698,7 @@ module Dispatcher
     end
   end
 
-  # Verify runs the verify command of .agent-flow.json after a successful
+  # Verify runs the verify command of .maf/config.json after a successful
   # run, in the worktree. A non-zero exit makes the run no success. No key
   # means no check. Lead roles own no task, so they get no check.
   module Verify
@@ -849,8 +850,8 @@ module Dispatcher
   module Prompt
     ONE_SHOT = <<~TEXT
       You run as role %<role>s in one-shot mode. Follow the multi-agent coordination rules in AGENTS.md.
-      Do not use --wait: nobody is waiting on this session. Run ./coord next, claim a task, do the work,
-      annotate it, and finish it with ./coord done. When no task is left, stop.
+      Do not use --wait: nobody is waiting on this session. Run coord next, claim a task, do the work,
+      annotate it, and finish it with coord done. When no task is left, stop.
     TEXT
 
     LEAD_ONE_SHOT = <<~TEXT
@@ -1012,7 +1013,7 @@ module Dispatcher
     def self.parse(argv, env = ENV)
       config = Config.new(**DEFAULTS)
       parser(config).parse!(argv)
-      config.role = argv.shift || abort("dispatcher: role is required (usage: ./dispatcher ROLE)")
+      config.role = argv.shift || abort("dispatcher: role is required (usage: dispatcher ROLE)")
       finish(validate(config), env)
     end
 
@@ -1031,7 +1032,7 @@ module Dispatcher
     end
 
     def self.parser(config)
-      OptionParser.new("Usage: ./dispatcher ROLE [options]") do |o|
+      OptionParser.new("Usage: dispatcher ROLE [options]") do |o|
         VALUES.each { |flag, (key, type)| o.on(flag, type) { |v| config[key] = v } }
         SWITCHES.each { |flag, (key, value)| o.on(flag) { config[key] = value } }
         o.on("-h", "--help") { puts(o) || exit }
@@ -1039,7 +1040,7 @@ module Dispatcher
     end
 
     def self.finish(config, env)
-      config.coord_dir = File.expand_path(env.fetch("COORD_DIR", "coordination"))
+      config.coord_dir = File.expand_path(env.fetch("COORD_DIR", ".maf/coordination"))
       config.worker = env.fetch("COORD_WORKER", "#{config.role}-bot")
       config.poll_tasks = false if LEADS.include?(config.role)
       config.skill = nil if config.no_skill
@@ -1049,4 +1050,8 @@ module Dispatcher
   end
 end
 
-Dispatcher::Main.new(Dispatcher::Options.parse(ARGV)).run if __FILE__ == $PROGRAM_NAME
+if __FILE__ == $PROGRAM_NAME
+  # The agents run `coord`. Put the folder of this script (.maf/bin) on PATH.
+  ENV["PATH"] = [File.dirname(File.expand_path(__FILE__)), ENV["PATH"]].compact.join(File::PATH_SEPARATOR)
+  Dispatcher::Main.new(Dispatcher::Options.parse(ARGV)).run
+end

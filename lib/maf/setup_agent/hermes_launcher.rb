@@ -10,9 +10,9 @@ module SetupAgent
     # can_edit false starts without the file-writing toolsets.
     module Hermes
       PROMPT = "Follow the multi-agent coordination rules in AGENTS.md as role %<role>s. " \
-               "Run ./coord inbox, then ./coord next --wait. Claim a task, do the work, finish it. Repeat."
+               "Run coord inbox, then coord next --wait. Claim a task, do the work, finish it. Repeat."
       LEAD_PROMPT = "Follow your role skill and the coordination rules in AGENTS.md as role %<role>s. " \
-                    "You are a lead role. Never claim a task. Run ./coord inbox --wait and handle each message."
+                    "You are a lead role. Never claim a task. Run coord inbox --wait and handle each message."
 
       def self.launch(role, _worker, model)
         cmd = %w[hermes chat]

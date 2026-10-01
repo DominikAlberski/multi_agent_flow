@@ -2,7 +2,7 @@
 
 module Uninstall
   class Coordination
-    def initialize(project) = @dir = File.join(project, "coordination")
+    def initialize(project) = @dir = File.join(project, ".maf", "coordination")
 
     def steps
       return [] unless Dir.exist?(@dir)

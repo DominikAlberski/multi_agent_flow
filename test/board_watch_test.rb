@@ -164,9 +164,10 @@ class MainTest < Minitest::Test
   # A fake coord prints one task ID, so the watcher finds work at once.
   def with_fake_coord
     Dir.mktmpdir("board-watch-main") do |dir|
-      File.write(File.join(dir, "coord"), "puts #{TASK_ID.inspect}\n")
-      FileUtils.chmod("+x", File.join(dir, "coord"))
-      env = { "COORD_ROLE" => "tester", "COORD_DIR" => File.join(dir, "coordination"), "BOARD_WATCH_INTERVAL" => "0" }
+      FileUtils.mkdir_p(File.join(dir, ".maf", "bin"))
+      File.write(File.join(dir, ".maf", "bin", "coord"), "puts #{TASK_ID.inspect}\n")
+      FileUtils.chmod("+x", File.join(dir, ".maf", "bin", "coord"))
+      env = { "COORD_ROLE" => "tester", "COORD_DIR" => File.join(dir, ".maf/coordination"), "BOARD_WATCH_INTERVAL" => "0" }
       Dir.chdir(dir) { yield env }
     end
   end

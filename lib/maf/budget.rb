@@ -4,7 +4,7 @@
 require "json"
 
 module Maf
-  # Budget reads the "team" key of .agent-flow.json:
+  # Budget reads the "team" key of .maf/config.json:
   #   "team": { "max_workers": 6, "allow": ["claude", "opencode:deepseek/deepseek-v4-flash"] }
   # max_workers does not count the project manager. An "allow" entry without
   # a model allows every model of that harness. Without "team", maf sets no limits.
@@ -12,7 +12,7 @@ module Maf
     LEAD = "project-manager"
 
     def self.at(root)
-      path = File.join(root, ".agent-flow.json")
+      path = File.join(root, ".maf/config.json")
       new(team(path))
     end
 

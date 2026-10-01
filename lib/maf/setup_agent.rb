@@ -10,16 +10,16 @@
 #   maf start claude reviewer --dispatch --cache-window 1500
 #
 # Without --dispatch, the harness starts as an interactive session. With
-# --dispatch, the worktree runs ./dispatcher instead: the agent starts only
+# --dispatch, the worktree runs dispatcher instead: the agent starts only
 # when there is work and exits when the work is done. Other flags after the
 # positional arguments go to the dispatcher (for example --interval,
 # --timeout, --cache-window). WORKER defaults to 1, or to "bot" with
 # --dispatch, so a dispatched and an interactive instance of one role get
 # separate worktrees. --detach (only with --dispatch) starts the dispatcher
-# in the background, logs to coordination/sessions/<worker>.log, and records
-# its pid in coordination/workers.json. `maf retire` stops it.
+# in the background, logs to .maf/coordination/sessions/<worker>.log, and records
+# its pid in .maf/coordination/workers.json. `maf retire` stops it.
 #
-# HARNESS:ROLE must already exist in .agent-flow.json (maf add HARNESS:ROLE
+# HARNESS:ROLE must already exist in .maf/config.json (maf add HARNESS:ROLE
 # adds one). Run from the project root.
 
 require "json"
@@ -31,7 +31,7 @@ require_relative "workers"
 abort "setup_agent: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
 
 module SetupAgent
-  MANIFEST = ".agent-flow.json"
+  MANIFEST = ".maf/config.json"
 
   def self.run(argv)
     args = Args.parse(argv)
@@ -79,7 +79,7 @@ module SetupAgent
     return Dispatch.launch(args, model) if args.dispatch
 
     # exec keeps this pid, so it is the harness pid. coord records it as the
-    # worker's presence (coordination/presence/<worker>.json).
+    # worker's presence (.maf/coordination/presence/<worker>.json).
     ENV["COORD_SESSION_PID"] = Process.pid.to_s
     Launcher.for(args.harness).launch(args.role, args.worker, model)
   end

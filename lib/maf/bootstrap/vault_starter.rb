@@ -8,28 +8,30 @@ module Bootstrap
   class VaultStarter
     def initialize(project)
       @project = project
-      @script = project.vault_script
     end
 
     # Returns the note that the next steps print.
     def start(actions)
       return "skipped (VAULT_SKIP is set)" if ENV["VAULT_SKIP"]
-      return "run `./#{@script}` after bootstrap (graphify not needed at install time, only to run it)" unless installed?(actions)
-      return "run `./#{@script}` once graphify is installed" unless Bootstrap.which("graphify")
+      return "run `vault` after bootstrap (graphify not needed at install time, only to run it)" unless installed?(actions)
+      return "run `vault` once graphify is installed" unless Bootstrap.which("graphify")
 
       launch
     end
 
     private
 
+    def script
+      @project.bin_path("vault")
+    end
+
     def installed?(actions)
-      actions.any? { |act| act[:path] == @project.path(@script) && act[:kind] != :refuse }
+      actions.any? { |act| act[:path] == script && act[:kind] != :refuse }
     end
 
     def launch
-      ok = system(@project.path(@script), chdir: @project.target)
-      cmd = "./#{@script}"
-      note = ok ? "started (`#{cmd} status` / `#{cmd} stop`)" : "failed to start; see coordination/vault.log"
+      ok = system(script, chdir: @project.target)
+      note = ok ? "started (`vault status` / `vault stop`)" : "failed to start; see .maf/coordination/vault.log"
       Bootstrap.say("vault: #{note}")
       note
     end

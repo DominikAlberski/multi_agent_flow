@@ -3,11 +3,11 @@
 
 # dashboard - local observability web UI for multi-agent coordination.
 #
-# Usage: ./dashboard [--port N] [--coord DIR] [--interval S]
+# Usage: dashboard [--port N] [--coord DIR] [--interval S]
 #
 # Starts a local HTTP server at http://localhost:4567 (default).
 # The page auto-refreshes every S seconds (default: 5).
-# Run from the project root where coordination/ lives.
+# Run from the project root where .maf/coordination/ lives.
 #
 # >>> multi-agent-flow >>>
 # <<< multi-agent-flow <<<
@@ -27,7 +27,7 @@ abort "dashboard: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSIO
 module Dashboard
   DEFAULT_PORT     = 4567
   DEFAULT_INTERVAL = 5
-  DEFAULT_COORD    = "coordination"
+  DEFAULT_COORD    = ".maf/coordination"
   DEFAULT_LEASE    = 4 * 3600
 
   class Config
@@ -48,7 +48,7 @@ module Dashboard
     def log_path     = File.join(coord_dir, "events.log")
     def inbox_dir    = File.join(coord_dir, "inbox")
     def locks_dir    = File.join(coord_dir, "locks")
-    def manifest     = ".agent-flow.json"
+    def manifest     = File.join(File.dirname(coord_dir), "config.json")
     def workers_path = File.join(coord_dir, "workers.json")
     def usage_dir    = File.join(coord_dir, "usage")
     def lease_ttl
@@ -81,7 +81,7 @@ module Dashboard
   end
 
   # TokenReader reads the token usage that the dispatcher adds up per worker in
-  # coordination/usage/<worker>.json. A broken file counts as no usage.
+  # .maf/coordination/usage/<worker>.json. A broken file counts as no usage.
   class TokenReader
     def initialize(dir)
       @dir = dir
@@ -126,7 +126,7 @@ module Dashboard
       []
     end
 
-    # coordination/workers.json lists each worker that `maf prepare` or
+    # .maf/coordination/workers.json lists each worker that `maf prepare` or
     # `maf start` set up. The last event shows when the worker last acted.
     def workers
       last = recent_events(500).to_h { |event| [event[:worker], event[:ts]] }

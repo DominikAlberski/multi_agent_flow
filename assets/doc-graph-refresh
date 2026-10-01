@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 # doc-graph-refresh - rebuild the knowledge graph after a markdown change.
-# Usage: coordination/doc-graph-refresh post-commit|post-merge
+# Usage: .maf/bin/doc-graph-refresh post-commit|post-merge
 
 require "fileutils"
 require "tmpdir"
@@ -11,10 +11,13 @@ require "time"
 abort "doc-graph-refresh: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
 
 module DocGraph
+  # graphify names the output dir under --out "graphify-out".
   GRAPH = "graphify-out"
-  LOG = "coordination/doc-graph.log"
-  LOCK = "coordination/doc-graph.lock"
-  PENDING = "coordination/doc-graph.pending"
+  GRAPH_HOME = ".maf/graphify-out"
+  OBSIDIAN = ".maf/obsidian"
+  LOG = ".maf/coordination/doc-graph.log"
+  LOCK = ".maf/coordination/doc-graph.lock"
+  PENDING = ".maf/coordination/doc-graph.pending"
   EVENTS = %w[post-commit post-merge].freeze
   MARKDOWN = /\.md\z/i
 
@@ -75,7 +78,7 @@ module DocGraph
     common.empty? ? Dir.pwd : File.expand_path("..", common)
   end
 
-  def self.graph_path = File.join(main, GRAPH)
+  def self.graph_path = File.join(main, GRAPH_HOME)
 
   module Git
     def self.changed(event)
@@ -203,7 +206,7 @@ module DocGraph
     def self.retry_wait = Integer(ENV.fetch("DOC_GRAPH_RETRY_WAIT", RETRY_WAIT))
 
     def self.extract_ok?(tmp, tree)
-      system("graphify", "extract", tree, "--backend", "gemini", "--max-concurrency", "1", "--out", tmp) &&
+      system({ "GRAPHIFY_OUT" => nil }, "graphify", "extract", tree, "--backend", "gemini", "--max-concurrency", "1", "--out", tmp) &&
         File.exist?(File.join(tmp, GRAPH, "graph.json"))
     end
   end
@@ -227,7 +230,8 @@ module DocGraph
 
   module Export
     def self.run
-      Dir.chdir(DocGraph.main) { system("graphify", "export", "obsidian", "--dir", "obsidian") }
+      graph_path = DocGraph.graph_path
+      Dir.chdir(DocGraph.main) { system({ "GRAPHIFY_OUT" => graph_path }, "graphify", "export", "obsidian", "--dir", OBSIDIAN) }
     end
   end
 

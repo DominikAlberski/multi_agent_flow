@@ -33,7 +33,7 @@ module Check
     coord: File.join(ROOT, "assets", "coord"),
     setup_agent: File.join(ROOT, "lib", "maf", "setup_agent", "worktree.rb")
   }.freeze
-  WORKTREE_SUFFIX_DEF = 'WORKTREES_DIR = ".worktrees"'
+  WORKTREE_SUFFIX_DEF = 'WORKTREES_DIR = ".maf/worktrees"'
   WORKTREE_DIR_EXPR = 'File.join(root, WORKTREES_DIR, slug)'
 
   # bootstrap.rb decides whether an existing script is "ours" by these signature

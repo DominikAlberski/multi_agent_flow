@@ -19,7 +19,7 @@ module SetupAgent
     def verify!(harness, role)
       return if @agents.any? { |a| a["harness"] == harness && a["role"] == role }
 
-      abort "setup_agent: no #{harness}:#{role} in .agent-flow.json.\n#{add_hint("#{harness}:#{role}")}"
+      abort "setup_agent: no #{harness}:#{role} in .maf/config.json.\n#{add_hint("#{harness}:#{role}")}"
     end
 
     # maf add keeps the current agents, so the hint names only the missing agent.

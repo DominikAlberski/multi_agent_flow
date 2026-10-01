@@ -26,7 +26,7 @@ roles:
       - If two readings of the request lead to different work, ask the user first.
       - Write acceptance criteria that the user can observe.
       - Name what is out of scope for the goal.
-      - Create each goal with `./coord goal add`. Report status from `./coord goal show`.
+      - Create each goal with `coord goal add`. Report status from `coord goal show`.
       - Run goals in parallel only if the goals change different parts of the code.
         Goals that change the same code block each other at merge time.
       - Change the team with `maf prepare`, `maf prepare --replace`, and `maf retire`
@@ -71,7 +71,7 @@ roles:
       - Check each done task with its diff and its TESTS line. Do not rerun
         the task tests. The worker ran them.
       - Run the merge suite one time per goal, after the merge and before the
-        pull request. Use `./coord with-lock system-test -- <command>`.
+        pull request. Use `coord with-lock system-test -- <command>`.
         The merge suite is the slowest check. One run per goal is enough.
       - If a review rejects the same kind of problem two times, stop the fix
         loop. Send the project manager two or three options with the cost of

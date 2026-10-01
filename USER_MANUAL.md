@@ -15,7 +15,7 @@ The example uses 3 harnesses and 6 roles:
 | tester | Hermes | dispatched |
 
 - **Interactive:** a terminal session stays open. You can watch the agent work.
-- **Dispatched:** no session stays open. `./dispatcher` starts the agent only
+- **Dispatched:** no session stays open. `dispatcher` starts the agent only
   when there is work. The agent exits when the work is done. An idle dispatched
   agent costs no tokens.
 
@@ -130,11 +130,13 @@ Remove `--check` from step 4 and run again.
 Expected output:
 
 - `Generated role files:` with one line per role:
-  - `.claude/agents/<role>.md`
-  - `.opencode/agents/<role>.md`
+  - `.maf/agents/claude/<role>.md`
+  - `.maf/agents/opencode/<role>.md`
   - `~/.hermes/skills/my-app-tester/SKILL.md`
-- New files in the project: `coord`, `dispatcher`, `vault`,
-  `dashboard`, `AGENTS.md`, `.gitignore`, `.agent-flow.json`, `coordination/`.
+- New files in the project: the folder `.maf/` (with `bin/`, `coordination/`,
+  `agents/`, `config.json`, and `env.sh`), `AGENTS.md`, and `.gitignore`.
+  The folders `.claude/agents/`, `.opencode/agents/`, and `.codex/prompts/`
+  are symlinks into `.maf/agents/`.
 - If the project had a `CLAUDE.md` or `.claude/CLAUDE.md`, `maf add` moves its
   text into `AGENTS.md` and deletes the file. Claude Code reads `AGENTS.md`
   only when no `CLAUDE.md` exists.
@@ -146,10 +148,8 @@ files, so commit before starting any agent.
 
 ```sh
 cd "$PROJECT"
-git add coord dispatcher vault dashboard AGENTS.md \
-        .gitignore .agent-flow.json .claude .opencode coordination
+git add .maf AGENTS.md .gitignore .claude .opencode .codex
 git rm --cached -q --ignore-unmatch CLAUDE.md .claude/CLAUDE.md   # maf add moved it into AGENTS.md
-git add vault-daemon 2>/dev/null; true   # if maf add used vault-daemon instead of vault
 git commit -m "Add multi-agent flow"
 ```
 
@@ -160,14 +160,17 @@ sessions, handoff notes, logs).
 
 ```sh
 cd "$PROJECT"
-./coord init
-./coord status
+source .maf/env.sh
+coord init
+coord status
 ```
+
+`source .maf/env.sh` puts `.maf/bin` on `PATH`. Run it in each new shell.
 
 Expected output:
 
-- `./coord init` prints `coordination/ ready (coordination)`.
-- `./coord status` prints `no tasks`.
+- `coord init` prints `.maf/coordination/ ready (.maf/coordination)`.
+- `coord status` prints `no tasks`.
 
 ---
 
@@ -183,10 +186,10 @@ maf start opencode backend-developer_1   # terminal 3
 
 `maf start HARNESS ROLE[_WORKER]` does these things in one command:
 
-1. Creates or reuses a worktree at `.worktrees/<role>-<worker_id>` on branch
+1. Creates or reuses a worktree at `.maf/worktrees/<role>-<worker_id>` on branch
    `worker/<role>-<worker_id>`.
-2. Sources `coord-env.sh` so the worktree shares the main project's
-   `coordination/` dir and task board.
+2. Sources `.maf/env.sh` so the worktree shares the main project's
+   `.maf/coordination/` dir and task board.
 3. Exports `COORD_ROLE`, `COORD_WORKER`, `COORD_DIR`, and `TASKRC`.
 4. Launches the harness in that worktree with the role loaded.
 
@@ -229,29 +232,29 @@ Then it adds workers itself, for example
 - A task for a role without a worker sends a message to the project manager.
 - Each done task sends a message to the architect, so a dispatched architect
   starts when there is work to check.
-- Background dispatchers log to `coordination/sessions/<worker>.log`.
+- Background dispatchers log to `.maf/coordination/sessions/<worker>.log`.
 - A background dispatcher keeps running when the project manager's session
   ends. Run `maf retire` for each worker to stop the team.
 
 ### Isolate test databases and ports
 
-Each worktree gets a unique number, `COORD_SLOT`, in its `coord-env.sh`.
+Each worktree gets a unique number, `COORD_SLOT`, in its `.maf/env.sh`.
 The main worktree is slot 0. To give each worktree its own test database
 and server port, add a project hook:
 
 ```bash
-cp <multi_agent_flow>/assets/worktree-env.example.rb coordination/worktree-env.rb
-git add coordination/worktree-env.rb
+cp <multi_agent_flow>/assets/worktree-env.example.rb .maf/coordination/worktree-env.rb
+git add .maf/coordination/worktree-env.rb
 ```
 
 `coord worktree` runs the hook and adds its `export NAME=VALUE` lines to
-`coord-env.sh`. The Rails example sets `TEST_ENV_NUMBER`, `PORT`, and
+`.maf/env.sh`. The Rails example sets `TEST_ENV_NUMBER`, `PORT`, and
 `CAPYBARA_SERVER_PORT`. Use `TEST_ENV_NUMBER` in `config/database.yml`.
 Existing worktrees get the new variables on the next `coord worktree` or
 `maf start` run.
 
 Run the full suite with system tests under one lock:
-`./coord with-lock system-test -- bin/rails test:all`.
+`coord with-lock system-test -- bin/rails test:all`.
 
 ### Keep interactive Claude Code agents awake
 
@@ -273,14 +276,14 @@ adds two hooks to `.claude/settings.json`:
 3. If the work did not change since the last poke, the next poke waits twice
    as long, up to 1 hour.
 
-One watcher runs per worker. The lock is `coordination/locks/board-watch-<worker>.d`.
+One watcher runs per worker. The lock is `.maf/coordination/locks/board-watch-<worker>.d`.
 The watcher stops when its Claude Code process stops. The watcher does nothing
 for the user's own sessions (no `COORD_ROLE`) and for dispatched agents
 (`COORD_DISPATCHED=1`). To change the timing, set `BOARD_WATCH_INTERVAL` and
 `BOARD_WATCH_IDLE` (seconds) before you run `maf start`.
 
 Codex and opencode role files tell the agent to block in
-`./coord next --wait --timeout 540` when it has no work. The command returns
+`coord next --wait --timeout 540` when it has no work. The command returns
 when a task or a message arrives. Codex has no wake hook. Use `--dispatch` to
 run Codex agents unattended.
 
@@ -292,7 +295,7 @@ agents. The plugin uses these rules:
 
 1. When the top-level session goes idle, the plugin checks the board at once.
    Then the plugin checks the board every `BOARD_WATCH_INTERVAL` seconds.
-2. Each check runs `coordination/harness-hooks/board-watch.rb --once`. The
+2. Each check runs `.maf/coordination/harness-hooks/board-watch.rb --once`. The
    script applies the same work rules and backoff as the Claude Code watcher.
 3. If the board has work, the plugin sends the work prompt to the session.
 4. When the session is busy again, the checks stop.
@@ -341,13 +344,13 @@ maf start claude reviewer --dispatch --model sonnet                 # terminal 5
 maf start opencode frontend-developer --dispatch                    # terminal 6
 ```
 
-`--dispatch` runs `./dispatcher` in the worktree instead of an interactive session:
+`--dispatch` runs `dispatcher` in the worktree instead of an interactive session:
 
-1. Creates or reuses a worktree at `.worktrees/<role>-bot` on branch
+1. Creates or reuses a worktree at `.maf/worktrees/<role>-bot` on branch
    `worker/<role>-bot`. The `-bot` worker id keeps dispatched workers separate
    from interactive workers of the same role.
 2. Connects the worktree to the main project's task board.
-3. Starts `./dispatcher` in the worktree.
+3. Starts `dispatcher` in the worktree.
 
 Expected startup line:
 
@@ -374,7 +377,7 @@ The built-in harnesses are `hermes` (default), `claude`, `codex`, and `opencode`
 For any other harness, use `--command` with a template:
 
 ```sh
-./dispatcher ROLE --command 'my-agent --role %{role} %{prompt}'
+dispatcher ROLE --command 'my-agent --role %{role} %{prompt}'
 ```
 
 ### The report block
@@ -429,17 +432,17 @@ last request. Claude Code uses a 1-hour cache.
 - If the last run is older, the dispatcher starts a fresh session. The fresh
   session gets a short handoff note (at most 300 words), not the full old context.
   The log shows: `idle Nm, past the cache window; starting fresh with the handoff note`.
-- Each run ends with the handoff note in `coordination/sessions/<worker>.handoff.md`.
+- Each run ends with the handoff note in `.maf/coordination/sessions/<worker>.handoff.md`.
   The agent writes it while the cache is still warm.
 
-**Prefetch.** Each dispatch prompt holds the output of `./coord next ROLE` and
+**Prefetch.** Each dispatch prompt holds the output of `coord next ROLE` and
 `git log --oneline -10`, each cut to 2000 characters. The agent needs fewer tool
 calls to see the board. Lead roles get only the git log. If a command fails,
 the log shows `prefetch failed` and the prompt goes out without that part.
 
 **Token usage.** After each run, the dispatcher adds the token usage of the run
-to `coordination/usage/<worker>.json`. Claude Code, Hermes, and Codex report the
-usage. opencode and `--command` harnesses do not. `./coord status` and the
+to `.maf/coordination/usage/<worker>.json`. Claude Code, Hermes, and Codex report the
+usage. opencode and `--command` harnesses do not. `coord status` and the
 dashboard show the totals. A run never fails because of missing usage data.
 
 Set `--cache-window` to your provider's cache time minus a margin. For a
@@ -455,16 +458,16 @@ Talk to the project manager session (terminal 1). Example:
 
 Expected sequence:
 
-1. The project manager creates the goal with `./coord goal add`. The command
+1. The project manager creates the goal with `coord goal add`. The command
    creates branch `goal/<short-id>` from the base branch and the goal worktree
-   `.worktrees/goal-<short-id>`.
+   `.maf/worktrees/goal-<short-id>`.
 2. The project manager sends the goal id to the architect.
-3. The architect creates tasks with `./coord add --goal <id>` and assigns them to roles.
+3. The architect creates tasks with `coord add --goal <id>` and assigns them to roles.
 4. Interactive workers take their tasks immediately. Dispatched workers start
    within about 60 seconds.
-5. Each worker runs `./coord start-task <id>`, writes code on branch
+5. Each worker runs `coord start-task <id>`, writes code on branch
    `task/<short-id>`, runs the task tests, and commits.
-6. Each worker reports with `./coord annotate` and `./coord done`.
+6. Each worker reports with `coord annotate` and `coord done`.
 7. The reviewer checks the diff. The architect merges each task branch into the goal branch.
 8. The architect runs the full suite one time in the goal worktree and closes the goal.
 9. The architect reports to the project manager. The project manager reports to you.
@@ -472,21 +475,21 @@ Expected sequence:
 Check the goals at any time:
 
 ```sh
-./coord goal list
-./coord goal show <id>
+coord goal list
+coord goal show <id>
 ```
 
-Set the base branch in `.agent-flow.json` if it is not `main` or `origin/HEAD`:
+Set the base branch in `.maf/config.json` if it is not `main` or `origin/HEAD`:
 `"base_branch": "AI_development"`. Goals never start from another goal branch,
 so a defect in one goal does not block the others.
 
-Set a verify command in `.agent-flow.json` to check each task mechanically:
+Set a verify command in `.maf/config.json` to check each task mechanically:
 `"verify": "bin/rails test"`. The command runs in the worktree of the worker.
-`./coord done` refuses the task while the command exits non-zero. `--force`
+`coord done` refuses the task while the command exits non-zero. `--force`
 does not skip this check. A dispatched run with a failing verify command is no
 success. Lead roles get no check. Without the key, nothing changes.
 
-Set a copy list in `.agent-flow.json` for host files that git does not track:
+Set a copy list in `.maf/config.json` for host files that git does not track:
 `"copy_to_worktree": [".env", "config/master.key"]`. `coord worktree` and
 `maf start` copy each file that exists into the worktree. A file that is
 already in the worktree is never overwritten, so a change by the agent stays.
@@ -508,35 +511,35 @@ directly.
 Run from any terminal in the project:
 
 ```sh
-./coord status                   # tasks per role, by state
-./coord log 20                   # last 20 events: claims, done, messages
-./coord board                    # writes coordination/exports/board.md
-ls coordination/sessions/        # one .session + one .handoff.md per dispatched worker
-ls coordination/inbox/*/failed/  # messages that failed 3 runs (should be empty)
+coord status                   # tasks per role, by state
+coord log 20                   # last 20 events: claims, done, messages
+coord board                    # writes .maf/coordination/exports/board.md
+ls .maf/coordination/sessions/        # one .session + one .handoff.md per dispatched worker
+ls .maf/coordination/inbox/*/failed/  # messages that failed 3 runs (should be empty)
 ```
 
 ### Obsidian kanban
 
-`coord board` writes `coordination/exports/board.md`. Open it in Obsidian with
+`coord board` writes `.maf/coordination/exports/board.md`. Open it in Obsidian with
 the Kanban plugin (mgmeyers/obsidian-kanban). Obsidian reloads the file
 automatically. Keep it current while agents run:
 
 ```sh
-watch -n 10 ./coord board
+watch -n 10 coord board
 ```
 
 ### Web dashboard
 
-`./dashboard` starts a local server at `http://localhost:4567`. The page
+`dashboard` starts a local server at `http://localhost:4567`. The page
 auto-refreshes every 5 seconds. It shows everything `coord status` shows, plus
 signals the kanban cannot: expired-lease claims (crashed workers), unread inbox
 messages, stale locks, orphaned tasks, and scope conflicts. The Workers panel lists
-each worker from `coordination/workers.json` with its harness, role, current task,
+each worker from `.maf/coordination/workers.json` with its harness, role, current task,
 and last event. Each declared role has a card, also without tasks.
 
 ```sh
-./dashboard           # default port 4567
-./dashboard --port N  # custom port
+dashboard           # default port 4567
+dashboard --port N  # custom port
 ```
 
 ---
@@ -547,41 +550,41 @@ and last event. Each declared role has a card, also without tasks.
 `graphify` is on PATH at install time. Check:
 
 ```sh
-./vault status
+vault status
 ```
 
 If `graphify` was installed after `maf add`, start the watcher by hand:
 
 ```sh
-./vault
+vault
 ```
 
 Commands:
 
 ```sh
-./vault           # start (no-op if already running)
-./vault export    # regenerate the Obsidian vault once
-./vault status
-./vault stop
-./vault mcp       # exec the stdio MCP server (for an MCP client config)
+vault           # start (no-op if already running)
+vault export    # regenerate the Obsidian vault once
+vault status
+vault stop
+vault mcp       # exec the stdio MCP server (for an MCP client config)
 ```
 
 The watcher runs `graphify update .` (incremental, no LLM) and
-`graphify export obsidian --dir obsidian` every `VAULT_POLL` seconds (default 30).
+`graphify export obsidian --dir .maf/obsidian` every `VAULT_POLL` seconds (default 30).
 
 A markdown commit or merge also refreshes the graph. `maf add` appends a flow
 block to the `post-commit` and `post-merge` hooks. The block starts
-`coordination/doc-graph-refresh` detached. The refresh runs
-`graphify extract . --backend gemini` and re-exports `obsidian/`. It needs
+`.maf/bin/doc-graph-refresh` detached. The refresh runs
+`graphify extract . --backend gemini` and re-exports `.maf/obsidian/`. It needs
 `GEMINI_API_KEY` in the environment of the agent session. Without the key it
-logs a skip in `coordination/doc-graph.log`. A non-markdown commit makes no LLM
+logs a skip in `.maf/coordination/doc-graph.log`. A non-markdown commit makes no LLM
 call.
 
-MCP: set `./vault mcp` as the command in your MCP client config. `graphify-mcp`
+MCP: set `vault mcp` as the command in your MCP client config. `graphify-mcp`
 is a separate stdio binary; it is not a background flag.
 
-Open the `obsidian/` folder in Obsidian to see the code graph. To see
-`coordination/exports/board.md` as a kanban alongside the graph, open the project
+Open the `.maf/obsidian/` folder in Obsidian to see the code graph. To see
+`.maf/coordination/exports/board.md` as a kanban alongside the graph, open the project
 root as the Obsidian vault.
 
 ---
@@ -589,13 +592,13 @@ root as the Obsidian vault.
 ## Message hooks
 
 `coord msg` and `coord broadcast` fire a per-role hook at
-`coordination/message-hooks/<role>.sh` when a message is delivered. The hook is a plain
+`.maf/coordination/message-hooks/<role>.sh` when a message is delivered. The hook is a plain
 shell script. If there is no hook, `coord` only writes the inbox file.
 An agent does not need a hook to get a message. The board watcher (Claude Code)
 and `coord next --wait` (other harnesses) wake the agent on an unread message.
 
 ```sh
-# coordination/message-hooks/backend-developer.sh
+# .maf/coordination/message-hooks/backend-developer.sh
 #!/bin/sh
 # Show a desktop notification (macOS)
 osascript -e "display notification \"$COORD_FROM wrote to $COORD_ROLE\" with title \"coord\""
@@ -608,7 +611,7 @@ Hook environment variables:
 - `COORD_MSG_FILE` and `$1`: the message file path.
 
 The hook runs in the background; a slow hook does not block the sender. Output
-goes to `coordination/message-hooks/<role>.log`. `coord hooks [ROLE]` lists installed
+goes to `.maf/coordination/message-hooks/<role>.log`. `coord hooks [ROLE]` lists installed
 hooks and their status.
 
 ---
@@ -629,7 +632,7 @@ gh pr create --base main --head goal/<short-id>
 
 1. Exit each interactive session.
 2. Press Ctrl-C in each dispatcher terminal.
-3. If the vault watcher runs, run `./vault stop`.
+3. If the vault watcher runs, run `vault stop`.
 
 ### Change the team
 
@@ -648,7 +651,7 @@ The command does these steps:
 1. Checks that the old worker does not run and has no uncommitted work.
 2. Adds the role file for the harness, if it is missing (`maf add`).
 3. Creates the worktree and copies an uncommitted role file into it.
-4. Registers the worker in `coordination/workers.json`. The dashboard shows it.
+4. Registers the worker in `.maf/coordination/workers.json`. The dashboard shows it.
 5. Returns the old worker's claimed tasks to the pool and removes its worktree.
    The task branches stay, so the next worker continues the committed work.
 6. Tells the architect about the change.
@@ -656,7 +659,7 @@ The command does these steps:
 Then run the two printed commands in a new terminal:
 
 ```sh
-cd .worktrees/frontend-developer-2
+cd .maf/worktrees/frontend-developer-2
 maf start
 ```
 
@@ -668,14 +671,14 @@ adds a worker. `maf retire backend-developer_2` removes a worker.
 Worktrees can stay for the next session. To remove a worktree:
 
 ```sh
-git worktree remove .worktrees/<name>
+git worktree remove .maf/worktrees/<name>
 ```
 
 ---
 
 ## Change the setup later
 
-`maf` keeps the agents in `.agent-flow.json`. Give only the changes:
+`maf` keeps the agents in `.maf/config.json`. Give only the changes:
 
 ```sh
 maf add opencode:frontend-developer   # add an agent
@@ -706,19 +709,20 @@ maf uninstall
 
 The uninstaller removes:
 
-- `coord`, `dispatcher`, `dashboard`, `vault` (or `vault-daemon`), and `setup_agent` from older installs.
-- `coordination/`, with the task board, messages, locks, and message hooks.
-- Clean worktrees in `.worktrees/`.
-- Generated role files in `.claude/agents/`, `.opencode/agents/`, `.codex/prompts/`,
-  and the project's Hermes skills.
+- `.maf/bin/` (`coord`, `dispatcher`, `dashboard`, `vault`, `doc-graph-refresh`) and `.maf/env.sh`.
+- `.maf/coordination/`, with the task board, messages, locks, and message hooks.
+- Clean worktrees in `.maf/worktrees/`.
+- Generated role files in `.maf/agents/`, the symlinks `.claude/agents`,
+  `.opencode/agents`, and `.codex/prompts`, and the project's Hermes skills.
 - The flow hooks in `.claude/settings.json`.
 - The flow blocks in the `post-commit` and `post-merge` git hooks.
 - The marked blocks in `AGENTS.md` and `.gitignore`.
-- `.agent-flow.json`.
+- `.maf/config.json`.
+- The folder `.maf/`, when nothing is left in it.
 
 The uninstaller keeps:
 
-- `graphify-out/` and `obsidian/`. A rebuild costs many agent runs. Delete them
+- `.maf/graphify-out/` and `.maf/obsidian/`. A rebuild costs many agent runs. Delete them
   by hand. `.gitignore` keeps their ignore rules.
 - Files that do not carry the flow signature or marker, and text outside the
   marked blocks.
@@ -746,6 +750,9 @@ the old names. Old task boards and worktrees do not work with it.
 | `coordination/hooks/next-task.rb` and other harness hooks | `coordination/harness-hooks/` |
 | dispatcher default worker `<role>-dispatcher` | `<role>-bot` |
 
+The paths in this section are the paths of the old layout. Do these steps
+before you run `maf migrate`.
+
 Do these steps in the project:
 
 1. Stop the team (see above).
@@ -756,8 +763,83 @@ Do these steps in the project:
 6. Move your message hooks from `coordination/hooks/` to `coordination/message-hooks/`.
 7. Delete the rest of `coordination/hooks/`.
 8. In `.claude/settings.json`, delete the hook entries that point to `coordination/hooks/`.
-9. Run `maf update`, then `./coord init`.
+9. Run `maf migrate`, then `coord init`.
 10. Commit.
+
+---
+
+## Move an old install into `.maf/`
+
+Older versions of the flow put many files in the project root: `coord`,
+`dispatcher`, `vault`, `dashboard`, `coordination/`, `.worktrees/`,
+`graphify-out/`, `obsidian/`, and `.agent-flow.json`. This version keeps all of
+them in one folder, `.maf/`. The paths of the old and the new layout:
+
+| Old | New |
+|---|---|
+| `coord`, `dispatcher`, `vault`, `dashboard` | `.maf/bin/` |
+| `coordination/` | `.maf/coordination/` |
+| `coordination/doc-graph-refresh` | `.maf/bin/doc-graph-refresh` |
+| `.worktrees/` | `.maf/worktrees/` |
+| `graphify-out/` | `.maf/graphify-out/` |
+| `obsidian/` | `.maf/obsidian/` |
+| `.agent-flow.json` | `.maf/config.json` |
+| `coord-env.sh` | `.maf/env.sh` |
+| `.claude/agents/`, `.opencode/agents/`, `.codex/prompts/` | symlinks to `.maf/agents/<harness>/` |
+
+`maf update`, `maf add`, and the other commands stop on an old layout. They
+print this hint: `This project uses the old layout. Run: maf migrate`.
+
+Do these steps in the project:
+
+1. Stop the team (see above). `maf migrate` refuses to run while a registered
+   worker runs.
+2. Commit or stash your work. Do not leave changes in the worktrees.
+3. Preview the plan. The command prints each move and changes nothing:
+
+   ```sh
+   maf migrate --check
+   ```
+
+4. Run the migration. The command prints the plan and asks for confirmation.
+   Add `--yes` to skip the question:
+
+   ```sh
+   maf migrate
+   ```
+
+5. Check the result with `git status`. Git shows the old paths as deleted and
+   the new paths as new. Commit the move:
+
+   ```sh
+   git add -A
+   git commit -m "Move the flow into .maf"
+   ```
+
+6. In each shell, run `source .maf/env.sh`. Then run `coord status`.
+
+`maf migrate` does these things:
+
+- Moves a script only if it carries the flow signature. Moves a role file only
+  if it carries the flow marker.
+- Moves each git worktree with `git worktree move`. The link between the
+  worktree and the repository stays intact. The command writes `.maf/env.sh` in
+  the worktree and removes `coord-env.sh`.
+- Changes the absolute paths in `.maf/coordination/taskrc`,
+  `.maf/coordination/workers.json`, and `.claude/settings.json`.
+- Regenerates the files of the current agents, as `maf update` does. This step
+  updates the scripts, the role files, the harness symlinks, the git hooks, and
+  the marked blocks in `AGENTS.md` and `.gitignore`.
+- Never deletes a file. If the new path exists, the old file stays and the
+  plan says `keep`.
+
+If a harness folder holds files that the flow does not own, the folder stays a
+folder and the harness cannot read the role files. Move your files out of the
+folder. Then run `maf update`.
+
+The task board keeps its tasks, because the task database moves with
+`.maf/coordination/`. Run `maf migrate` again at any time: a second run finds
+nothing to move.
 
 ---
 
@@ -768,38 +850,39 @@ Do these steps in the project:
 | `maf prepare HARNESS ROLE[_WORKER] [--replace W]` | Prepare a worker: role file, worktree, registry. Prints the two start commands. |
 | `maf retire ROLE[_WORKER]` | Remove a worker. Stops its background dispatcher. Its claimed tasks return to the pool. |
 | `maf team` | Show the budget, the workers, and the tasks by role. |
-| `maf team set --max N --allow HARNESS[:MODEL]` | Set the team budget in `.agent-flow.json`. |
+| `maf team set --max N --allow HARNESS[:MODEL]` | Set the team budget in `.maf/config.json`. |
 | `maf start ... --dispatch --detach` | Start a dispatcher in the background. |
 | `maf start` (in a prepared worktree) | Start the worker that `maf prepare` made. |
-| `./coord init` | Create the `coordination/` folders. |
-| `./coord goal add --title T [--base B]` | Create a goal, its branch `goal/<short-id>`, and its worktree. Prints the ID. |
-| `./coord goal list` / `goal show ID` | List open goals, or show one goal and its tasks. |
-| `./coord goal done ID` | Close a goal. Refused while a task of the goal is open. |
-| `./coord add --role ROLE --scope S --title T [--goal ID]` | Create a task for a role. Prints the ID. |
-| `./coord next [ROLE]` | List unclaimed tasks for a role (defaults to `$COORD_ROLE`). |
-| `./coord next --wait` | Block (polls every 60s) until a task or an unread message appears. Refused for lead roles. |
-| `./coord next --mine` | List the tasks this worker has claimed. |
-| `./coord conflicts` | List pending tasks whose scopes overlap. |
-| `./coord claim ID` | Atomically claim a task for `$COORD_WORKER`. Refuses to steal an active claim. Refused for lead roles. |
-| `./coord start-task ID` | In a worker worktree: check out `task/<short-id>` from the goal branch. |
-| `./coord unclaim ID` | Release a claim without finishing it. |
-| `./coord done ID [--force]` | Complete a task. Refused while the task branch has own commits and lacks the goal branch head. |
-| `./coord annotate ID TEXT` | Add a note to a task (permanent). |
-| `./coord msg --from A TO TEXT` | Send a message to a role. |
-| `./coord broadcast --from A [--to workers\|leads\|all] TEXT` | Send a message to a group of roles. Default: workers. |
-| `./coord inbox [ROLE]` | Read messages (marks them read; `--peek` keeps them; `--wait` blocks). |
-| `./coord log [N]` | Show the last N coordination events. |
-| `./coord lock NAME --ttl S` | Take an advisory lock. |
-| `./coord unlock NAME` | Release a lock. |
-| `./coord with-lock NAME -- CMD` | Run a command under a lock. |
-| `./coord worktree ROLE [WORKER]` | Create a git worktree + branch for a role. Source `coord-env.sh` inside it. Warns if a harness has no file for the role. |
-| `./coord hooks [ROLE]` | List installed message hooks and their status. |
-| `./coord status` | Show tasks by role and state. |
-| `./coord who` | List each worker with its presence (live or gone) from `coordination/presence/`. |
-| `./coord board` | Write the Obsidian board file. |
-| `./coord export` | Write the raw tasks JSON. |
+| `coord init` | Create the `.maf/coordination/` folders. |
+| `coord goal add --title T [--base B]` | Create a goal, its branch `goal/<short-id>`, and its worktree. Prints the ID. |
+| `coord goal list` / `goal show ID` | List open goals, or show one goal and its tasks. |
+| `coord goal done ID` | Close a goal. Refused while a task of the goal is open. |
+| `coord add --role ROLE --scope S --title T [--goal ID]` | Create a task for a role. Prints the ID. |
+| `coord next [ROLE]` | List unclaimed tasks for a role (defaults to `$COORD_ROLE`). |
+| `coord next --wait` | Block (polls every 60s) until a task or an unread message appears. Refused for lead roles. |
+| `coord next --mine` | List the tasks this worker has claimed. |
+| `coord conflicts` | List pending tasks whose scopes overlap. |
+| `coord claim ID` | Atomically claim a task for `$COORD_WORKER`. Refuses to steal an active claim. Refused for lead roles. |
+| `coord start-task ID` | In a worker worktree: check out `task/<short-id>` from the goal branch. |
+| `coord unclaim ID` | Release a claim without finishing it. |
+| `coord done ID [--force]` | Complete a task. Refused while the task branch has own commits and lacks the goal branch head. |
+| `coord annotate ID TEXT` | Add a note to a task (permanent). |
+| `coord msg --from A TO TEXT` | Send a message to a role. |
+| `coord broadcast --from A [--to workers\|leads\|all] TEXT` | Send a message to a group of roles. Default: workers. |
+| `coord inbox [ROLE]` | Read messages (marks them read; `--peek` keeps them; `--wait` blocks). |
+| `coord log [N]` | Show the last N coordination events. |
+| `coord lock NAME --ttl S` | Take an advisory lock. |
+| `coord unlock NAME` | Release a lock. |
+| `coord with-lock NAME -- CMD` | Run a command under a lock. |
+| `coord worktree ROLE [WORKER]` | Create a git worktree + branch for a role. Source `.maf/env.sh` inside it. Warns if a harness has no file for the role. |
+| `coord hooks [ROLE]` | List installed message hooks and their status. |
+| `coord status` | Show tasks by role and state. |
+| `coord who` | List each worker with its presence (live or gone) from `.maf/coordination/presence/`. |
+| `coord board` | Write the Obsidian board file. |
+| `coord export` | Write the raw tasks JSON. |
+| `maf migrate [--check] [--yes]` | Move an old-layout install into `.maf/`. See the migration section. |
 | `maf start HARNESS ROLE[_WORKER]` | Worktree + env + role + launch the harness, in one command. |
-| `maf start HARNESS ROLE --dispatch [FLAGS]` | Same setup, then run `./dispatcher`. |
+| `maf start HARNESS ROLE --dispatch [FLAGS]` | Same setup, then run `dispatcher`. |
 
 ---
 
@@ -808,7 +891,7 @@ Do these steps in the project:
 | Symptom | Fix |
 |---|---|
 | `Ruby 3.0+ required` or syntax error | Install Ruby 3.0 or later (step 0). |
-| A worktree has no `./coord` | Do the commit (step 6) before running `maf start`. |
+| A worktree has no `coord` | Do the commit (step 6) before running `maf start`. |
 | A dispatcher logs `agent failed` | Read the last log lines. Usual causes: missing CLI login, or a model name the harness does not accept. |
 | Two dispatchers for one role share a session | Set a different `COORD_WORKER` for each dispatcher. |
 | Hermes reports an unknown skill | Run `maf add hermes:ROLE` to generate the skill file. |

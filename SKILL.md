@@ -1,6 +1,6 @@
 ---
 name: multi-agent-flow
-description: Use when setting up or running multiple coding agents (opencode, Claude Code, Hermes, Codex) on one project and they need shared task state, messaging, resource locks, and a shared knowledge base. Installs a Taskwarrior-backed `coord` CLI, a coordination/ directory, an agent contract, and a graphify/Obsidian knowledge base into a target project.
+description: Use when setting up or running multiple coding agents (opencode, Claude Code, Hermes, Codex) on one project and they need shared task state, messaging, resource locks, and a shared knowledge base. Installs a Taskwarrior-backed `coord` CLI, a .maf/coordination/ directory, an agent contract, and a graphify/Obsidian knowledge base into a target project.
 ---
 
 # Multi-agent flow
@@ -18,9 +18,9 @@ and the coordination layer.
 Three pillars:
 
 1. **Agents** — independent terminals (Warp panes, Kepler, `coi` containers).
-   A container only shares state with the host if `coordination/`, `coord`,
-   and `coordination/taskrc` are mounted into it; nothing shares automatically.
-2. **Communication** — Taskwarrior task board + `coordination/` inbox, driven by the
+   A container only shares state with the host if `.maf/coordination/`, `coord`,
+   and `.maf/coordination/taskrc` are mounted into it; nothing shares automatically.
+2. **Communication** — Taskwarrior task board + `.maf/coordination/` inbox, driven by the
    `coord` wrapper. Works from any harness because it is only CLI + files.
 3. **Shared memory** — a graphify knowledge graph + Obsidian vault, queryable over MCP.
 
@@ -57,15 +57,16 @@ maf                                                 # interactive menu (in a ter
 
 Flags for `maf add`: `--check` (preview, write nothing), `--force` (overwrite a
 foreign `coord`), `--model ROLE=MODEL`. `maf add` keeps the current agents in
-`.agent-flow.json`.
+`.maf/config.json`.
 
 It creates and never destroys:
 
-- `coordination/{inbox,locks,exports,taskdata}/`
-- `coord`, `dispatcher`, and `vault` (executable) at the project root; `vault`
+- `.maf/coordination/{inbox,locks,exports,taskdata}/`
+- `coord`, `dispatcher`, `dashboard`, and `vault` (executable) in `.maf/bin/`, and
+  `.maf/env.sh` (puts `.maf/bin` on `PATH`); `vault`
   is also started automatically if `graphify` is on PATH (see Shared memory)
-- `coordination/taskrc`: a project-local Taskwarrior config (own database,
-  under `coordination/taskdata`) plus the UDA block — never the user's
+- `.maf/coordination/taskrc`: a project-local Taskwarrior config (own database,
+  under `.maf/coordination/taskdata`) plus the UDA block — never the user's
   global `~/.taskrc`, so two projects never share one board
 - a "Multi-agent coordination" contract appended to `AGENTS.md`, the only
   instruction file; `maf add` moves the text of an existing `CLAUDE.md` or
@@ -88,17 +89,17 @@ maf uninstall           # asks, then removes
 ```
 
 Removes only files that carry the flow signature or marker. Keeps
-`graphify-out/`, `obsidian/`, `worker/*` branches, and dirty worktrees
+`.maf/graphify-out/`, `.maf/obsidian/`, `worker/*` branches, and dirty worktrees
 (`--force` removes those worktrees).
 
 ## Verify
 
 ```sh
 cd /path/to/project
-./coord init
-./coord add --role local --scope "test/**" --title "example task"
-./coord status
-./coord board          # writes coordination/exports/board.md
+coord init
+coord add --role local --scope "test/**" --title "example task"
+coord status
+coord board          # writes .maf/coordination/exports/board.md
 ```
 
 ## Launch an agent
@@ -107,7 +108,7 @@ cd /path/to/project
 maf start HARNESS ROLE[_WORKER] [model:PROVIDER/MODEL]
 maf start claude architect
 maf start opencode backend-developer_1 model:openrouter/deepseek-v3
-maf start hermes tester --dispatch   # unattended: runs ./dispatcher in the worktree
+maf start hermes tester --dispatch   # unattended: runs dispatcher in the worktree
 ```
 
 One command: creates or reuses the agent's worktree, exports
@@ -117,7 +118,7 @@ there. For `opencode`/`codex` this loads the role file automatically via
 `.claude/agents/<role>.md` into an interactive session, it passes an initial
 prompt telling the session to read and follow that file; for `hermes`, it
 loads the role as a skill via `--skills <project>-<role>`. `HARNESS:ROLE` must
-already be in `.agent-flow.json` (`maf add HARNESS:ROLE` adds one); `WORKER` defaults to `1`.
+already be in `.maf/config.json` (`maf add HARNESS:ROLE` adds one); `WORKER` defaults to `1`.
 
 ## Wake a Hermes agent at session end
 
@@ -151,11 +152,11 @@ Set `COORD_ROLE` so messages and locks are attributed:
 
 ```sh
 export COORD_ROLE=local
-./coord claim <id> local
-./coord annotate <id> "working on it"
-./coord msg --from local deepseek "review test/foo.rb when free"
-./coord inbox local
-./coord done <id>
+coord claim <id> local
+coord annotate <id> "working on it"
+coord msg --from local deepseek "review test/foo.rb when free"
+coord inbox local
+coord done <id>
 ```
 
 Commands: `init, add, claim, unclaim, done, annotate, msg, inbox, lock, unlock,
@@ -171,9 +172,9 @@ at a fixed interval instead of a hand-rolled poll loop.
 A single local-model host can only serve one generation at a time. Serialize:
 
 ```sh
-./coord with-lock ollama -- opencode run --agent local "..."
-./coord lock ollama --ttl 3600   # advisory, for long interactive runs
-./coord unlock ollama
+coord with-lock ollama -- opencode run --agent local "..."
+coord lock ollama --ttl 3600   # advisory, for long interactive runs
+coord unlock ollama
 ```
 
 Locks are `mkdir`-based, so they work on macOS and Linux without `flock`.
@@ -184,28 +185,28 @@ Locks are `mkdir`-based, so they work on macOS and Linux without `flock`.
 `graphify` is on PATH at install time:
 
 ```sh
-./vault           # start (no-op if already running); maf add runs this for you
-./vault export    # regenerate the Obsidian vault once
-./vault status
-./vault stop
-./vault mcp       # exec the stdio MCP server (for an MCP client config)
+vault           # start (no-op if already running); maf add runs this for you
+vault export    # regenerate the Obsidian vault once
+vault status
+vault stop
+vault mcp       # exec the stdio MCP server (for an MCP client config)
 ```
 
 It runs the current graphify subcommands — `graphify update .` (incremental,
-no LLM) and `graphify export obsidian --dir obsidian` — as a detached polling
-watcher, with its pid in `coordination/vault.pid` and its output in
-`coordination/vault.log`. graphify 0.9 removed the old
+no LLM) and `graphify export obsidian --dir .maf/obsidian` — as a detached polling
+watcher, with its pid in `.maf/coordination/vault.pid` and its output in
+`.maf/coordination/vault.log`. graphify 0.9 removed the old
 `--obsidian`/`--obsidian-dir`/`--watch`/`--mcp` flags; MCP is now the separate
 `graphify-mcp` stdio binary that a client spawns, not a background flag. If
-`graphify` was not installed yet, run `./vault` by hand once it is.
+`graphify` was not installed yet, run `vault` by hand once it is.
 
 - Agents query the graph over MCP or `graphify query "..."` instead of grepping.
-- `obsidian/` is the human-facing Obsidian base (graph notes, canvas). It is
+- `.maf/obsidian/` is the human-facing Obsidian base (graph notes, canvas). It is
   regenerated and gitignored — durable decisions belong in the decisions folder
   (`.agent/decisions/` if it exists, else `docs/decisions/`),
   not here.
-- `./coord board` regenerates `coordination/exports/board.md`. It is not part
-  of the graphify export and is outside `obsidian/`. Open `coordination/exports/`
+- `coord board` regenerates `.maf/coordination/exports/board.md`. It is not part
+  of the graphify export and is outside `.maf/obsidian/`. Open `.maf/coordination/exports/`
   as a second vault, or open the project root as the vault to see both.
 
 ## Operating rules (also written into the project contract)
@@ -216,12 +217,12 @@ watcher, with its pid in `coordination/vault.pid` and its output in
    one, and the git `pre-commit` guard refuses their commits.
 2. Work in a per-agent branch or git worktree (`coord worktree ROLE`, or
    `maf start HARNESS ROLE` which also does this). Worktrees live inside the
-   project at `.worktrees/<role>-<worker_id>` (gitignored). In the worktree,
-   run `source coord-env.sh` so `COORD_DIR`/`TASKRC` point at the main project
-   and every worktree shares one coordination/ dir and board.
+   project at `.maf/worktrees/<role>-<worker_id>` (gitignored). In the worktree,
+   run `source .maf/env.sh` so `COORD_DIR`/`TASKRC` point at the main project
+   and every worktree shares one .maf/coordination/ dir and board.
 3. Acquire the `ollama` lock before any local generation.
 4. Record decisions in the decisions folder (`.agent/decisions/` or
-   `docs/decisions/`); append, never rewrite. `obsidian/` is
+   `docs/decisions/`); append, never rewrite. `.maf/obsidian/` is
    regenerated graphify output, not a durable store.
 5. Report via `coord annotate`; coordinate via `coord msg`.
 6. Worker roles: if no task is available, use `coord next --wait` instead of
@@ -238,9 +239,9 @@ watcher, with its pid in `coordination/vault.pid` and its output in
   the duplicated UDA definition in `coord` and `taskrc.append` in sync.
 - Run `ruby test/coord_test.rb` after changing `assets/coord`'s behavior.
 - Taskwarrior is the source of truth, in a project-local database
-  (`coordination/taskdata`); `coord board`/`export` are projections.
-- Containerized agents (e.g. `coi`) need `coordination/`, `coord`, and
-  `coordination/taskrc` mounted from the host — they share nothing across a
+  (`.maf/coordination/taskdata`); `coord board`/`export` are projections.
+- Containerized agents (e.g. `coi`) need `.maf/coordination/`, `coord`, and
+  `.maf/coordination/taskrc` mounted from the host — they share nothing across a
   container boundary on their own.
 - Multi-machine sync (Taskserver) is optional and out of scope here.
 - If a GUI is wanted later, point Obsidian (Kanban + Dataview) or `taskwarrior-tui`

@@ -12,7 +12,7 @@ module Uninstall
     private
 
     def paths
-      root = File.join(@project, ".worktrees", "")
+      root = File.join(@project, ".maf/worktrees", "")
       Git.lines(@project, "worktree", "list", "--porcelain")
          .filter_map { |line| line[/\Aworktree (.+)/, 1] }.select { |dir| dir.start_with?(root) }
     end

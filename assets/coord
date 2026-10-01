@@ -3,7 +3,7 @@
 
 # coord - shared coordination layer for multi-agent development.
 #
-# Storage:  coordination/ (Taskwarrior board, inbox, locks, exports)
+# Storage:  .maf/coordination/ (Taskwarrior board, inbox, locks, exports)
 # Locking:  mkdir-based (portable on macOS and Linux; no flock required)
 # Deps:     task (Taskwarrior). Ruby parses the JSON itself; no jq needed.
 # Ruby:     3.0+ (uses endless method defs: `def x = expr`). This file will
@@ -22,6 +22,8 @@ module Coord
   # NOTE: MARKER is duplicated in bootstrap.rb on purpose. Both scripts run
   # standalone (coord is copied into projects), so they share no load path.
   MARKER = ">>> multi-agent-flow >>>"
+  # The one folder that holds every file of the flow in a project.
+  MAF_DIR = ".maf"
   UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/
 
   TASKRC_BLOCK = <<~BLOCK
@@ -130,11 +132,11 @@ module Coord
     def hook_log(role) = File.join(message_hooks_dir, "#{role}.log")
     def presence_dir = File.join(coord_dir, "presence")
     def usage_dir = File.join(coord_dir, "usage")
-    def manifest_path = File.join(File.dirname(File.expand_path(coord_dir)), ".agent-flow.json")
+    def manifest_path = File.join(File.dirname(File.expand_path(coord_dir)), "config.json")
   end
 
   # Setup creates the coordination directories and the Taskwarrior UDAs.
-  # The Taskwarrior database is project-local (coordination/taskdata), not the
+  # The Taskwarrior database is project-local (.maf/coordination/taskdata), not the
   # user's global ~/.task, so two projects never share one board. An explicit
   # TASKRC env var still overrides this (see CLI#initialize).
   class Setup
@@ -174,7 +176,7 @@ module Coord
     # missing data.location in place.
     def ensure_data_location(warn_when_external:)
       unless project_local?
-        warn "coord: TASKRC=#{@taskrc} is outside coordination/; using its existing database as-is, not redirecting it." if warn_when_external
+        warn "coord: TASKRC=#{@taskrc} is outside .maf/coordination/; using its existing database as-is, not redirecting it." if warn_when_external
         return
       end
 
@@ -685,7 +687,7 @@ module Coord
   end
 
   # Hooks runs a per-role shell script when a message is delivered. The hook
-  # is a plain user-authored script at coordination/message-hooks/<role>.sh — coord
+  # is a plain user-authored script at .maf/coordination/message-hooks/<role>.sh — coord
   # does not know or care what harness the agent runs in. It starts a fresh
   # one-shot, sends a notification, or does nothing at all. The hook receives
   # COORD_ROLE, COORD_FROM, and COORD_MSG_FILE in its environment, and the
@@ -694,7 +696,7 @@ module Coord
   #
   # The hook runs detached in its own process group, so a slow hook (one that
   # starts a whole agent run) never blocks the sender. Its stdout and stderr
-  # go to coordination/message-hooks/<role>.log.
+  # go to .maf/coordination/message-hooks/<role>.log.
   class Hooks
     def initialize(paths)
       @paths = paths
@@ -717,7 +719,7 @@ module Coord
     end
   end
 
-  # Presence records which workers run now, in coordination/presence/<worker>.json.
+  # Presence records which workers run now, in .maf/coordination/presence/<worker>.json.
   # `maf start` exports COORD_SESSION_PID (the harness pid, kept across exec),
   # so every coord call from that session can record it. The dispatcher writes
   # its own file (mode "dispatch"); a dispatched run (COORD_DISPATCHED) writes
@@ -801,7 +803,7 @@ module Coord
     end
   end
 
-  # EventLog is a shared, append-only log in coordination/events.log. Every
+  # EventLog is a shared, append-only log in .maf/coordination/events.log. Every
   # claim, completion, unclaim, message, and broadcast appends one line so any
   # agent can see the history of coordination without reading individual inbox
   # files. The log is not the source of truth (Taskwarrior is); it is a
@@ -838,8 +840,8 @@ module Coord
   end
 
   # Roster lists every role coord knows about: roles that own a pending task,
-  # plus roles declared in the project's .agent-flow.json (written by
-  # maf add). The manifest sits next to coordination/, so a worktree
+  # plus roles declared in the project's .maf/config.json (written by
+  # maf add). The manifest sits next to .maf/coordination/, so a worktree
   # that points COORD_DIR at the main checkout still finds it.
   class Roster
     def initialize(paths, tasks)
@@ -860,7 +862,7 @@ module Coord
     def manifest_roles = Manifest.new(@paths.manifest_path).agents.map { |entry| entry["role"] }.compact
   end
 
-  # Manifest reads .agent-flow.json, which `maf add` writes. A project
+  # Manifest reads .maf/config.json, which `maf add` writes. A project
   # without maf has no manifest; every reader then gets empty defaults.
   class Manifest
     def initialize(path)
@@ -894,7 +896,7 @@ module Coord
   end
 
   # TokenTotals reads the token usage that the dispatcher adds up per worker
-  # in coordination/usage/<worker>.json. A broken file is skipped.
+  # in .maf/coordination/usage/<worker>.json. A broken file is skipped.
   class TokenTotals
     def initialize(paths)
       @paths = paths
@@ -1126,7 +1128,7 @@ module Coord
 
   # Slots gives each worktree a stable number. Parallel worktrees use the
   # number to derive unique test databases and server ports. The main
-  # worktree has no coord-env.sh and counts as slot 0.
+  # worktree has no .maf/env.sh and counts as slot 0.
   class Slots
     def initialize(coord_dir)
       @coord_dir = coord_dir
@@ -1153,7 +1155,7 @@ module Coord
     # `git worktree remove` both free the slot on the next assign.
     def live = read.select { |slug, _slot| Dir.exist?(worktree_dir(slug)) }
 
-    def worktree_dir(slug) = File.join(File.dirname(File.expand_path(@coord_dir)), Worktree::WORKTREES_DIR, slug)
+    def worktree_dir(slug) = File.join(File.dirname(File.dirname(File.expand_path(@coord_dir))), Worktree::WORKTREES_DIR, slug)
 
     def write(slots)
       File.write(@path, JSON.pretty_generate(slots))
@@ -1161,12 +1163,12 @@ module Coord
     end
   end
 
-  # WorktreeEnv writes a worktree's coord-env.sh: the shared board paths, the
+  # WorktreeEnv writes a worktree's .maf/env.sh: the shared board paths, the
   # worktree's slot, and the output of the optional project hook
-  # coordination/worktree-env.rb. The hook gets COORD_SLOT and COORD_WORKTREE
+  # .maf/coordination/worktree-env.rb. The hook gets COORD_SLOT and COORD_WORKTREE
   # and prints `export NAME=VALUE` lines (see assets/worktree-env.example.rb).
   class WorktreeEnv
-    FILE = "coord-env.sh"
+    FILE = ".maf/env.sh"
     HOOK = "worktree-env.rb"
 
     def initialize(coord_dir)
@@ -1175,6 +1177,7 @@ module Coord
 
     def write(dir, slug)
       slot = Slots.new(@coord_dir).assign(slug)
+      FileUtils.mkdir_p(File.join(dir, MAF_DIR))
       File.write(File.join(dir, FILE), base_lines(slot) + hook_lines(dir, slot))
     end
 
@@ -1182,7 +1185,13 @@ module Coord
 
     def base_lines(slot)
       "export COORD_DIR=#{@coord_dir}\nexport TASKRC=#{File.join(@coord_dir, "taskrc")}\n" \
-        "export COORD_SLOT=#{slot}\n"
+        "export COORD_SLOT=#{slot}\n#{bin_lines}"
+    end
+
+    # Same two lines as the env.sh of the main project: MAF_BIN and PATH.
+    def bin_lines
+      "export MAF_BIN=#{File.join(File.dirname(@coord_dir), "bin")}\n" \
+        "case \":$PATH:\" in *\":$MAF_BIN:\"*) ;; *) export PATH=\"$MAF_BIN:$PATH\" ;; esac\n"
     end
 
     def hook_lines(dir, slot)
@@ -1192,13 +1201,13 @@ module Coord
       run_hook(hook, { "COORD_SLOT" => slot.to_s, "COORD_WORKTREE" => dir })
     end
 
-    # Keep only `export NAME=VALUE` lines. A shell that sources coord-env.sh
+    # Keep only `export NAME=VALUE` lines. A shell that sources .maf/env.sh
     # then runs nothing else the hook prints.
     def run_hook(hook, env)
       output = IO.popen(env, [RbConfig.ruby, hook], &:read)
       return output.lines.grep(/\Aexport \w+=/).join if $?.success?
 
-      warn "coord: #{hook} failed. coord-env.sh has no project variables."
+      warn "coord: #{hook} failed. .maf/env.sh has no project variables."
       ""
     end
   end
@@ -1244,20 +1253,20 @@ module Coord
 
   # Worktree creates a per-worker git worktree and branch, so "one branch or
   # worktree per worker" (the contract's own rule) is a command, not a manual
-  # step. The worktree shares the main project's coordination/ dir and task
-  # board through COORD_DIR/TASKRC exported by an untracked coord-env.sh, not
+  # step. The worktree shares the main project's .maf/coordination/ dir and task
+  # board through COORD_DIR/TASKRC exported by an untracked .maf/env.sh, not
   # by symlinking tracked paths (a symlink would dirty the worktree and, if
   # committed, break the coordination dir on merge).
   #
-  # All worktrees live inside the project under .worktrees/<slug>.
-  # .worktrees/ is gitignored, so agents stay within the project directory
+  # All worktrees live inside the project under .maf/worktrees/<slug>.
+  # .maf/worktrees/ is gitignored, so agents stay within the project directory
   # and need no cross-directory file access permissions. maf start computes
   # the same path; keep the two in sync (scripts/check.rb).
   class Worktree
     ENV_FILE = WorktreeEnv::FILE
-    WORKTREES_DIR = ".worktrees"
-    RUNTIME_FILES = %w[coord .claude/settings.json coordination/harness-hooks/next-task.rb
-                       coordination/harness-hooks/board-watch.rb .opencode/plugins/board-watch.js].freeze
+    WORKTREES_DIR = ".maf/worktrees"
+    RUNTIME_FILES = %w[.maf/bin/coord .claude/settings.json .maf/coordination/harness-hooks/next-task.rb
+                       .maf/coordination/harness-hooks/board-watch.rb .opencode/plugins/board-watch.js].freeze
 
     def self.dir_for(root, slug)
       File.join(root, WORKTREES_DIR, slug)
@@ -1309,7 +1318,7 @@ module Coord
         abort "coord: #{dir} exists but is not a git worktree. Remove it or choose a different slug."
       end
 
-      FastForward.new(dir, branch, Git.base_branch(@root, Manifest.new(File.join(@root, ".agent-flow.json")))).run
+      FastForward.new(dir, branch, Git.base_branch(@root, Manifest.new(File.join(@root, ".maf/config.json")))).run
       finish(dir, branch, "worktree #{dir} already exists, reusing (branch #{branch})")
     end
 
@@ -1320,14 +1329,14 @@ module Coord
     def finish(dir, branch, message)
       ensure_runtime_files(dir)
       exclude_env_file(dir)
-      WorktreeEnv.new(File.join(@root, "coordination")).write(dir, File.basename(dir))
+      WorktreeEnv.new(File.join(@root, MAF_DIR, "coordination")).write(dir, File.basename(dir))
       warn_uncommitted_coord
       puts message
-      puts "In that worktree, run: source #{ENV_FILE}   (shares this project's coordination/ and task board)"
+      puts "In that worktree, run: source #{ENV_FILE}   (shares this project's .maf/coordination/ and task board)"
     end
 
     # These files are normally committed, so a fresh worktree checks out its
-    # own copy. If one is not committed yet, the checkout has none: ./coord
+    # own copy. If one is not committed yet, the checkout has none: coord
     # would not exist, and Claude Code would run without the board-watch hook.
     # Copy the main worktree's copy of each missing file. A reused worktree
     # gets files that were added after it was created. An existing file is
@@ -1336,10 +1345,10 @@ module Coord
       (RUNTIME_FILES + copy_list).each { |path| copy_missing(File.join(@root, path), File.join(dir, path)) }
     end
 
-    # copy_to_worktree in .agent-flow.json lists more host files for each
+    # copy_to_worktree in .maf/config.json lists more host files for each
     # worktree, for example .env. Only paths inside the project are copied.
     def copy_list
-      list = Manifest.new(File.join(@root, ".agent-flow.json")).copy_to_worktree
+      list = Manifest.new(File.join(@root, ".maf/config.json")).copy_to_worktree
       outside = list.select { |path| path.start_with?("/") || path.split("/").include?("..") }
       warn "coord: copy_to_worktree skips paths outside the project: #{outside.join(", ")}" unless outside.empty?
       list - outside
@@ -1352,9 +1361,9 @@ module Coord
       FileUtils.cp(src, dest, preserve: true)
     end
 
-    # coord-env.sh holds absolute host paths and must never be committed. Git
+    # .maf/env.sh holds absolute host paths and must never be committed. Git
     # has no per-worktree exclude, and .gitignore may not be committed yet, so
-    # add it to the repository's shared local exclude instead. coord-env.sh
+    # add it to the repository's shared local exclude instead. .maf/env.sh
     # only ever exists inside a worktree, so this cannot hide anything in the
     # main worktree.
     def exclude_env_file(dir)
@@ -1374,12 +1383,12 @@ module Coord
     end
 
     def warn_uncommitted_coord
-      tracked = system("git", "-C", @root, "ls-files", "--error-unmatch", "coord",
+      tracked = system("git", "-C", @root, "ls-files", "--error-unmatch", ".maf/bin/coord",
                        out: File::NULL, err: File::NULL)
       return if tracked
 
-      warn "coord: 'coord' is not committed in #{@root}. It was copied into the worktree so ./coord " \
-           "works, but commit it (git add coord .gitignore) so future worktrees are clean and self-contained."
+      warn "coord: 'coord' is not committed in #{@root}. It was copied into the worktree so coord " \
+           "works, but commit it (git add .maf/bin .gitignore) so future worktrees are clean and self-contained."
     end
   end
 
@@ -1450,7 +1459,7 @@ module Coord
     def cmd_init
       setup.ensure_dirs
       setup.ensure_taskrc
-      puts "coordination/ ready (#{@coord_dir})"
+      puts ".maf/coordination/ ready (#{@coord_dir})"
     end
 
     def cmd_add
@@ -1491,7 +1500,7 @@ module Coord
 
     def announce_messages(role)
       count = messages.files(role).size
-      puts "#{count} unread message#{"s" if count != 1}. Run ./coord inbox." if count.positive?
+      puts "#{count} unread message#{"s" if count != 1}. Run coord inbox." if count.positive?
     end
 
     def cmd_conflicts = conflicts.report
@@ -1608,9 +1617,9 @@ module Coord
 
     # Hooks shows which role hooks are installed. With a ROLE argument, shows
     # just that role's hook. The hooks themselves are plain shell scripts at
-    # coordination/message-hooks/<role>.sh, fired by `coord msg` and `coord broadcast`.
+    # .maf/coordination/message-hooks/<role>.sh, fired by `coord msg` and `coord broadcast`.
     def cmd_hooks
-      return puts("no message hooks directory (run ./coord init)") unless Dir.exist?(paths.message_hooks_dir)
+      return puts("no message hooks directory (run coord init)") unless Dir.exist?(paths.message_hooks_dir)
 
       found = hook_files(@args.shift)
       return puts("no hooks installed") if found.empty?
@@ -1657,12 +1666,12 @@ module Coord
 
     def goals = @goals ||= Goals.new(tasks)
     def manifest = @manifest ||= Manifest.new(paths.manifest_path)
-    def main_root = File.dirname(File.expand_path(@coord_dir))
+    def main_root = File.dirname(File.dirname(File.expand_path(@coord_dir)))
     def goal_list = goals.list
 
     UNSTAFFED = "No worker runs role %s."
 
-    # With a worker registry (coordination/workers.json), a task for a role
+    # With a worker registry (.maf/coordination/workers.json), a task for a role
     # without a worker waits forever. Tell the project manager once per role.
     def report_unstaffed(role, id)
       return if role.nil? || staffed?(role) || unstaffed_notice?(role)
@@ -1759,7 +1768,7 @@ module Coord
 
     NO_PUSH = "coord: %<role>s has no live session and no message hook. The message waits until a %<role>s " \
               "session starts. Fix: maf start HARNESS %<role>s --dispatch --detach, " \
-              "or add an executable coordination/message-hooks/%<role>s.sh"
+              "or add an executable .maf/coordination/message-hooks/%<role>s.sh"
 
     # A message is pushed by a hook or read by a live session. Without both,
     # it waits unseen. Say so at send time, not hours later.
@@ -1769,14 +1778,14 @@ module Coord
       warn format(NO_PUSH, role: role)
     end
 
-    LEAD_HINT = "coord: role %<role>s is a lead role and %<what>s. Wait for messages with ./coord inbox --wait."
+    LEAD_HINT = "coord: role %<role>s is a lead role and %<what>s. Wait for messages with coord inbox --wait."
 
     def refuse_lead!(role, what)
       abort format(LEAD_HINT, role: role, what: what) if LEADS.include?(role)
     end
 
     STALE = "coord: branch %<task>s lacks the head of %<goal>s. In your worktree, run `git merge %<goal>s`. " \
-            "Run the task tests again. Then run ./coord done again. Use --force only if the merge is not wanted."
+            "Run the task tests again. Then run coord done again. Use --force only if the merge is not wanted."
 
     def refuse_stale!(task)
       goal, branch = TaskSync.new(@project_root).stale(task)
@@ -1784,9 +1793,9 @@ module Coord
     end
 
     VERIFY_FAILED = "coord: the verify command failed: %<command>s\n%<tail>s\n" \
-                    "Fix the failures. Then run ./coord done again. --force does not skip this check."
+                    "Fix the failures. Then run coord done again. --force does not skip this check."
 
-    # The verify command in .agent-flow.json is a mechanical gate for done.
+    # The verify command in .maf/config.json is a mechanical gate for done.
     # It runs in the current worktree. No key means no check.
     def refuse_unverified!
       command = manifest.verify
@@ -1836,7 +1845,7 @@ module Coord
 
     def initialize(argv, env: ENV)
       @args = Args.new(argv)
-      @coord_dir = env.fetch("COORD_DIR", "coordination")
+      @coord_dir = env.fetch("COORD_DIR", File.join(MAF_DIR, "coordination"))
       @role = env.fetch("COORD_ROLE", "unknown")
       @worker = env.fetch("COORD_WORKER", @role)
       @taskrc = env.fetch("TASKRC", File.join(@coord_dir, "taskrc"))

@@ -26,12 +26,28 @@ module Flow
     def generate_all
       run_bootstrap
       results = RoleFiles.new(@options, @roles).generate
+      link_agents
       pending = @options.check? ? false : HookInstaller.new(@options.agents).install
       manifest.write
       Report.new(@options.project, @roles, pending).print(results)
     end
 
     def manifest = Manifest.new(@options, @roles)
+
+    # Point the folder of each harness at the role files in .maf/agents/.
+    def link_agents
+      return if @options.check?
+
+      links = AgentLinks.new(@options.project)
+      @options.agents.map { |a| a[:harness] }.uniq.select { |h| HARNESS_DIRS.key?(h) }.each do |harness|
+        warn_not_linked(harness) if links.link(harness) == :refuse
+      end
+    end
+
+    def warn_not_linked(harness)
+      warn "flow: #{HARNESS_DIRS.fetch(harness)} holds files that the flow does not own. " \
+           "The #{harness} harness cannot read the role files. Run: maf migrate"
+    end
 
     def print_roles
       puts "Available roles (model_hint is a recommendation only):"

@@ -46,7 +46,7 @@ module Maf
     # The team key is the user's budget. Keep every other manifest key.
     def set(args)
       team = parse(args)
-      path = File.join(@root, ".agent-flow.json")
+      path = File.join(@root, ".maf/config.json")
       File.write(path, JSON.pretty_generate(manifest(path).merge("team" => team)))
       puts Budget.new(team).summary
     end

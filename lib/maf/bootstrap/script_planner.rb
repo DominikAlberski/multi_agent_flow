@@ -31,19 +31,22 @@ module Bootstrap
     end
 
     def vault
-      dest = @project.path(@project.vault_script)
-      status = @project.script_status(dest, "vault", VAULT_SIGNATURE)
-      @project.action(status, dest, vault_label(status, dest), "vault")
+      script("vault", VAULT_SIGNATURE)
+    end
+
+    # env.sh puts .maf/bin on PATH. A worker runs `source .maf/env.sh`.
+    def env
+      script("env.sh", ENV_SIGNATURE, @project.path(MAF_DIR, "env.sh"))
     end
 
     def hooks
-      HOOKS.map { |name, signature| script(name, signature, @project.path("coordination", name)) }
+      HOOKS.map { |name, signature| script(name, signature, @project.path(MAF_DIR, "coordination", name)) }
     end
 
     # The doc-graph refresh script rebuilds the shared graph after a markdown
     # change. The git hooks start it.
     def doc_graph
-      script("doc-graph-refresh", DOC_GRAPH_SIGNATURE, @project.path("coordination", "doc-graph-refresh"))
+      script("doc-graph-refresh", DOC_GRAPH_SIGNATURE)
     end
 
     # Append the flow block to the post-commit and post-merge hooks. A foreign
@@ -73,15 +76,9 @@ module Bootstrap
 
     private
 
-    def script(name, signature, dest = @project.path(name))
+    def script(name, signature, dest = @project.bin_path(name))
       status = @project.script_status(dest, name, signature)
       @project.action(status, dest, @project.refuse_label(status, dest), name)
-    end
-
-    def vault_label(status, dest)
-      return @project.refuse_label(status, dest) if status == :refuse
-
-      @project.vault_script == "vault-daemon" ? "#{dest} (vault/ is a directory; installing as vault-daemon instead)" : dest
     end
 
     def commit_guard_status(dest)

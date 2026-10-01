@@ -2,7 +2,7 @@
 
 # workers.rb - registry of the workers that run in this project.
 #
-# coordination/workers.json maps each worker id to its role, harness, model,
+# .maf/coordination/workers.json maps each worker id to its role, harness, model,
 # start mode, and worktree. `maf prepare` and `maf start` write it.
 # `maf retire` removes an entry. The dashboard reads it.
 require "json"
@@ -11,7 +11,7 @@ require "time"
 
 module Maf
   class Workers
-    def self.at(root) = new(File.join(root, "coordination", "workers.json"))
+    def self.at(root) = new(File.join(root, ".maf", "coordination", "workers.json"))
 
     # "backend-developer_2" (the maf start form) and "backend-developer-2"
     # (the worker id) name the same worker.

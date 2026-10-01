@@ -3,7 +3,7 @@
 // opencode loads this file from .opencode/plugins/board-watch.js. When a
 // top-level session goes idle, the plugin checks the board at once and then
 // every BOARD_WATCH_INTERVAL seconds (default 60). Each check runs
-// coordination/harness-hooks/board-watch.rb --once. If the script exits 2,
+// .maf/coordination/harness-hooks/board-watch.rb --once. If the script exits 2,
 // the plugin sends the script output to the session as a new prompt. When a
 // session is busy again, the checks stop.
 //
@@ -20,7 +20,7 @@ const server = async ({ client, directory }) => {
   const role = process.env.COORD_ROLE || ""
   if (!role || role === "unknown" || process.env.COORD_DISPATCHED) return {}
 
-  const script = path.join(directory, "coordination", "harness-hooks", "board-watch.rb")
+  const script = path.join(directory, ".maf", "coordination", "harness-hooks", "board-watch.rb")
   // Same rule as board-watch.rb: a whole number of seconds, else 60.
   const raw = (process.env.BOARD_WATCH_INTERVAL || "").trim()
   const interval = (/^\d+$/.test(raw) ? Number(raw) : 60) * 1000

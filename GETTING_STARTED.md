@@ -28,7 +28,7 @@ The flow uses two programs:
 - **`coord`** is a small command-line tool. It is the only interface the agents
   use for tasks, messages, and locks.
 
-All shared state lives in a `coordination/` folder inside your project.
+All shared state lives in a `.maf/coordination/` folder inside your project.
 
 ---
 
@@ -108,15 +108,22 @@ Use `maf roles` to see all roles. Each argument is `HARNESS:ROLE`.
 
 `maf add` does these things:
 
-1. Creates `coordination/inbox`, `coordination/locks`, `coordination/exports`,
+1. Creates the folder `.maf/` in your project. The flow keeps all its files there.
+   The folder holds `coordination/inbox`, `coordination/locks`, `coordination/exports`,
    and `coordination/taskdata`.
-2. Copies `coord`, `dispatcher`, and `vault` into your project.
-3. Creates `coordination/taskrc`: a project-local Taskwarrior config. Your
+2. Copies `coord`, `dispatcher`, `vault`, and `dashboard` into `.maf/bin/`.
+   Writes `.maf/env.sh`. The file puts `.maf/bin` on `PATH`.
+3. Creates `.maf/coordination/taskrc`: a project-local Taskwarrior config. Your
    global `~/.taskrc` is never touched; two projects never share one board.
 4. Appends the coordination contract to `AGENTS.md`.
 5. Adds ignore rules to `.gitignore`.
-6. Writes a role file per agent (`.claude/agents/`, `.opencode/agents/`, and
-   so on) and the `.agent-flow.json` manifest.
+6. Writes a role file per agent into `.maf/agents/<harness>/`. The folders of the
+   harnesses (`.claude/agents/`, `.opencode/agents/`, `.codex/prompts/`) are
+   symlinks to them. Writes the `.maf/config.json` manifest.
+
+The project root keeps `.maf/` and `AGENTS.md`. A few files must stay where
+their tool reads them (`.gitignore`, `.claude/settings.json`, the git hooks).
+See the project layout in [README.md](README.md).
 
 `maf add` is idempotent. Run it again at any time; it skips work already
 done. It keeps the current agents, so give only the new ones.
@@ -127,12 +134,14 @@ done. It keeps the current agents, so give only the new ones.
 
 ```sh
 cd /path/to/your/project
-./coord init
-./coord status
+source .maf/env.sh
+coord init
+coord status
 ```
 
-`./coord init` prints `coordination/ ready (coordination)`.
-`./coord status` prints `no tasks`.
+`source .maf/env.sh` puts `.maf/bin` on `PATH`. After that, you run `coord`, not `./coord`.
+`coord init` prints `.maf/coordination/ ready (.maf/coordination)`.
+`coord status` prints `no tasks`.
 
 ---
 
@@ -143,7 +152,7 @@ files, so commit before starting any agent.
 
 ```sh
 cd /path/to/your/project
-git add coord dispatcher vault AGENTS.md .gitignore coordination .agent-flow.json .claude .opencode
+git add .maf AGENTS.md .gitignore .claude .opencode .codex
 git commit -m "Add multi-agent flow"
 ```
 
@@ -155,22 +164,22 @@ Give each agent its own git worktree and branch so file changes never collide:
 
 ```sh
 cd /path/to/your/project
-./coord worktree backend-developer
+coord worktree backend-developer
 ```
 
-This creates `.worktrees/backend-developer-1` on branch `worker/backend-developer-1`.
+This creates `.maf/worktrees/backend-developer-1` on branch `worker/backend-developer-1`.
 
 In the agent's terminal:
 
 ```sh
-cd /path/to/your/project/.worktrees/backend-developer-1
-source coord-env.sh
+cd /path/to/your/project/.maf/worktrees/backend-developer-1
+source .maf/env.sh
 export COORD_ROLE=backend-developer
 export COORD_WORKER=backend-developer-1
 ```
 
-`source coord-env.sh` sets `COORD_DIR` and `TASKRC` to the main project.
-Without it, `./coord` in the worktree sees an empty local board.
+`source .maf/env.sh` sets `COORD_DIR` and `TASKRC` to the main project.
+Without it, `coord` in the worktree sees an empty local board.
 
 Do the same for each agent. Example layout:
 
@@ -179,7 +188,7 @@ Do the same for each agent. Example layout:
 - Terminal 3: you — run `coord` commands and watch
 
 > **Shortcut:** use `maf start HARNESS ROLE[_WORKER]` instead. It does
-> the worktree, `coord-env.sh`, `COORD_ROLE`, and `COORD_WORKER` steps and
+> the worktree, `.maf/env.sh`, `COORD_ROLE`, and `COORD_WORKER` steps and
 > then launches the harness.
 
 If you run more than one instance of the same role, give each a unique worker id:
@@ -196,7 +205,7 @@ claim the same task.
 ## 8. Create a task
 
 ```sh
-./coord add --role backend-developer --scope "test/queries/**" \
+coord add --role backend-developer --scope "test/queries/**" \
   --title "Fix reek offenses in test/queries"
 ```
 
@@ -209,13 +218,13 @@ The command prints the task ID. Use `$ID` below.
 List unclaimed tasks for a role:
 
 ```sh
-./coord next
+coord next
 ```
 
 Claim a task before starting work:
 
 ```sh
-./coord claim $ID
+coord claim $ID
 ```
 
 `claim` is atomic: if two workers race for one task, one wins and the other is
@@ -224,7 +233,7 @@ refused. Use `--force` only to take over a task on purpose.
 If the task is unclaimed but no agent is working on it:
 
 ```sh
-./coord next --wait   # block until a task or a message appears (polls every 60s)
+coord next --wait   # block until a task or a message appears (polls every 60s)
 ```
 
 If a worker crashes mid-task, its claim is not stuck forever. After
@@ -232,7 +241,7 @@ If a worker crashes mid-task, its claim is not stuck forever. After
 claimable again without `--force`. To release a task without finishing it:
 
 ```sh
-./coord unclaim $ID
+coord unclaim $ID
 ```
 
 Do not unclaim a task you are blocked on. Keep the claim, annotate the blocker,
@@ -252,7 +261,7 @@ model, take the `ollama` lock first (see step 12).
 Add a short note after each milestone:
 
 ```sh
-./coord annotate $ID "fixed 6 of 11 offenses"
+coord annotate $ID "fixed 6 of 11 offenses"
 ```
 
 Notes are permanent. They are part of the task history.
@@ -262,7 +271,7 @@ Notes are permanent. They are part of the task history.
 ## 12. Complete the task
 
 ```sh
-./coord done $ID
+coord done $ID
 ```
 
 ---
@@ -272,16 +281,16 @@ Notes are permanent. They are part of the task history.
 One local model host serves one generation at a time. Wrap the command in a lock:
 
 ```sh
-./coord with-lock ollama -- opencode run --agent backend-developer "Fix reek in test/queries"
+coord with-lock ollama -- opencode run --agent backend-developer "Fix reek in test/queries"
 ```
 
 The lock releases automatically when the command ends. For a long interactive
 session, take an advisory lock:
 
 ```sh
-./coord lock ollama --ttl 3600
+coord lock ollama --ttl 3600
 # ... work ...
-./coord unlock ollama
+coord unlock ollama
 ```
 
 ---
@@ -289,18 +298,18 @@ session, take an advisory lock:
 ## 14. Send a message to another agent
 
 ```sh
-./coord msg --from backend-developer reviewer "test/queries is clean, please review"
+coord msg --from backend-developer reviewer "test/queries is clean, please review"
 ```
 
 Read your messages:
 
 ```sh
-./coord inbox
+coord inbox
 ```
 
 `inbox` defaults to `$COORD_ROLE`. Reading marks messages as read. Use
 `--peek` to read without marking. Messages are files in
-`coordination/inbox/<role>/`.
+`.maf/coordination/inbox/<role>/`.
 
 ---
 
@@ -309,27 +318,27 @@ Read your messages:
 Task summary by role and state:
 
 ```sh
-./coord status
+coord status
 ```
 
 Write the Obsidian board file:
 
 ```sh
-./coord board
+coord board
 ```
 
-The board is at `coordination/exports/board.md`. Open it in Obsidian with the
+The board is at `.maf/coordination/exports/board.md`. Open it in Obsidian with the
 Kanban plugin (mgmeyers/obsidian-kanban). Keep it current:
 
 ```sh
-watch -n 10 ./coord board
+watch -n 10 coord board
 ```
 
 Web dashboard (stuck-detection: expired leases, unread inboxes, stale locks,
 scope conflicts):
 
 ```sh
-./dashboard
+dashboard
 ```
 
 Open `http://localhost:4567`. The page auto-refreshes every 5 seconds.
@@ -344,38 +353,38 @@ Two agents work on one project.
 Terminal 1 (`backend-developer`):
 
 ```sh
-cd /path/to/project/.worktrees/backend-developer-1
-source coord-env.sh
+cd /path/to/project/.maf/worktrees/backend-developer-1
+source .maf/env.sh
 export COORD_ROLE=backend-developer
 export COORD_WORKER=backend-developer-1
 
-./coord add --role backend-developer --scope "test/queries/**" \
+coord add --role backend-developer --scope "test/queries/**" \
   --title "Fix reek in test/queries"
 # prints: 3f2a...  (use as $ID)
-./coord claim $ID
-./coord with-lock ollama -- opencode run --agent backend-developer \
+coord claim $ID
+coord with-lock ollama -- opencode run --agent backend-developer \
   "Fix reek in test/queries"
-./coord annotate $ID "0 offenses remain, tests pass"
-./coord done $ID
-./coord msg --from backend-developer reviewer "please review test/queries"
+coord annotate $ID "0 offenses remain, tests pass"
+coord done $ID
+coord msg --from backend-developer reviewer "please review test/queries"
 ```
 
 Terminal 2 (`reviewer`):
 
 ```sh
-cd /path/to/project/.worktrees/reviewer-1
-source coord-env.sh
+cd /path/to/project/.maf/worktrees/reviewer-1
+source .maf/env.sh
 export COORD_ROLE=reviewer
 export COORD_WORKER=reviewer-1
 
-./coord inbox
-./coord add --role reviewer --scope "test/queries/**" \
+coord inbox
+coord add --role reviewer --scope "test/queries/**" \
   --title "Review test/queries changes"
 # prints: 9c1b...  (use as $RID)
-./coord claim $RID
+coord claim $RID
 # ... review ...
-./coord annotate $RID "approved"
-./coord done $RID
+coord annotate $RID "approved"
+coord done $RID
 ```
 
 Running three backend developers in parallel — create tasks once, start three
@@ -383,22 +392,22 @@ terminals with the same role and different worker ids:
 
 ```sh
 # architect terminal
-./coord add --role backend-developer --scope "app/models/**"   --title "Refactor models"
-./coord add --role backend-developer --scope "app/services/**" --title "Refactor services"
-./coord add --role backend-developer --scope "app/jobs/**"     --title "Refactor jobs"
+coord add --role backend-developer --scope "app/models/**"   --title "Refactor models"
+coord add --role backend-developer --scope "app/services/**" --title "Refactor services"
+coord add --role backend-developer --scope "app/jobs/**"     --title "Refactor jobs"
 ```
 
 ```sh
 # terminal 1
 export COORD_ROLE=backend-developer; export COORD_WORKER=backend-developer-1
-./coord next      # shows all three unclaimed tasks
-./coord claim <id>  # claims one; the rest stay available
+coord next      # shows all three unclaimed tasks
+coord claim <id>  # claims one; the rest stay available
 ```
 
 ```sh
 # terminal 2
 export COORD_ROLE=backend-developer; export COORD_WORKER=backend-developer-2
-./coord next      # shows remaining unclaimed tasks
+coord next      # shows remaining unclaimed tasks
 ```
 
 Each worker sees only unclaimed tasks. A claim is atomic; two workers cannot
@@ -409,7 +418,7 @@ take the same task.
 ## 17. Rules
 
 1. One writer per path. The task scope defines the paths. Agents must follow it.
-2. Use one git worktree per worker. `./coord worktree ROLE` creates one.
+2. Use one git worktree per worker. `coord worktree ROLE` creates one.
 3. Take the `ollama` lock before a local generation.
 4. Write decisions in `.agent/decisions/` if it exists, else `docs/decisions/`. Append; never rewrite history.
 5. Use `annotate` for progress. Use `msg` to talk to another agent.
@@ -425,13 +434,13 @@ take the same task.
 Run `brew install task`, or re-run the installer with `--install-deps`.
 
 **`coord: locked by ...`**
-Another worker holds the lock. Wait, or release it with `./coord unlock NAME`.
+Another worker holds the lock. Wait, or release it with `coord unlock NAME`.
 
 **The task ID is unknown.**
-Run `./coord status`. Or run `task +LATEST uuids`.
+Run `coord status`. Or run `task +LATEST uuids`.
 
 **The board file is empty.**
-Run `./coord board` again. Check that `task status:pending export` returns data.
+Run `coord board` again. Check that `task status:pending export` returns data.
 
 **The installer refuses to overwrite `coord`.**
 The existing file is not from this flow. Add `--force` only if you are sure.
@@ -444,7 +453,7 @@ The task scopes overlap. Split the tasks. Give each task a different scope.
 
 **A task looks claimed but nobody is working on it.**
 The worker likely crashed. Wait for the lease to expire (`COORD_LEASE_TTL`,
-default 4 hours) or free it now: `./coord unclaim $ID`.
+default 4 hours) or free it now: `coord unclaim $ID`.
 
 **A Claude Code session says it has no role.**
 Setting `COORD_ROLE` does not make Claude Code assume that role. `.claude/agents/ROLE.md`

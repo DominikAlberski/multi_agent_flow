@@ -15,6 +15,7 @@ require_relative "board_guard"
 require "tmpdir"
 require "fileutils"
 require "json"
+require "open3"
 require "rbconfig"
 
 ROOT = File.expand_path("..", __dir__)
@@ -50,17 +51,45 @@ class BootstrapTest < InstallerTestCase
     run_ruby(BOOTSTRAP, @dir, "--roles", "architect,backend-developer", *args)
   end
 
-  def taskrc_path = File.join(@dir, "coordination", "taskrc")
+  def taskrc_path = File.join(@dir, ".maf/coordination", "taskrc")
 
   def test_installs_coordination_layer
     out, status = bootstrap
 
     assert_equal 0, status, out
-    assert File.executable?(File.join(@dir, "coord"))
+    assert File.executable?(File.join(@dir, ".maf", "bin", "coord"))
     refute File.exist?(File.join(@dir, "setup_agent"))
-    assert_includes File.read(taskrc_path), "data.location=#{File.join(@dir, "coordination", "taskdata")}"
+    assert_includes File.read(taskrc_path), "data.location=#{File.join(@dir, ".maf/coordination", "taskdata")}"
     assert_includes File.read(File.join(@dir, "AGENTS.md")), ">>> multi-agent-flow >>>"
-    assert_includes File.read(File.join(@dir, ".gitignore")), "coord-env.sh"
+    assert_includes File.read(File.join(@dir, ".gitignore")), ".maf/env.sh"
+  end
+
+  # Root keeps only .maf/ and AGENTS.md (and .gitignore, which git reads there).
+  def test_installs_only_the_flow_folder_and_the_text_files_at_the_root
+    out, status = bootstrap
+
+    assert_equal 0, status, out
+    assert_equal %w[.gitignore .maf AGENTS.md], Dir.children(@dir).sort
+    assert_equal %w[bin coordination env.sh], Dir.children(File.join(@dir, ".maf")).sort
+  end
+
+  def test_ignore_rules_cover_the_runtime_folders
+    bootstrap
+
+    rules = File.read(File.join(@dir, ".gitignore")).lines.map(&:strip)
+
+    %w[.maf/coordination/ .maf/worktrees/ .maf/graphify-out/ .maf/obsidian/ .maf/*.log .maf/*.pid].each do |rule|
+      assert_includes rules, rule
+    end
+  end
+
+  def test_env_sh_puts_the_flow_bin_folder_on_the_path
+    bootstrap
+
+    out, status = Open3.capture2e("bash", "-c", "source .maf/env.sh && command -v coord && echo $MAF_BIN", chdir: @dir)
+
+    assert_equal 0, status.exitstatus, out
+    assert_equal [File.join(@dir, ".maf", "bin", "coord"), File.join(@dir, ".maf", "bin")], out.lines.map(&:strip)
   end
 
   def test_is_idempotent
@@ -107,16 +136,17 @@ class BootstrapTest < InstallerTestCase
   end
 
   def test_refuses_a_foreign_coord_script
-    File.write(File.join(@dir, "coord"), "# someone else's tool\n")
+    FileUtils.mkdir_p(File.join(@dir, ".maf", "bin"))
+    File.write(File.join(@dir, ".maf", "bin", "coord"), "# someone else's tool\n")
 
     out, status = bootstrap
 
     assert_equal 0, status, out
     assert_includes out, "REFUSE"
-    assert_equal "# someone else's tool\n", File.read(File.join(@dir, "coord"))
+    assert_equal "# someone else's tool\n", File.read(File.join(@dir, ".maf", "bin", "coord"))
   end
 
-  # Regression: a pre-existing, non-flow coordination/taskrc must never be
+  # Regression: a pre-existing, non-flow .maf/coordination/taskrc must never be
   # overwritten. It may point at a real Taskwarrior database.
   def test_refuses_a_foreign_taskrc
     FileUtils.mkdir_p(File.dirname(taskrc_path))
@@ -151,7 +181,7 @@ class BootstrapTest < InstallerTestCase
 
     assert_equal 0, status, out
     content = File.read(taskrc_path)
-    assert_includes content, "data.location=#{File.join(@dir, "coordination", "taskdata")}"
+    assert_includes content, "data.location=#{File.join(@dir, ".maf/coordination", "taskdata")}"
     assert_includes content, "uda.role.type=string"
   end
 
@@ -160,7 +190,7 @@ class BootstrapTest < InstallerTestCase
 
     assert_equal 0, status, out
     assert_includes out, "--check: no changes made."
-    refute File.exist?(File.join(@dir, "coord"))
+    refute File.exist?(File.join(@dir, ".maf"))
     refute File.exist?(taskrc_path)
   end
 
@@ -171,23 +201,23 @@ class BootstrapTest < InstallerTestCase
 
     assert_equal 0, status, out
     assert_includes out, "skipped (VAULT_SKIP is set)"
-    refute File.exist?(File.join(@dir, "coordination", "vault.pid"))
+    refute File.exist?(File.join(@dir, ".maf/coordination", "vault.pid"))
   end
 
   def test_adds_board_watch_hooks_to_claude_settings_once
     settings_path = File.join(@dir, ".claude", "settings.json")
     FileUtils.mkdir_p(File.dirname(settings_path))
     File.write(settings_path, JSON.generate(hooks: { Stop: [{ matcher: "", hooks: [{ type: "command",
-                                                     command: "ruby coordination/harness-hooks/next-task.rb" }] }] }))
+                                                     command: "ruby .maf/coordination/harness-hooks/next-task.rb" }] }] }))
     2.times { assert_equal 0, bootstrap.last }
 
     hooks = JSON.parse(File.read(settings_path))["hooks"]
     watch = hooks["SessionStart"].map { |entry| entry["hooks"][0] }
     assert_equal [true], watch.map { |hook| hook["asyncRewake"] }
-    assert_equal ["ruby coordination/harness-hooks/board-watch.rb"], watch.map { |hook| hook["command"] }
+    assert_equal ["ruby .maf/coordination/harness-hooks/board-watch.rb"], watch.map { |hook| hook["command"] }
     assert_equal 2, hooks["Stop"].size
-    assert File.exist?(File.join(@dir, "coordination", "harness-hooks", "board-watch.rb"))
-    assert Dir.exist?(File.join(@dir, "coordination", "message-hooks"))
+    assert File.exist?(File.join(@dir, ".maf/coordination", "harness-hooks", "board-watch.rb"))
+    assert Dir.exist?(File.join(@dir, ".maf/coordination", "message-hooks"))
   end
 
   def opencode_plugin = File.join(@dir, ".opencode", "plugins", "board-watch.js")
@@ -253,7 +283,7 @@ class FlowTest < InstallerTestCase
 
   def agent_file = File.join(@dir, ".opencode", "agents", "backend-developer.md")
   def architect_file = File.join(@dir, ".opencode", "agents", "architect.md")
-  def manifest = JSON.parse(File.read(File.join(@dir, ".agent-flow.json")))
+  def manifest = JSON.parse(File.read(File.join(@dir, ".maf/config.json")))
 
   def test_generates_agent_file_and_manifest
     out, status = flow("--agent", "opencode:backend-developer")
@@ -315,15 +345,48 @@ class FlowTest < InstallerTestCase
     assert_equal first, File.read(agent_file)
   end
 
+  def stored_agent_file = File.join(@dir, ".maf", "agents", "opencode", "backend-developer.md")
+
   def test_refuses_a_foreign_agent_file
-    FileUtils.mkdir_p(File.dirname(agent_file))
-    File.write(agent_file, "# hand-written agent\n")
+    FileUtils.mkdir_p(File.dirname(stored_agent_file))
+    File.write(stored_agent_file, "# hand-written agent\n")
 
     out, status = flow("--agent", "opencode:backend-developer")
 
     assert_equal 0, status, out
     assert_includes out, "refuse"
-    assert_equal "# hand-written agent\n", File.read(agent_file)
+    assert_equal "# hand-written agent\n", File.read(stored_agent_file)
+  end
+
+  # The harness folder is a committed relative symlink into .maf/agents/.
+  def test_the_harness_folder_is_a_symlink_into_the_flow_folder
+    flow("--agent", "opencode:backend-developer", "--agent", "codex:architect")
+
+    assert File.symlink?(File.join(@dir, ".opencode", "agents"))
+    assert_equal "../.maf/agents/opencode", File.readlink(File.join(@dir, ".opencode", "agents"))
+    assert_equal "../.maf/agents/codex", File.readlink(File.join(@dir, ".codex", "prompts"))
+    assert File.exist?(stored_agent_file)
+  end
+
+  def test_a_harness_folder_with_foreign_files_stays_and_the_run_warns
+    FileUtils.mkdir_p(File.join(@dir, ".opencode", "agents"))
+    File.write(File.join(@dir, ".opencode", "agents", "mine.md"), "mine\n")
+
+    out, status = flow("--agent", "opencode:backend-developer")
+
+    assert_equal 0, status, out
+    refute File.symlink?(File.join(@dir, ".opencode", "agents"))
+    assert_includes out, "maf migrate"
+    assert File.exist?(File.join(@dir, ".opencode", "agents", "mine.md"))
+  end
+
+  def test_the_symlink_is_not_rewritten_on_a_rerun
+    flow("--agent", "opencode:backend-developer")
+    before = File.lstat(File.join(@dir, ".opencode", "agents")).ino
+
+    flow("--agent", "opencode:backend-developer")
+
+    assert_equal before, File.lstat(File.join(@dir, ".opencode", "agents")).ino
   end
 
   # Regression: the manifest must not embed the absolute default hermes skills
@@ -347,7 +410,7 @@ class FlowTest < InstallerTestCase
 
     assert_equal 0, status, out
     content = File.read(architect_file)
-    assert_includes content, "./coord add --role <role>"
+    assert_includes content, "coord add --role <role>"
     refute_match(/COORD_AGENT|coord add --agent/, content)
   end
 
@@ -400,7 +463,7 @@ class FlowTest < InstallerTestCase
     assert_equal 0, status, out
     settings = JSON.parse(File.read(File.join(@dir, ".claude", "settings.json")))
     commands = settings["hooks"]["SessionStart"].map { |entry| entry["hooks"][0]["command"] }
-    assert_includes commands, "ruby coordination/harness-hooks/board-watch.rb"
+    assert_includes commands, "ruby .maf/coordination/harness-hooks/board-watch.rb"
   end
 
   def test_claude_worker_stops_and_the_board_watcher_wakes_it
@@ -419,7 +482,7 @@ class FlowTest < InstallerTestCase
 
     assert_equal 0, status, out
     content = File.read(File.join(@dir, ".codex", "prompts", "backend-developer.md"))
-    assert_includes content, "./coord next --wait --timeout 540"
+    assert_includes content, "coord next --wait --timeout 540"
     refute_includes content, "next-task hook will re-prompt"
   end
 
@@ -443,7 +506,7 @@ class VaultTest < Minitest::Test
     exports = 0
     Dir.mktmpdir do |dir|
       Dir.chdir(dir) do
-        FileUtils.mkdir_p("graphify-out")
+        FileUtils.mkdir_p(Vault::GRAPH_DIR)
         File.write(Vault::GRAPH, "{}")
         with_daemon_stubs(-> { exports += 1 }) do
           seen = Vault::Daemon.tick(nil)
@@ -491,7 +554,7 @@ class SetupAgentTest < Minitest::Test
     prompt = SetupAgent::Launcher::Hermes.prompt("project-manager")
 
     assert_includes prompt, "Never claim a task"
-    assert_includes prompt, "./coord inbox --wait"
+    assert_includes prompt, "coord inbox --wait"
   end
 
   def test_hermes_prompt_for_a_worker_role_claims_tasks
@@ -564,11 +627,12 @@ class SetupAgentTest < Minitest::Test
     ran = nil
     Dir.mktmpdir do |dir|
       Dir.chdir(dir) do
-        FileUtils.touch("dispatcher")
+        FileUtils.mkdir_p(".maf/bin")
+        FileUtils.touch(".maf/bin/dispatcher")
         with_exec_stub(->(cmd) { ran = cmd }) { SetupAgent::Dispatch.launch(parsed, "sonnet") }
       end
     end
-    assert_equal [RbConfig.ruby, "./dispatcher", "reviewer", "--harness", "claude", "--model", "sonnet",
+    assert_equal [RbConfig.ruby, ".maf/bin/dispatcher", "reviewer", "--harness", "claude", "--model", "sonnet",
                   "--interval", "30"], ran
   end
 
@@ -605,9 +669,9 @@ class SetupAgentTest < Minitest::Test
     launcher.define_method(:exec_or_die, original)
   end
 
-  # Worktrees live inside the project, under <project>/.worktrees/<slug>.
+  # Worktrees live inside the project, under <project>/.maf/worktrees/<slug>.
   def test_worktree_dir_is_inside_the_project
-    assert_equal "/tmp/myproject/.worktrees/tester-1",
+    assert_equal "/tmp/myproject/.maf/worktrees/tester-1",
                  SetupAgent::Worktree.dir_for("/tmp/myproject", "tester-1")
   end
 
@@ -641,7 +705,7 @@ class SetupAgentTest < Minitest::Test
   end
 
   # The skill name uses the main checkout's name, from the project root and
-  # from a worktree alike (<project>/.worktrees/<slug> -> <project>-<role>).
+  # from a worktree alike (<project>/.maf/worktrees/<slug> -> <project>-<role>).
   def test_hermes_skill_name_is_the_same_in_root_and_worktree
     skip "git not installed" unless system("git", "--version", out: File::NULL)
     in_project_with_worktree do |root, worktree|
@@ -655,7 +719,7 @@ class SetupAgentTest < Minitest::Test
   def test_hermes_skill_dir_comes_from_the_manifest
     skip "git not installed" unless system("git", "--version", out: File::NULL)
     in_project_with_worktree do |root, worktree|
-      File.write(File.join(root, ".agent-flow.json"), JSON.generate(hermes_dir: File.join(root, "skills")))
+      File.write(File.join(root, ".maf/config.json"), JSON.generate(hermes_dir: File.join(root, "skills")))
       FileUtils.mkdir_p(File.join(root, "skills", "myproject-tester"))
       FileUtils.touch(File.join(root, "skills", "myproject-tester", "SKILL.md"))
       Dir.chdir(worktree) { assert SetupAgent::HermesSkill.installed?("tester") }
@@ -668,7 +732,7 @@ class SetupAgentTest < Minitest::Test
       FileUtils.mkdir_p(root)
       git(root, "init", "-q")
       git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init")
-      worktree = File.join(root, ".worktrees", "slug")
+      worktree = File.join(root, ".maf/worktrees", "slug")
       git(root, "worktree", "add", "-q", worktree)
       yield root, worktree
     end
@@ -796,7 +860,8 @@ class CommitGuardTest < InstallerTestCase
   def install_guard
     FileUtils.cp(HOOK, hook_path)
     agents = [{ role: "reviewer", can_edit: false }, { role: "tester", can_edit: true }]
-    File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(agents: agents))
+    FileUtils.mkdir_p(File.join(@dir, ".maf"))
+    File.write(File.join(@dir, ".maf/config.json"), JSON.generate(agents: agents))
   end
 
   def test_refuses_a_commit_by_a_read_only_role
@@ -859,7 +924,7 @@ class DocGraphHookTest < InstallerTestCase
     out, status = bootstrap
 
     assert_equal 0, status, out
-    script = File.join(@dir, "coordination", "doc-graph-refresh")
+    script = File.join(@dir, ".maf/bin", "doc-graph-refresh")
     assert File.executable?(script)
     assert_includes File.read(script), "doc-graph-refresh - rebuild the knowledge graph after a markdown change."
   end

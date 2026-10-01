@@ -21,6 +21,8 @@ abort "bootstrap: Ruby 3.0+ required (current: #{RUBY_VERSION}). Install with " 
 module Bootstrap
   MARKER = ">>> multi-agent-flow >>>"
   END_MARKER = "<<< multi-agent-flow <<<"
+  # The one folder in the project that holds every file of the flow.
+  MAF_DIR = ".maf"
   COORD_SIGNATURE = "coord - shared coordination layer"
   # Older installs copied setup_agent into the project. uninstall.rb removes it.
   SETUP_AGENT_SIGNATURE = "setup_agent - create a worktree for one agent and launch its harness session."
@@ -36,20 +38,17 @@ module Bootstrap
   OPENCODE_PLUGIN = File.join(".opencode", "plugins", "board-watch.js")
   COMMIT_GUARD_SIGNATURE = "commit-guard - git pre-commit hook for the multi-agent flow."
   DOC_GRAPH_SIGNATURE = "doc-graph-refresh - rebuild the knowledge graph after a markdown change."
+  ENV_SIGNATURE = "env.sh - shell environment of the multi-agent flow."
 
   # Claude Code harness hooks: [event, hook]. The sync next-task hook continues
   # a session at Stop. The asyncRewake board-watch hook wakes an idle session.
   CLAUDE_HOOKS = [
-    ["Stop", { "type" => "command", "command" => "ruby coordination/harness-hooks/next-task.rb" }],
+    ["Stop", { "type" => "command", "command" => "ruby .maf/coordination/harness-hooks/next-task.rb" }],
     *%w[SessionStart Stop].map do |event|
-      [event, { "type" => "command", "command" => "ruby coordination/harness-hooks/board-watch.rb",
+      [event, { "type" => "command", "command" => "ruby .maf/coordination/harness-hooks/board-watch.rb",
                 "async" => true, "asyncRewake" => true, "timeout" => 604_800 }]
     end
   ].freeze
-
-  PLAN_STEPS = %i[plan_coordination_dirs plan_gitkeeps plan_coord plan_dispatcher
-                  plan_vault plan_dashboard plan_taskrc plan_claude_md plan_contracts plan_gitignore
-                  plan_hook_scripts plan_opencode_plugin plan_claude_stop_hook plan_commit_guard].freeze
 
   # Project instruction files that stop Claude Code from reading AGENTS.md.
   CLAUDE_MD_FILES = ["CLAUDE.md", File.join(".claude", "CLAUDE.md")].freeze
@@ -76,7 +75,7 @@ module Bootstrap
     Next steps (run inside %{project}):
 
       1. Verify:
-           cd %{project} && ./coord init && ./coord status
+           cd %{project} && source .maf/env.sh && coord init && coord status
 
       2. Set COORD_ROLE and COORD_WORKER so messages and locks are attributed, e.g.:
            export COORD_ROLE=local COORD_WORKER=local-1
@@ -84,13 +83,13 @@ module Bootstrap
       3. Shared memory (graphify + Obsidian vault): %{vault_note}
 
       4. Serialize local generation on the shared model host:
-           ./coord with-lock ollama -- <command>
+           coord with-lock ollama -- <command>
 
     Requested roles: %{roles}
 
-    The task board lives in %{project}/coordination/taskdata (project-local),
+    The task board lives in %{project}/.maf/coordination/taskdata (project-local),
     not in your global Taskwarrior database. Point `task` at it directly with:
-      TASKRC=%{project}/coordination/taskrc task ...
+      TASKRC=%{project}/.maf/coordination/taskrc task ...
   TEXT
 
   MIGRATION_NOTE = <<~TEXT
@@ -98,13 +97,13 @@ module Bootstrap
     [multi-agent-flow] NOTE: found the multi-agent-flow UDA block in your
     global %{taskrc}. Older versions of this installer shared one Taskwarrior
     database across every project. This install now uses a project-local
-    database instead (%{project}/coordination/taskdata) and does not touch
+    database instead (%{project}/.maf/coordination/taskdata) and does not touch
     %{taskrc}.
 
     Tasks already in the global database are NOT moved automatically. To
     bring old tasks into this project:
       TASKRC=%{taskrc} task export project:%{project_name} > /tmp/old-tasks.json
-      TASKRC=%{project}/coordination/taskrc task import /tmp/old-tasks.json
+      TASKRC=%{project}/.maf/coordination/taskrc task import /tmp/old-tasks.json
     (adjust the `project:` filter to however the old tasks are tagged.)
   TEXT
 

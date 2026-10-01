@@ -55,7 +55,7 @@ module Flow
       results.each { |result| puts "  maf start #{result[:agent][:harness]} #{result[:agent][:role]}" }
       puts
       puts "In each worker session, paste:"
-      puts %(  "Run ./coord inbox <role>. Then work the pending tasks assigned to you. Repeat.")
+      puts %(  "Run coord inbox <role>. Then work the pending tasks assigned to you. Repeat.")
       puts entry_point_hint(results)
     end
 

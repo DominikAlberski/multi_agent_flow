@@ -98,7 +98,7 @@ Then run the same command without `--check`.
 
 1. Sets up the coordination layer.
 2. Writes a role file for each role, in the format of its harness.
-3. Writes a manifest at `$PROJECT/.agent-flow.json`.
+3. Writes a manifest at `$PROJECT/.maf/config.json`.
 
 `maf add` is idempotent. It skips files that are already correct.
 
@@ -134,23 +134,23 @@ Confirm that every check from `hermes hooks doctor` passes. Then continue.
 ## Step 5c - Set the Gemini key for the doc-graph refresh
 
 `maf add` appends a flow block to the `post-commit` and `post-merge` git hooks.
-A markdown commit or merge starts `coordination/doc-graph-refresh` detached.
+A markdown commit or merge starts `.maf/bin/doc-graph-refresh` detached.
 The script runs `graphify extract . --backend gemini` and re-exports
-`obsidian/`. It needs `GEMINI_API_KEY`:
+`.maf/obsidian/`. It needs `GEMINI_API_KEY`:
 
 ```sh
 export GEMINI_API_KEY=<key>
 ```
 
 The hook starts no LLM call without the key. It logs a skip in
-`coordination/doc-graph.log`. The hook never fails a commit.
+`.maf/coordination/doc-graph.log`. The hook never fails a commit.
 
 ## Step 6 - Verify
 
 ```sh
 cd "$PROJECT"
-./coord init
-./coord status
+coord init
+coord status
 maf agents
 ```
 
@@ -169,10 +169,8 @@ Worktrees contain only committed files. Commit before starting any agent.
 
 ```sh
 cd "$PROJECT"
-git add coord dispatcher AGENTS.md .gitignore \
-        .agent-flow.json .claude .opencode coordination
+git add .maf AGENTS.md .gitignore .claude .opencode .codex
 git rm --cached -q --ignore-unmatch CLAUDE.md .claude/CLAUDE.md   # maf add moved it into AGENTS.md
-git add vault vault-daemon 2>/dev/null; true
 git commit -m "Add multi-agent flow"
 ```
 
@@ -201,7 +199,7 @@ Report the generated files. Then give the user these instructions.
 >
 >     maf start hermes tester --dispatch
 >
-> This creates (or reuses) a worktree at `.worktrees/<role>-<worker_id>`,
+> This creates (or reuses) a worktree at `.maf/worktrees/<role>-<worker_id>`,
 > sets `COORD_ROLE` and `COORD_WORKER`, and launches the harness there with
 > its role loaded. To run several instances of one role, add a worker suffix:
 > `backend-developer_1`, `backend-developer_2`. Claims are atomic, so they
@@ -227,12 +225,12 @@ Report the generated files. Then give the user these instructions.
   `coord msg`, `coord annotate`, and task titles: one instruction per
   sentence, active voice, named subject, no idioms.
 - Take the `ollama` lock before a local model generation:
-  `./coord with-lock ollama -- <command>`.
+  `coord with-lock ollama -- <command>`.
 - Give each agent its own worktree so file changes never collide:
-  `./coord worktree <role>` creates `.worktrees/<role>-<worker_id>` (inside the
+  `coord worktree <role>` creates `.maf/worktrees/<role>-<worker_id>` (inside the
   project, gitignored) on branch `worker/<role>-<worker_id>`. In that worktree
-  run `source coord-env.sh` first; it points `COORD_DIR` and `TASKRC` at the
-  main project, so every worktree shares one coordination/ dir and one task
+  run `source .maf/env.sh` first; it points `COORD_DIR` and `TASKRC` at the
+  main project, so every worktree shares one .maf/coordination/ dir and one task
   board. `maf start` does all of this for you.
 - Claude Code does not auto-load `.claude/agents/<role>.md` into an interactive
   session (that file is a subagent definition, used via its Task tool, not the

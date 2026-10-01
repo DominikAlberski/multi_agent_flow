@@ -8,7 +8,7 @@
 #          [--list-roles]
 #
 # HARNESS is one of: opencode, claude, codex, hermes.
-# A re-run keeps the agents in .agent-flow.json. --agent adds an agent.
+# A re-run keeps the agents in .maf/config.json. --agent adds an agent.
 # --remove drops an agent. Without --agent, a re-run regenerates the current agents.
 # Idempotent: identical files are skipped, changed files are updated, and
 # foreign files are refused unless --force is given.
@@ -39,18 +39,21 @@ module Flow
   DISPATCH_EXCLUDE = LEADS
 
   # Hermes toolsets for a role with can_edit false: no file, code_execution,
-  # or delegation toolset. The shell stays, because the role needs ./coord and git.
+  # or delegation toolset. The shell stays, because the role needs coord and git.
   # NOTE: assets/dispatcher carries the same list; both run standalone.
   READ_ONLY_TOOLSETS = "terminal,web,skills,todo,memory,session_search,clarify"
 
-  PROJECT_ROLE_PATHS = { "opencode" => ".opencode/agents/%s.md", "claude" => ".claude/agents/%s.md",
-                         "codex" => ".codex/prompts/%s.md" }.freeze
+  MAF_DIR = ".maf"
+
+  # The folder where a harness looks for role files. It is a symlink into
+  # .maf/agents/<harness>/, where the flow keeps the role files.
+  HARNESS_DIRS = { "opencode" => ".opencode/agents", "claude" => ".claude/agents",
+                   "codex" => ".codex/prompts" }.freeze
 
   # The role file path inside the project. Hermes keeps role files outside
   # the project, so it has no path here.
   def self.role_path(harness, role)
-    template = PROJECT_ROLE_PATHS[harness]
-    template && format(template, role)
+    HARNESS_DIRS.key?(harness) ? File.join(MAF_DIR, "agents", harness, "#{role}.md") : nil
   end
 end
 
@@ -62,6 +65,7 @@ require_relative "flow/prompt_builder"
 require_relative "flow/hook_files"
 require_relative "flow/hermes_hook_setup"
 require_relative "flow/hook_installer"
+require_relative "flow/agent_links"
 require_relative "flow/role_files"
 require_relative "flow/manifest"
 require_relative "flow/report"

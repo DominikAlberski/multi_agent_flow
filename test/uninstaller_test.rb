@@ -60,8 +60,7 @@ class UninstallRemovesTest < UninstallerTestCase
     out, status = uninstall("--yes")
 
     assert_equal 0, status, out
-    %w[coord setup_agent dispatcher dashboard vault coordination .agent-flow.json
-       AGENTS.md .gitignore .claude .opencode].each { |rel| refute File.exist?(path(rel)), "#{rel} still exists" }
+    %w[.maf AGENTS.md .gitignore .claude .opencode].each { |rel| refute File.exist?(path(rel)), "#{rel} still exists" }
     refute Dir.exist?(File.join(@hermes, "#{File.basename(@dir)}-reviewer"))
   end
 
@@ -75,27 +74,17 @@ class UninstallRemovesTest < UninstallerTestCase
     refute File.exist?(path(".opencode", "plugins", "board-watch.js"))
   end
 
-  # Older installs copied setup_agent into the project. maf start replaced it.
-  def test_removes_a_setup_agent_from_an_older_install
-    install
-    write("setup_agent", "# setup_agent - create a worktree for one agent and launch its harness session.\n")
-
-    out, status = uninstall("--yes")
-
-    assert_equal 0, status, out
-    refute File.exist?(path("setup_agent"))
-  end
-
   def test_keeps_graphify_and_obsidian_and_their_ignore_rules
     install
-    write("graphify-out/graph.json", "{}")
-    write("obsidian/note.md", "note")
+    write(".maf/graphify-out/graph.json", "{}")
+    write(".maf/obsidian/note.md", "note")
 
     uninstall("--yes")
 
-    assert File.exist?(path("graphify-out", "graph.json"))
-    assert File.exist?(path("obsidian", "note.md"))
-    assert_equal "graphify-out/\nobsidian/\n", File.read(path(".gitignore"))
+    assert File.exist?(path(".maf", "graphify-out", "graph.json"))
+    assert File.exist?(path(".maf", "obsidian", "note.md"))
+    assert_equal ".maf/graphify-out/\n.maf/obsidian/\n", File.read(path(".gitignore"))
+    assert_equal %w[graphify-out obsidian], Dir.children(path(".maf")).sort
   end
 
   def test_keeps_user_text_outside_the_marked_blocks
@@ -126,13 +115,13 @@ end
 
 class UninstallKeepsTest < UninstallerTestCase
   def test_keeps_a_foreign_script_and_a_foreign_role_file
-    write("coord", "#!/bin/sh\necho mine\n")
+    write(".maf/bin/coord", "#!/bin/sh\necho mine\n")
     write(".claude/agents/mine.md", "my agent\n")
     install
 
     uninstall("--yes")
 
-    assert_equal "#!/bin/sh\necho mine\n", File.read(path("coord"))
+    assert_equal "#!/bin/sh\necho mine\n", File.read(path(".maf", "bin", "coord"))
     assert File.exist?(path(".claude", "agents", "mine.md"))
   end
 
@@ -153,7 +142,7 @@ class UninstallKeepsTest < UninstallerTestCase
     out, status = uninstall("--check")
 
     assert_equal 0, status, out
-    assert_includes out, "coordination"
+    assert_includes out, ".maf/coordination"
     assert_equal before, Dir.glob("**/*", File::FNM_DOTMATCH, base: @dir).sort
   end
 
@@ -163,7 +152,7 @@ class UninstallKeepsTest < UninstallerTestCase
     out, status = uninstall(stdin: "n\n")
 
     assert_equal 1, status, out
-    assert File.exist?(path("coord"))
+    assert File.exist?(path(".maf", "bin", "coord"))
   end
 
   def test_confirmation_with_yes_removes
@@ -171,7 +160,7 @@ class UninstallKeepsTest < UninstallerTestCase
 
     uninstall(stdin: "yes\n")
 
-    refute File.exist?(path("coord"))
+    refute File.exist?(path(".maf", "bin", "coord"))
   end
 
   def test_reports_nothing_to_remove_in_a_clean_project
@@ -189,7 +178,7 @@ class UninstallWorktreeTest < UninstallerTestCase
     git("init", "-q")
     git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init")
     install
-    git("worktree", "add", "-q", "-b", "worker/tester-1", ".worktrees/tester-1")
+    git("worktree", "add", "-q", "-b", "worker/tester-1", ".maf/worktrees/tester-1")
   end
 
   def git(*args)
@@ -199,25 +188,25 @@ class UninstallWorktreeTest < UninstallerTestCase
   def test_removes_a_clean_worktree_and_keeps_its_branch
     uninstall("--yes")
 
-    refute Dir.exist?(path(".worktrees"))
+    refute Dir.exist?(path(".maf/worktrees"))
     assert system("git", "-C", @dir, "rev-parse", "--verify", "-q", "worker/tester-1", out: File::NULL)
   end
 
   def test_keeps_a_dirty_worktree_without_force
-    write(".worktrees/tester-1/work.txt", "unsaved")
+    write(".maf/worktrees/tester-1/work.txt", "unsaved")
 
     out, = uninstall("--yes")
 
-    assert File.exist?(path(".worktrees", "tester-1", "work.txt"))
+    assert File.exist?(path(".maf/worktrees", "tester-1", "work.txt"))
     assert_includes out, "--force"
   end
 
   def test_force_removes_a_dirty_worktree
-    write(".worktrees/tester-1/work.txt", "unsaved")
+    write(".maf/worktrees/tester-1/work.txt", "unsaved")
 
     uninstall("--yes", "--force")
 
-    refute Dir.exist?(path(".worktrees"))
+    refute Dir.exist?(path(".maf/worktrees"))
   end
 end
 

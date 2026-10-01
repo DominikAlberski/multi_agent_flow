@@ -6,8 +6,9 @@
 #
 # Removes only what bootstrap.rb and flow.rb installed. A file must carry the
 # tool signature or marker. A foreign file with the same name stays.
-# Keeps graphify-out/ and obsidian/. Rebuilding them costs many agent runs,
+# Keeps .maf/graphify-out/ and .maf/obsidian/. Rebuilding them costs many agent runs,
 # so the user deletes them by hand.
+# Removes .maf/ if nothing is left in it.
 # Keeps worker/* branches. Keeps dirty worktrees unless --force is given.
 # Keeps the global Codex and Hermes hooks. Other projects can use them.
 require "fileutils"
@@ -17,11 +18,12 @@ require_relative "bootstrap"
 require_relative "flow"
 
 module Uninstall
-  KEPT_DIRS = %w[graphify-out obsidian].freeze
+  KEPT_DIRS = %w[.maf/graphify-out .maf/obsidian].freeze
 
   # Removed after all steps if empty. Children come before parents.
   EMPTY_DIRS = [%w[.claude agents], %w[.claude], %w[.opencode agents], %w[.opencode plugins], %w[.opencode],
-                %w[.codex prompts], %w[.codex], %w[.worktrees]].freeze
+                %w[.codex prompts], %w[.codex], %w[.maf bin], %w[.maf agents claude], %w[.maf agents opencode],
+                %w[.maf agents codex], %w[.maf agents], %w[.maf worktrees], %w[.maf]].freeze
 
   GLOBAL_HOOKS = [File.join(Dir.home, ".codex", "hooks", "next-task.rb"),
                   File.join(Dir.home, ".hermes", "agent-hooks", "next-task.sh")].freeze

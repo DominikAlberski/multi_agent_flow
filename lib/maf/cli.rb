@@ -6,13 +6,14 @@ require "json"
 require "yaml"
 require_relative "flow"
 require_relative "uninstall"
+require_relative "migrate"
 require_relative "setup_agent"
 require_relative "menu"
 require_relative "team"
 require_relative "team_command"
 
 module Maf
-  MANIFEST = ".agent-flow.json"
+  MANIFEST = ".maf/config.json"
 
   def self.flow(*args) = Flow::Generator.new(["--project", Dir.pwd, *args]).run
   def self.role_names = YAML.load_file(File.join(Flow::TEMPLATES, "roles.yml")).fetch("roles").keys
@@ -43,6 +44,7 @@ module Maf
       "retire" => "ROLE[_WORKER]                           remove a worker; its tasks return to the pool",
       "team" => "[set --max N --allow HARNESS[:MODEL]]   show the team, or set its budget",
       "uninstall" => "[--check] [--yes] [--force]             remove the flow from the project",
+      "migrate" => "[--check] [--yes]                       move an old-layout install into .maf/",
       "menu" => "                                        interactive mode (also: maf without a command)"
     }.freeze
 
@@ -55,10 +57,16 @@ module Maf
       return help if @command.nil? || %w[help -h --help].include?(@command)
       abort "maf: unknown command '#{@command}'. Run: maf help" unless COMMANDS.key?(@command)
 
+      abort "maf: #{Migrate::HINT}" if old_layout?
       send("run_#{@command}")
     end
 
     private
+
+    # Every command except these needs the new layout.
+    def old_layout?
+      !%w[migrate roles menu].include?(@command) && Migrate.old_layout?(Dir.pwd)
+    end
 
     def help
       puts "Usage: maf COMMAND [ARGS]   (run in the project root)", ""
@@ -75,6 +83,7 @@ module Maf
     def run_retire = Retire.new(SetupAgent::Project.root, @args.first || abort("usage: maf retire ROLE[_WORKER]")).run
     def run_uninstall = Uninstall::Runner.new(["--project", Dir.pwd, *@args]).run
     def run_menu = Menu.new.run
+    def run_migrate = Migrate::Runner.new(["--project", Dir.pwd, *@args]).run
 
     def run_agents
       return puts("No agents yet. Add one: maf add HARNESS:ROLE") if Maf.agents.empty?

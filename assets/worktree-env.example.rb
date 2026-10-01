@@ -2,14 +2,15 @@
 
 # worktree-env.rb - example project hook for `coord worktree` (Rails).
 #
-# Copy this file to coordination/worktree-env.rb and commit it.
+# Copy this file to .maf/coordination/worktree-env.rb. Git ignores that folder.
+# To commit the hook, run `git add -f .maf/coordination/worktree-env.rb`.
 # `coord worktree` runs the hook for each worktree and appends the output
-# to the worktree's coord-env.sh.
+# to the worktree's .maf/env.sh.
 #
 # Input:  COORD_SLOT (1, 2, ...; the main worktree is slot 0) and
 #         COORD_WORKTREE (absolute path of the worktree).
 # Output: one `export NAME=VALUE` line per variable. `coord worktree` keeps
-#         only those lines, so a later `source coord-env.sh` runs no other
+#         only those lines, so a later `source .maf/env.sh` runs no other
 #         line the hook prints.
 #
 # Use the variables in the project, for example in config/database.yml:

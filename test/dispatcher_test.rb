@@ -494,7 +494,8 @@ class RunnerTest < Minitest::Test
   end
 
   def with_verify(command, &block)
-    File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(verify: command))
+    FileUtils.mkdir_p(File.join(@dir, ".maf"))
+    File.write(File.join(@dir, ".maf/config.json"), JSON.generate(verify: command))
     Dir.chdir(@dir, &block)
   end
 
@@ -610,7 +611,7 @@ class MainTest < Minitest::Test
 
   def test_prompt_gets_the_board_and_the_git_log
     prompt, = prompt_of_one_run(FakeBoard.new("abc\tfix login\n"))
-    assert_includes prompt, "$ ./coord next backend-developer\nabc\tfix login"
+    assert_includes prompt, "$ coord next backend-developer\nabc\tfix login"
     assert_includes prompt, "$ git log --oneline -10\n"
   end
 
@@ -622,7 +623,7 @@ class MainTest < Minitest::Test
 
   def test_a_failed_prefetch_is_logged_and_the_run_goes_on
     prompt, err = Dir.chdir(@dir) { prompt_of_one_run(FakeBoard.new(nil)) }
-    assert_includes err, "prefetch failed: ./coord next backend-developer"
+    assert_includes err, "prefetch failed: coord next backend-developer"
     assert_includes err, "prefetch failed: git log --oneline -10"
     assert_includes prompt, "The dispatcher took these messages"
     assert_equal 1, inbox("read").size
@@ -737,7 +738,8 @@ class EditGrantTest < Minitest::Test
   def setup
     @dir = File.realpath(Dir.mktmpdir("dispatcher-grant-test"))
     system("git", "init", "-q", @dir, exception: true)
-    File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(MANIFEST))
+    FileUtils.mkdir_p(File.join(@dir, ".maf"))
+    File.write(File.join(@dir, ".maf/config.json"), JSON.generate(MANIFEST))
   end
 
   def teardown = FileUtils.remove_entry(@dir)
@@ -906,12 +908,13 @@ class PollerTest < Minitest::Test
     skip "Taskwarrior ('task') not installed" unless system("task", "--version", out: File::NULL)
 
     @dir = Dir.mktmpdir("dispatcher-poller-test")
-    @coord_dir = File.join(@dir, "coordination")
+    @coord_dir = File.join(@dir, ".maf/coordination")
     @env = { "COORD_DIR" => @coord_dir, "TASKRC" => File.join(@coord_dir, "taskrc"),
              "COORD_ROLE" => "backend-developer", "COORD_WORKER" => "backend-1" }
     # The Poller shells out to `coord`, so it needs a coord executable in CWD.
-    FileUtils.cp(File.expand_path("../assets/coord", __dir__), File.join(@dir, "coord"))
-    FileUtils.chmod("+x", File.join(@dir, "coord"))
+    FileUtils.mkdir_p(File.join(@dir, ".maf", "bin"))
+    FileUtils.cp(File.expand_path("../assets/coord", __dir__), File.join(@dir, ".maf", "bin", "coord"))
+    FileUtils.chmod("+x", File.join(@dir, ".maf", "bin", "coord"))
     @original_dir = Dir.pwd
     Dir.chdir(@dir)
     Coord::CLI.new(["init"], env: @env).run

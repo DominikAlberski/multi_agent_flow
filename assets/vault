@@ -3,22 +3,22 @@
 
 # vault - shared knowledge base watcher (graphify + Obsidian + MCP).
 #
-# Usage: ./vault [start|export|stop|status|mcp]
-#   ./vault           # start the watcher (default); no-op if already running
-#   ./vault export    # regenerate the Obsidian vault once, then exit
-#   ./vault stop
-#   ./vault status
-#   ./vault mcp       # exec the stdio MCP server (for an MCP client config)
+# Usage: vault [start|export|stop|status|mcp]
+#   vault           # start the watcher (default); no-op if already running
+#   vault export    # regenerate the Obsidian vault once, then exit
+#   vault stop
+#   vault status
+#   vault mcp       # exec the stdio MCP server (for an MCP client config)
 #
 # graphify 0.9 removed the --obsidian/--obsidian-dir/--watch/--mcp flags. The
 # current CLI is subcommand-based:
 #   graphify extract . --code-only          initial code graph, no LLM
 #   graphify update .                       incremental code re-extract, no LLM
-#   graphify export obsidian --dir obsidian Obsidian notes + graph.canvas
+#   graphify export obsidian --dir .maf/obsidian  Obsidian notes + graph.canvas
 #   graphify-mcp                            stdio MCP server, spawned by the client
 # The watcher polls `graphify update` and re-exports at VAULT_POLL seconds, so
-# it does not need graphify's optional `watchdog` dependency. Keep `obsidian/`
-# and `graphify-out/` in .gitignore (bootstrap adds them): graphify honors
+# it does not need graphify's optional `watchdog` dependency. Keep `.maf/obsidian/`
+# and `.maf/graphify-out/` in .gitignore (bootstrap adds them): graphify honors
 # .gitignore, so this stops the watcher from re-ingesting its own output.
 #
 # Started automatically by bootstrap.rb when graphify is on PATH. Run by hand
@@ -33,15 +33,19 @@ module Vault
   # The Obsidian output dir must not share a name with this launcher script:
   # `graphify export obsidian --dir vault` fails with FileExistsError because
   # the `vault` file is already there.
-  DIR = "obsidian"
-  GRAPH = File.join("graphify-out", "graph.json")
-  PID_FILE = "coordination/vault.pid"
-  LOG_FILE = "coordination/vault.log"
+  DIR = File.join(".maf", "obsidian")
+  GRAPH_DIR = File.join(".maf", "graphify-out")
+  GRAPH = File.join(GRAPH_DIR, "graph.json")
+  # graphify writes its output where GRAPHIFY_OUT points. Every graphify call
+  # of this script, and of its daemon, inherits the variable.
+  ENV["GRAPHIFY_OUT"] = File.expand_path(GRAPH_DIR)
+  PID_FILE = ".maf/coordination/vault.pid"
+  LOG_FILE = ".maf/coordination/vault.log"
   # A garbage or tiny VAULT_POLL would turn the watcher into a busy loop.
   MIN_POLL = 5
   POLL = [(ENV["VAULT_POLL"] || 30).to_i, MIN_POLL].max
   EXTRACT_CMD = ["graphify", "extract", ".", "--code-only"].freeze
-  DOC_GRAPH_LOCK = File.join("coordination", "doc-graph.lock")
+  DOC_GRAPH_LOCK = File.join(".maf", "coordination", "doc-graph.lock")
   UPDATE_CMD = ["graphify", "update", "."].freeze
   EXPORT_CMD = ["graphify", "export", "obsidian", "--dir", DIR].freeze
 
@@ -63,7 +67,7 @@ module Vault
     end
 
     def self.export
-      return puts("vault: #{GRAPH} missing. Run `./vault` to build it first.") unless File.exist?(GRAPH)
+      return puts("vault: #{GRAPH} missing. Run `vault` to build it first.") unless File.exist?(GRAPH)
 
       system(*EXPORT_CMD) || warn("vault: obsidian export failed; see #{LOG_FILE}")
     end
@@ -72,7 +76,7 @@ module Vault
     # an MCP client at this command instead of a long-running process.
     def self.mcp
       abort "vault: graphify-mcp not found on PATH. Install: pip/uv install graphifyy" unless which("graphify-mcp")
-      abort "vault: #{GRAPH} missing. Run `./vault` to build it first." unless File.exist?(GRAPH)
+      abort "vault: #{GRAPH} missing. Run `vault` to build it first." unless File.exist?(GRAPH)
 
       Kernel.exec("graphify-mcp", GRAPH)
     end
@@ -92,9 +96,9 @@ module Vault
       puts "vault: started (pid #{pid}), log at #{LOG_FILE}"
     end
 
-    # The daemon builds the first graph itself, so `./vault` (and bootstrap)
+    # The daemon builds the first graph itself, so `vault` (and bootstrap)
     # return at once instead of blocking on a full extract. It exits when the
-    # pid file is gone (`./vault stop`, or a removed checkout), so it never
+    # pid file is gone (`vault stop`, or a removed checkout), so it never
     # outlives its project.
     def self.loop_forever
       Pid.write(Process.pid)

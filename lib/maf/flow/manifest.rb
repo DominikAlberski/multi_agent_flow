@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Flow
-  # Manifest writes .agent-flow.json, the record of the agents of a project.
+  # Manifest writes .maf/config.json, the record of the agents of a project.
   class Manifest
     def initialize(options, roles)
       @options = options
@@ -11,13 +11,14 @@ module Flow
     def write
       return if @options.check?
 
+      FileUtils.mkdir_p(File.dirname(path))
       File.write(path, JSON.pretty_generate(data))
     end
 
     private
 
     def path
-      File.join(@options.project, ".agent-flow.json")
+      File.join(@options.project, ".maf/config.json")
     end
 
     def data

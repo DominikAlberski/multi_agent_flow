@@ -16,11 +16,11 @@
 # Work is: unclaimed tasks for the role, tasks that this worker claimed, and
 # unread inbox messages. An unchanged poke repeats with a doubling delay.
 #
-# One watcher runs per worker (lock: coordination/locks/board-watch-<worker>.d).
+# One watcher runs per worker (lock: .maf/coordination/locks/board-watch-<worker>.d).
 # The script ends when its Claude Code process ends.
 #
 # Claude Code (.claude/settings.json), on SessionStart and on Stop:
-#   {"type":"command","command":"ruby coordination/harness-hooks/board-watch.rb",
+#   {"type":"command","command":"ruby .maf/coordination/harness-hooks/board-watch.rb",
 #    "async":true,"asyncRewake":true,"timeout":604800}
 #
 # Required env: COORD_ROLE (set by maf start). COORD_DIR and TASKRC optional.
@@ -40,7 +40,7 @@ module BoardWatch
   UUID = /\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/
   MAX_BACKOFF = 3600
   PROMPT = "Board watcher: the task board has work for role %<role>s.\n%<summary>s\n" \
-           "Run ./coord inbox, then ./coord next --mine, then ./coord next. " \
+           "Run coord inbox, then coord next --mine, then coord next. " \
            "Finish claimed tasks first. Claim the next task and complete it. When no work remains, stop."
 
   # Work is one snapshot of the board for one worker.
@@ -227,14 +227,14 @@ module BoardWatch
     def active? = !role.empty? && role != "unknown" && !@env["COORD_DISPATCHED"] && coord
     def role = @env["COORD_ROLE"].to_s
     def worker = @env.fetch("COORD_WORKER", role)
-    def coord_dir = File.expand_path(@env.fetch("COORD_DIR", "coordination"))
+    def coord_dir = File.expand_path(@env.fetch("COORD_DIR", ".maf/coordination"))
     def lock = @lock ||= Lock.new(File.join(coord_dir, "locks", "board-watch-#{worker}.d"))
     def backoff = @backoff ||= Backoff.new(File.join(coord_dir, "sessions", "#{worker}.watch.json"), interval)
     def interval = seconds("BOARD_WATCH_INTERVAL", 60)
     def seconds(name, default) = Integer(@env.fetch(name, default.to_s), exception: false) || default
 
     def coord
-      @coord ||= [File.join(Dir.pwd, "coord"), File.join(File.dirname(coord_dir), "coord")]
+      @coord ||= [File.join(Dir.pwd, ".maf", "bin", "coord"), File.join(File.dirname(coord_dir), "bin", "coord")]
                  .find { |path| File.executable?(path) }
     end
 

@@ -3,32 +3,32 @@
 
 This project uses a shared coordination layer for multiple coding agents
 (opencode, Claude Code, Hermes, ...). Use the `coord` wrapper; do not call
-`task` directly.
+`task` directly. Run `source .maf/env.sh` once, so `coord` is on `PATH`.
 
 ### Board and tasks
 
 ```
-./coord init                                  # create coordination/ dirs
-./coord goal add --title T                    # create a goal, branch goal/<short-id> and its worktree
-./coord goal list                             # open goals with their open task count
-./coord goal show ID                          # one goal and its tasks
-./coord goal done ID                          # close a goal (refused while a task is open)
-./coord add --role ROLE --scope S --title T [--goal ID]  # architect: add a task (prints id)
-./coord annotate ID "Goal: ... Inputs: ... Out of scope: ... Acceptance: ... Report format: ..."  # architect: add the task's spec, right after `add`
-./coord next [ROLE] [--wait [--interval S]]   # list unclaimed tasks (or block until a task or message appears)
-./coord next --mine                           # list your in-progress tasks
-./coord conflicts                             # list pending tasks with overlapping scopes
-./coord claim ID [--force]                    # atomically claim for COORD_WORKER (refused for lead roles)
-./coord start-task ID                         # in your worktree: check out task/<short-id> from the goal branch
-./coord unclaim ID                            # release a claim without finishing it
-./coord done ID [--force]                     # complete (refused while the task branch lacks the goal head,
+coord init                                  # create .maf/coordination/ dirs
+coord goal add --title T                    # create a goal, branch goal/<short-id> and its worktree
+coord goal list                             # open goals with their open task count
+coord goal show ID                          # one goal and its tasks
+coord goal done ID                          # close a goal (refused while a task is open)
+coord add --role ROLE --scope S --title T [--goal ID]  # architect: add a task (prints id)
+coord annotate ID "Goal: ... Inputs: ... Out of scope: ... Acceptance: ... Report format: ..."  # architect: add the task's spec, right after `add`
+coord next [ROLE] [--wait [--interval S]]   # list unclaimed tasks (or block until a task or message appears)
+coord next --mine                           # list your in-progress tasks
+coord conflicts                             # list pending tasks with overlapping scopes
+coord claim ID [--force]                    # atomically claim for COORD_WORKER (refused for lead roles)
+coord start-task ID                         # in your worktree: check out task/<short-id> from the goal branch
+coord unclaim ID                            # release a claim without finishing it
+coord done ID [--force]                     # complete (refused while the task branch lacks the goal head,
                                               # or while the verify command fails)
-./coord annotate ID TEXT                      # task-scoped update
-./coord status                                # per-role summary
-./coord who                                   # each worker with its presence: live or gone
-./coord board                                 # regenerate Obsidian kanban
-./coord worktree ROLE [WORKER]                # git worktree in .worktrees/<role>-<worker> + branch
-                                              # in it: `source coord-env.sh` to share this board
+coord annotate ID TEXT                      # task-scoped update
+coord status                                # per-role summary
+coord who                                   # each worker with its presence: live or gone
+coord board                                 # regenerate Obsidian kanban
+coord worktree ROLE [WORKER]                # git worktree in .maf/worktrees/<role>-<worker> + branch
+                                              # in it: `source .maf/env.sh` to share this board
                                               # and to get this worktree's COORD_SLOT
 ```
 
@@ -65,33 +65,33 @@ the task's prior holder gets a message in their inbox naming who took it.
 ### Messaging
 
 ```
-./coord msg --from A TO "text"                # leave a message for another agent
-./coord broadcast --from A "text"            # send to every worker role except the sender
-./coord broadcast --from A --to all "text"   # also reach the project manager and the architect
-./coord inbox [AGENT]                         # read your messages (marks them read)
-./coord inbox --peek                          # read without marking read
-./coord inbox --all                           # include already-read messages
-./coord log [N]                               # show last N coordination events
+coord msg --from A TO "text"                # leave a message for another agent
+coord broadcast --from A "text"            # send to every worker role except the sender
+coord broadcast --from A --to all "text"   # also reach the project manager and the architect
+coord inbox [AGENT]                         # read your messages (marks them read)
+coord inbox --peek                          # read without marking read
+coord inbox --all                           # include already-read messages
+coord log [N]                               # show last N coordination events
 ```
 
-Read messages move to `coordination/inbox/<agent>/read/`.
+Read messages move to `.maf/coordination/inbox/<agent>/read/`.
 `coord broadcast` reaches every role that owns a pending task or is listed in
-`.agent-flow.json`, except the sender. `--to` selects the group: `workers`
+`.maf/config.json`, except the sender. `--to` selects the group: `workers`
 (default), `leads` (project manager and architect), or `all`.
 `coord msg` and `coord broadcast` fire a per-role hook at
-`coordination/message-hooks/<role>.sh` if one is installed. The hook is a plain shell
+`.maf/coordination/message-hooks/<role>.sh` if one is installed. The hook is a plain shell
 script. It gets `COORD_ROLE`, `COORD_FROM`, and `COORD_MSG_FILE` in its
 environment, and the message file path as `$1`. It runs in the background and
-logs to `coordination/message-hooks/<role>.log`. Use it to start a one-shot run
+logs to `.maf/coordination/message-hooks/<role>.log`. Use it to start a one-shot run
 or to send a notification. `coord` does not know
 which harness the agent runs in.
 `coord log` shows claims, completions, unclaims, messages, and broadcasts from
-`coordination/events.log`. Any agent can read this shared history without
+`.maf/coordination/events.log`. Any agent can read this shared history without
 opening individual inboxes.
-If a `./dispatcher` serves your role, the dispatcher gives you your messages
+If a `dispatcher` serves your role, the dispatcher gives you your messages
 in the prompt. Do not run `coord inbox` in that case.
 
-`coord who` lists each worker from `coordination/presence/`. `maf start`
+`coord who` lists each worker from `.maf/coordination/presence/`. `maf start`
 records the session pid. The dispatcher records its own pid. A worker is
 live while its pid runs. If a receiver role has no live worker and no
 message hook, `coord msg` prints a warning. The message then waits until a
@@ -102,16 +102,17 @@ session for that role starts. Start a dispatcher for that role, or add a hook.
 Only one local-model generation may run at a time on the shared Ollama host.
 
 ```
-./coord with-lock ollama -- <command>         # hard mutual exclusion
-./coord lock ollama --ttl 3600                # advisory, long-running
-./coord unlock ollama
+coord with-lock ollama -- <command>         # hard mutual exclusion
+coord lock ollama --ttl 3600                # advisory, long-running
+coord unlock ollama
 ```
 
 ### Rules
 
 1. Work in your own git worktree or branch (`coord worktree ROLE` creates one).
-   In a worktree, run `source coord-env.sh` once so `COORD_DIR`/`TASKRC` point at
-   the main project and every worktree shares one board.
+   Run `source .maf/env.sh` once. It puts `coord` on `PATH`. In a worktree, it
+   also points `COORD_DIR`/`TASKRC` at the main project, so every worktree
+   shares one board.
    Never edit outside your task scope.
    After a claim, run `coord start-task ID`. The command checks out branch
    `task/<short-id>` from the goal branch. Commit the work on that branch.
@@ -136,11 +137,11 @@ Only one local-model generation may run at a time on the shared Ollama host.
    `unclaim` a blocked task — that returns it to the pool for another worker
    to hit the same wall.
 6. The architect inspects a done task's diff in the worker's worktree
-   (`git -C .worktrees/<role>-<worker> diff`) and the TESTS line of the
+   (`git -C .maf/worktrees/<role>-<worker> diff`) and the TESTS line of the
    report before trusting it. The architect does not rerun the task tests.
    A bad result gets a new fix task, not a silent re-close.
-7. Prefer the shared knowledge graph over grep when `graphify-out/` exists
-   (query it via MCP or `graphify query "..."`).
+7. Prefer the shared knowledge graph over grep when `.maf/graphify-out/` exists
+   (query it via MCP or `graphify query "..." --graph .maf/graphify-out/graph.json`).
 8. Worker roles: if no task is available, use `coord next --wait` instead of
    a manual poll loop. Lead roles (project manager, architect) never claim a
    task. A lead role waits with `coord inbox --wait`. `coord claim` and
@@ -164,27 +165,26 @@ Only one local-model generation may run at a time on the shared Ollama host.
 - The reviewer does not run tests. The reviewer reads the TESTS line.
 - Run each command that needs a shared resource (browser, system tests,
   one fixed port) under one lock name:
-  `./coord with-lock system-test -- <command>`. Do not invent other lock names.
-- Each worktree has a unique `COORD_SLOT` in `coord-env.sh`. The main
-  worktree is slot 0. If `coordination/worktree-env.rb` exists, `coord worktree`
-  adds its `export` lines to `coord-env.sh`. Use this hook for a unique test
+  `coord with-lock system-test -- <command>`. Do not invent other lock names.
+- Each worktree has a unique `COORD_SLOT` in `.maf/env.sh`. The main
+  worktree is slot 0. If `.maf/coordination/worktree-env.rb` exists, `coord worktree`
+  adds its `export` lines to `.maf/env.sh`. Use this hook for a unique test
   database and server port per worktree. Do not share a test database.
 
 ### Shared memory
 
-- The vault script controls the graphify watcher. It is named `./vault`,
-  or `./vault-daemon` if a `vault/` directory already existed at install
-  time. `status` / `stop` report or stop the watcher; `export` regenerates
+- The vault script controls the graphify watcher. It is named `vault`.
+  `status` / `stop` report or stop the watcher; `export` regenerates
   the Obsidian vault once. Bootstrap starts the watcher automatically when
   `graphify` is on PATH.
-- `obsidian/` is the Obsidian knowledge base: graphify's regenerated code graph
+- `.maf/obsidian/` is the Obsidian knowledge base: graphify's regenerated code graph
   plus any notes you add there. It is gitignored and rebuilt, so nothing you
   need to keep permanently belongs there. MCP is served by the separate
   `graphify-mcp` process (vault script's `mcp` subcommand), not by the watcher.
 - The decisions folder holds architecture decisions (ADRs) and is the durable,
   git-tracked record. Use `.agent/decisions/` if it exists, else `docs/decisions/`.
   Append, never rewrite history.
-- Containerized agents (e.g. `coi`) need `coordination/`, `coord`, and
-  `coordination/taskrc` mounted from the host; they do not share state with
+- Containerized agents (e.g. `coi`) need `.maf/coordination/`, `coord`, and
+  `.maf/coordination/taskrc` mounted from the host; they do not share state with
   the host or each other unless that filesystem is shared.
 <!-- <<< multi-agent-flow <<< -->

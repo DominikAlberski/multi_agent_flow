@@ -29,8 +29,8 @@ class MafTest < Minitest::Test
   # The agent session that runs the suite exports TASKRC and COORD_DIR for the
   # shared board. Point the child at the disposable board instead.
   def maf_env
-    { "VAULT_SKIP" => "1", "TASKRC" => File.join(@dir, "coordination", "taskrc"),
-      "COORD_DIR" => File.join(@dir, "coordination"), "COORD_ROLE" => nil, "COORD_WORKER" => nil }
+    { "VAULT_SKIP" => "1", "TASKRC" => File.join(@dir, ".maf/coordination", "taskrc"),
+      "COORD_DIR" => File.join(@dir, ".maf/coordination"), "COORD_ROLE" => nil, "COORD_WORKER" => nil }
   end
 
   def maf_at(path, *args)
@@ -44,7 +44,7 @@ class MafTest < Minitest::Test
   end
 
   def agent_specs
-    JSON.parse(File.read(File.join(@dir, ".agent-flow.json")))["agents"].map { |a| "#{a["harness"]}:#{a["role"]}" }
+    JSON.parse(File.read(File.join(@dir, ".maf/config.json")))["agents"].map { |a| "#{a["harness"]}:#{a["role"]}" }
   end
 
   def role_file(role) = File.join(@dir, ".opencode", "agents", "#{role}.md")
@@ -76,7 +76,7 @@ class MafTest < Minitest::Test
     out, status = maf("add", "--model", "architect=m1", "opencode:architect", "--no-bootstrap")
 
     assert_equal 0, status, out
-    assert_equal "m1", JSON.parse(File.read(File.join(@dir, ".agent-flow.json")))["agents"].first["model"]
+    assert_equal "m1", JSON.parse(File.read(File.join(@dir, ".maf/config.json")))["agents"].first["model"]
   end
 
   def test_remove_drops_agents
@@ -156,7 +156,7 @@ class MafTest < Minitest::Test
     out, status = maf("uninstall", "--check")
 
     assert_equal 0, status, out
-    assert_includes out, "remove .opencode/agents/architect.md"
+    assert_includes out, "remove .maf/agents/opencode/architect.md"
   end
 
   def menu(input)
@@ -205,11 +205,12 @@ q
 ")
 
     assert_equal 0, status, out
-    refute File.exist?(File.join(@dir, ".agent-flow.json"))
+    refute File.exist?(File.join(@dir, ".maf/config.json"))
   end
 
   def test_menu_survives_a_corrupt_manifest
-    File.write(File.join(@dir, ".agent-flow.json"), "{")
+    FileUtils.mkdir_p(File.join(@dir, ".maf"))
+    File.write(File.join(@dir, ".maf/config.json"), "{")
 
     out, status = menu("2
 q
@@ -276,8 +277,8 @@ module MafProject
   def install_project
     @project = File.join(@dir, "project")
     FileUtils.mkdir_p(@project)
-    @env = @env.merge("TASKRC" => File.join(@project, "coordination", "taskrc"),
-                      "COORD_DIR" => File.join(@project, "coordination"),
+    @env = @env.merge("TASKRC" => File.join(@project, ".maf/coordination", "taskrc"),
+                      "COORD_DIR" => File.join(@project, ".maf/coordination"),
                       "COORD_ROLE" => nil, "COORD_WORKER" => nil)
     git("init", "-q")
     maf("add", "opencode:architect")
@@ -304,7 +305,7 @@ module MafProject
 
   def assert_started(worker)
     dir, role, coord_worker, *args = mock_call
-    assert_equal File.join(@project, ".worktrees", worker), dir
+    assert_equal File.join(@project, ".maf/worktrees", worker), dir
     assert_equal ["architect", worker], [role, coord_worker]
     assert_equal ["."] + %w[--agent architect --prompt] + ["Start your work loop now."], args
   end
@@ -340,25 +341,25 @@ end
 class MafTeamTest < Minitest::Test
   include MafProject
 
-  def worktree(worker) = File.join(@project, ".worktrees", worker)
-  def workers = JSON.parse(File.read(File.join(@project, "coordination", "workers.json")))
-  def coord(*args, env: {}) = IO.popen(@env.merge(env), [RbConfig.ruby, "coord", *args], chdir: @project, &:read)
+  def worktree(worker) = File.join(@project, ".maf/worktrees", worker)
+  def workers = JSON.parse(File.read(File.join(@project, ".maf/coordination", "workers.json")))
+  def coord(*args, env: {}) = IO.popen(@env.merge(env), [RbConfig.ruby, ".maf/bin/coord", *args], chdir: @project, &:read)
 
   # Regression: the suite used to pass an inherited TASKRC/COORD_DIR to coord,
   # so `coord add` wrote a stray task to the agent session's real board. The
   # helper must override both variables.
   def test_coord_does_not_write_to_an_inherited_board
     sentinel = File.join(@dir, "sentinel")
-    FileUtils.mkdir_p(File.join(sentinel, "coordination"))
-    File.write(File.join(sentinel, "coordination", "taskrc"),
-               "data.location=#{File.join(sentinel, "coordination", "taskdata")}\nuda.role.type=string\n")
+    FileUtils.mkdir_p(File.join(sentinel, ".maf/coordination"))
+    File.write(File.join(sentinel, ".maf/coordination", "taskrc"),
+               "data.location=#{File.join(sentinel, ".maf/coordination", "taskdata")}\nuda.role.type=string\n")
 
-    with_env("TASKRC" => File.join(sentinel, "coordination", "taskrc"),
-             "COORD_DIR" => File.join(sentinel, "coordination")) do
+    with_env("TASKRC" => File.join(sentinel, ".maf/coordination", "taskrc"),
+             "COORD_DIR" => File.join(sentinel, ".maf/coordination")) do
       refute_empty coord("add", "--role", "architect", "--scope", "docs/**", "--title", "leak check").strip
     end
 
-    refute Dir.exist?(File.join(sentinel, "coordination", "taskdata"))
+    refute Dir.exist?(File.join(sentinel, ".maf/coordination", "taskdata"))
   end
 
   def with_env(pairs)
@@ -429,7 +430,7 @@ class MafTeamTest < Minitest::Test
     assert_includes out, "uncommitted work"
   end
 
-  def manifest = JSON.parse(File.read(File.join(@project, ".agent-flow.json")))
+  def manifest = JSON.parse(File.read(File.join(@project, ".maf/config.json")))
 
   def test_team_set_records_the_budget_and_maf_add_keeps_it
     maf("team", "set", "--max", "2", "--allow", "opencode:deepseek-v4-flash")
@@ -441,7 +442,7 @@ class MafTeamTest < Minitest::Test
   # A corrupt manifest must stop the command with a clear message, not crash
   # with a JSON error and not silently drop the budget.
   def test_team_stops_on_a_corrupt_manifest
-    File.write(File.join(@project, ".agent-flow.json"), "{ not json")
+    File.write(File.join(@project, ".maf/config.json"), "{ not json")
     out, status = maf("team")
 
     refute_equal 0, status
@@ -451,12 +452,12 @@ class MafTeamTest < Minitest::Test
   # `maf team set` must not overwrite a corrupt manifest with only the team
   # key: that would drop every agent.
   def test_team_set_leaves_a_corrupt_manifest_alone
-    File.write(File.join(@project, ".agent-flow.json"), "{ not json")
+    File.write(File.join(@project, ".maf/config.json"), "{ not json")
     out, status = maf("team", "set", "--max", "2")
 
     refute_equal 0, status
     assert_includes out, "not valid JSON"
-    assert_equal "{ not json", File.read(File.join(@project, ".agent-flow.json"))
+    assert_equal "{ not json", File.read(File.join(@project, ".maf/config.json"))
   end
 
   # The installed post-commit hook starts a detached doc-graph refresh. That
@@ -519,7 +520,7 @@ class MafTeamTest < Minitest::Test
 
   def test_retire_removes_the_presence_file
     maf("prepare", "opencode", "architect_2")
-    path = File.join(@project, "coordination", "presence", "architect-2.json")
+    path = File.join(@project, ".maf/coordination", "presence", "architect-2.json")
     FileUtils.mkdir_p(File.dirname(path))
     File.write(path, JSON.generate("worker" => "architect-2", "pid" => Process.pid))
     _out, status = maf("retire", "architect_2")

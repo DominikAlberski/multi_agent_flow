@@ -1,38 +1,14 @@
 # >>> multi-agent-flow >>>
-# Coordination runtime state. Taskwarrior holds the authoritative task list.
-# taskrc/taskdata hold an absolute local path and the task database itself;
-# neither is portable or meant to be shared via git.
-coordination/taskrc
-coordination/taskdata/
-coordination/inbox/*
-!coordination/inbox/.gitkeep
-coordination/locks/*
-!coordination/locks/.gitkeep
-coordination/exports/*
-!coordination/exports/.gitkeep
-coordination/events.log
-coordination/message-hooks/*.log
-coordination/sessions/
-coordination/slots.json
-coordination/workers.json
-
-# Agent worktrees live here; each is a git worktree, not committed source.
-.worktrees/
-
-# Written by `coord worktree` in each worktree it creates; points back at
-# this project's coordination/ dir, never meant to be committed.
-coord-env.sh
-
-# Written by `./vault` (the graphify watcher's pid and log).
-coordination/vault.pid
-coordination/vault.log
-
-# Written by `coordination/doc-graph-refresh`.
-coordination/doc-graph.log
-coordination/doc-graph.lock
-coordination/doc-graph.pending
-
-# Knowledge graph build output and the generated Obsidian vault
-graphify-out/
-obsidian/
+# The flow keeps every file in .maf/. Git tracks bin/, agents/, and config.json.
+# Git does not track the runtime state, the worktrees, and the generated output.
+# coordination/ holds the task board, messages, locks, hooks, sessions, and logs.
+# taskrc and taskdata hold an absolute local path and the task database itself.
+.maf/coordination/
+.maf/worktrees/
+.maf/graphify-out/
+.maf/obsidian/
+.maf/*.log
+.maf/*.pid
+# env.sh is written by `coord worktree` in each worktree. It holds absolute paths.
+.maf/env.sh
 # <<< multi-agent-flow <<<

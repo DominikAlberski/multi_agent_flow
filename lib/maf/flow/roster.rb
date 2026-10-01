@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
 module Flow
-  # Roster merges the agents saved in .agent-flow.json with the --agent and
+  # Roster merges the agents saved in .maf/config.json with the --agent and
   # --remove specs of this run. A saved model ranks below --model.
   class Roster
     def initialize(project)
-      path = File.join(project, ".agent-flow.json")
+      path = File.join(project, ".maf/config.json")
       @saved = File.exist?(path) ? JSON.parse(File.read(path)).fetch("agents", []) : []
     end
 

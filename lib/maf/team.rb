@@ -18,7 +18,7 @@ require_relative "budget"
 module Maf
   module Team
     def self.coord(root, *args, env: {})
-      IO.popen(env, [RbConfig.ruby, File.join(root, "coord"), *args], chdir: root, err: File::NULL, &:read).to_s
+      IO.popen(env, [RbConfig.ruby, File.join(root, ".maf", "bin", "coord"), *args], chdir: root, err: File::NULL, &:read).to_s
     end
 
     def self.notify(root, text) = coord(root, "msg", "--from", "maf", "architect", text)

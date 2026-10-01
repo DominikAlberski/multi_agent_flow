@@ -63,8 +63,8 @@ class DocGraphRefreshTest < Minitest::Test
   end
 
   def calls = File.exist?(@calls) ? File.read(@calls) : ""
-  def graph = File.join(@dir, "graphify-out", "graph.json")
-  def log = File.join(@dir, "coordination", "doc-graph.log")
+  def graph = File.join(@dir, ".maf", "graphify-out", "graph.json")
+  def log = File.join(@dir, ".maf/coordination", "doc-graph.log")
 
   def test_no_call_without_a_markdown_change
     commit("text", "notes.txt", "no graph here")
@@ -93,7 +93,7 @@ class DocGraphRefreshTest < Minitest::Test
 
     assert_equal 0, status.exitstatus, out
     assert_includes calls, "extract"
-    assert_includes calls, "export obsidian --dir obsidian"
+    assert_includes calls, "export obsidian --dir .maf/obsidian"
     assert_equal "NEW", File.read(graph)
   end
 
@@ -145,7 +145,7 @@ class DocGraphRefreshTest < Minitest::Test
   end
 
   def test_the_cache_dir_is_passed_to_extract
-    seed = File.join(@dir, "graphify-out", "cache", "seeded.txt")
+    seed = File.join(@dir, ".maf", "graphify-out", "cache", "seeded.txt")
     FileUtils.mkdir_p(File.dirname(seed))
     File.write(seed, "keep")
     commit("doc", "doc.md", "hello")
@@ -183,7 +183,7 @@ class DocGraphRefreshTest < Minitest::Test
     load SCRIPT
     dir = @dir
     calls = []
-    pending = File.join(dir, "coordination", "doc-graph.pending")
+    pending = File.join(dir, ".maf/coordination", "doc-graph.pending")
     DocGraph.singleton_class.define_method(:markdown?) { |_event| true }
     DocGraph.define_singleton_method(:toplevel) { "#{dir}/tree-1" }
     DocGraph.define_singleton_method(:main) { dir }
@@ -197,7 +197,7 @@ class DocGraphRefreshTest < Minitest::Test
 
     assert_equal ["#{dir}/tree-1", "#{dir}/tree-2"], calls
     refute File.exist?(pending)
-    refute File.exist?(File.join(dir, "coordination", "doc-graph.lock"))
+    refute File.exist?(File.join(dir, ".maf/coordination", "doc-graph.lock"))
   end
 
   def test_a_mark_written_during_release_is_not_lost
@@ -205,7 +205,7 @@ class DocGraphRefreshTest < Minitest::Test
     dir = @dir
     calls = []
     released = 0
-    pending = File.join(dir, "coordination", "doc-graph.pending")
+    pending = File.join(dir, ".maf/coordination", "doc-graph.pending")
     DocGraph.singleton_class.define_method(:markdown?) { |_event| true }
     ENV["GEMINI_API_KEY"] = "test"
     DocGraph.define_singleton_method(:toplevel) { "#{dir}/tree-1" }
@@ -224,14 +224,14 @@ class DocGraphRefreshTest < Minitest::Test
     refute File.exist?(pending)
   end
 
-  def lock_dir = File.join(@dir, "coordination", "doc-graph.lock")
-  def pending_file = File.join(@dir, "coordination", "doc-graph.pending")
+  def lock_dir = File.join(@dir, ".maf/coordination", "doc-graph.lock")
+  def pending_file = File.join(@dir, ".maf/coordination", "doc-graph.pending")
 
   def stub_main
     load SCRIPT
     dir = @dir
     DocGraph.define_singleton_method(:main) { dir }
-    FileUtils.mkdir_p(File.join(dir, "coordination"))
+    FileUtils.mkdir_p(File.join(dir, ".maf/coordination"))
   end
 
   def test_a_lock_of_a_dead_process_is_broken
@@ -327,10 +327,10 @@ class DocGraphRefreshTest < Minitest::Test
     Vault::Daemon.define_singleton_method(:system) { |*args| updates << args }
     Vault::Daemon.define_singleton_method(:sleep) { |_seconds| }
     Dir.chdir(@dir) do
-      FileUtils.mkdir_p("coordination/doc-graph.lock")
+      FileUtils.mkdir_p(".maf/coordination/doc-graph.lock")
       Vault::Daemon.tick(nil)
       assert_empty updates
-      FileUtils.rmdir("coordination/doc-graph.lock")
+      FileUtils.rmdir(".maf/coordination/doc-graph.lock")
       Vault::Daemon.tick(nil)
     end
 

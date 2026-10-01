@@ -7,7 +7,7 @@ Three pillars:
 
 | Pillar | Implementation |
 |---|---|
-| Communication | Taskwarrior task board + `coordination/` inbox, via the `coord` CLI |
+| Communication | Taskwarrior task board + `.maf/coordination/` inbox, via the `coord` CLI |
 | Resource control | `mkdir`-based locks — no `flock`, works on macOS and Linux |
 | Shared memory | graphify knowledge graph + Obsidian vault, served over MCP |
 
@@ -47,6 +47,42 @@ each value: harness, roles, models, and the agent to start.
 
 ---
 
+## Project layout
+
+The flow keeps every file that it owns in one folder, `.maf/`, in the project.
+
+```
+.maf/
+  bin/            coord, dispatcher, vault, dashboard, doc-graph-refresh
+  coordination/   task board, inbox, locks, presence, sessions, hooks, logs
+  worktrees/      one git worktree per worker
+  graphify-out/   knowledge graph
+  obsidian/       generated Obsidian vault
+  agents/         role files: claude/, opencode/, codex/
+  config.json     the agents and settings of the project
+  env.sh          source it: puts .maf/bin on PATH
+```
+
+The project root keeps `.maf/` and `AGENTS.md`. These files must stay where
+their tool reads them:
+
+| Path | Reason |
+|---|---|
+| `AGENTS.md` | Every harness reads the contract there. |
+| `.gitignore` | Git reads it there. |
+| `.git/hooks/*` | Git reads them there. |
+| `.claude/settings.json` | Claude Code reads it there. |
+| `.opencode/plugins/board-watch.js` | opencode reads it there. |
+| `~/.hermes/skills/<project>-<role>/SKILL.md` | Hermes reads it there. |
+
+`.claude/agents/`, `.opencode/agents/`, and `.codex/prompts/` are relative
+symlinks into `.maf/agents/<harness>/`. Git tracks the symlinks.
+
+A project with the old layout runs `maf migrate` once. See the migration
+section of [USER_MANUAL.md](USER_MANUAL.md).
+
+---
+
 ## Documentation
 
 | File | Audience | What it covers |
@@ -79,7 +115,8 @@ multi_agent_flow/
     flow.rb                   # generates harness-specific role files + installs coordination layer
     bootstrap.rb              # idempotent coordination layer installer
     setup_agent.rb            # maf start: worktree + harness launch
-    uninstall.rb              # removes the flow from a project; keeps graphify-out/ and obsidian/
+    uninstall.rb              # removes the flow from a project; keeps .maf/graphify-out/ and .maf/obsidian/
+    migrate.rb                # maf migrate: moves an old-layout install into .maf/
   scripts/
     check.rb                  # repo consistency check (UDA sync, marker blocks, worktree formula)
   templates/
@@ -94,11 +131,11 @@ multi_agent_flow/
     vault                     # graphify + Obsidian + MCP watcher control (Ruby)
     dashboard                 # web dashboard: stuck-detection UI (Ruby/Sinatra)
     doc-graph-refresh         # graphify rebuild runner called by the git hooks (Ruby)
+    env.sh                    # shell environment: .maf/bin on PATH (installed as .maf/env.sh)
     git-hooks/                # pre-commit guard, post-commit/post-merge refresh blocks
     taskrc.append             # Taskwarrior UDA block
     agents-contract.md        # contract appended to AGENTS.md
     gitignore.append          # marker-guarded ignore entries
-    coordination/             # inbox / locks / exports skeleton
     harness-hooks/            # next-task + board-watch scripts and the opencode plugin
   test/
     coord_test.rb             # behavioral tests for the coord CLI
@@ -107,6 +144,7 @@ multi_agent_flow/
     dashboard_test.rb         # tests for the dashboard data
     dispatcher_test.rb        # tests for the dispatcher
     uninstaller_test.rb       # tests for uninstall.rb
+    migrate_test.rb           # tests for migrate.rb
     doc_graph_refresh_test.rb # tests for the doc-graph refresh script
 ```
 
@@ -133,13 +171,14 @@ to any agent as direct context.
 
 A commit or merge that changes a markdown file refreshes the shared knowledge
 graph. `maf add` appends a flow block to the `post-commit` and `post-merge`
-hooks. The block starts `coordination/doc-graph-refresh` detached, so the commit
+hooks. The block starts `.maf/bin/doc-graph-refresh` detached, so the commit
 returns at once.
 
 The refresh runs `graphify extract . --backend gemini` and then
-`graphify export obsidian --dir obsidian`. It builds in a temp dir and swaps on
+`graphify export obsidian --dir .maf/obsidian`. The graph lives in `.maf/graphify-out/`
+(`GRAPHIFY_OUT` points there). It builds in a temp dir and swaps on
 success, so a failed extract keeps the old graph. It needs `GEMINI_API_KEY`.
-Without the key it logs a skip in `coordination/doc-graph.log` and exits. A
+Without the key it logs a skip in `.maf/coordination/doc-graph.log` and exits. A
 non-markdown commit makes no LLM call. A refresh started in a worktree writes
 the shared graph in the main checkout.
 
@@ -168,6 +207,7 @@ env -u TASKRC -u COORD_DIR -u COORD_ROLE -u COORD_WORKER ruby test/coord_test.rb
 ruby test/coord_test.rb      # covers the coord CLI
 ruby test/installer_test.rb  # covers bootstrap.rb, flow.rb, setup_agent.rb
 ruby test/uninstaller_test.rb  # covers uninstall.rb
+ruby test/migrate_test.rb    # covers migrate.rb
 ruby test/maf_test.rb        # covers the maf command
 ruby test/dashboard_test.rb  # covers the dashboard data
 ruby test/doc_graph_refresh_test.rb  # covers the doc-graph refresh
@@ -181,7 +221,7 @@ those tools are absent. If wiring into CI, install both to get full coverage.
 ## Design notes
 
 - **Taskwarrior is the single source of truth**, in a project-local database
-  (`coordination/taskdata`, via `coordination/taskrc`) — never the user's
+  (`.maf/coordination/taskdata`, via `.maf/coordination/taskrc`) — never the user's
   global `~/.task`. Two projects on this flow never share one board.
   `coord board`/`export` are read-only projections.
 - **Agents never call `task` directly.** `coord` keeps the protocol stable and
@@ -191,10 +231,10 @@ those tools are absent. If wiring into CI, install both to get full coverage.
 - **A claim is a lease.** Idle past `COORD_LEASE_TTL` seconds (default 4 hours)
   it becomes claimable again without `--force`. `coord unclaim` releases one on
   demand.
-- **Worktrees live inside the project** at `.worktrees/<role>-<worker_id>`.
-  `.worktrees/` is gitignored. In each worktree, run `source coord-env.sh` so
+- **Worktrees live inside the project** at `.maf/worktrees/<role>-<worker_id>`.
+  `.maf/worktrees/` is gitignored. In each worktree, run `source .maf/env.sh` so
   `COORD_DIR` and `TASKRC` point at the main project; every worktree shares one
-  `coordination/` dir and one task board.
+  `.maf/coordination/` dir and one task board.
 - **Scope overlap** is checked on `coord add` (warning) and `coord conflicts`
   (report). It is a path-prefix heuristic, not a full glob matcher. Scope is
   advisory: nothing but agent discipline stops a write outside it, except that

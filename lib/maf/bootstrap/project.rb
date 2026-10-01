@@ -19,6 +19,11 @@ module Bootstrap
       File.join(@target, *parts)
     end
 
+    # A script that this tool copies from assets/NAME into .maf/bin/.
+    def bin_path(name)
+      path(MAF_DIR, "bin", name)
+    end
+
     def force?
       @force
     end
@@ -45,16 +50,12 @@ module Bootstrap
       :update
     end
 
-    def vault_script
-      File.directory?(path("vault")) ? "vault-daemon" : "vault"
-    end
-
     def taskrc_path
-      path("coordination", "taskrc")
+      path(MAF_DIR, "coordination", "taskrc")
     end
 
     def taskdata_path
-      path("coordination", "taskdata")
+      path(MAF_DIR, "coordination", "taskdata")
     end
 
     def append_content(source)

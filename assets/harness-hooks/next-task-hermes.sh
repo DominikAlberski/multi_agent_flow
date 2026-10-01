@@ -17,11 +17,11 @@ PAYLOAD=$(cat 2>/dev/null)
 [ -n "$COORD_ROLE" ] || exit 0
 [ "$COORD_ROLE" != "unknown" ] || exit 0
 
-COORD_DIR="${COORD_DIR:-coordination}"
+COORD_DIR="${COORD_DIR:-.maf/coordination}"
 TASKRC="${TASKRC:-${COORD_DIR}/taskrc}"
 
-# Find coord one level above COORD_DIR (the project root).
-COORD="$(dirname "$COORD_DIR")/coord"
+# Find coord in bin/, next to COORD_DIR inside .maf/.
+COORD="$(dirname "$COORD_DIR")/bin/coord"
 [ -x "$COORD" ] || exit 0
 
 OUTPUT=$(TASKRC="$TASKRC" COORD_DIR="$COORD_DIR" COORD_ROLE="$COORD_ROLE" \
@@ -31,7 +31,7 @@ echo "$OUTPUT" | grep -qE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 SESSION_ID=$(printf '%s' "$PAYLOAD" | ruby -rjson -e \
   'puts JSON.parse(STDIN.read)["session_id"].to_s rescue ""' 2>/dev/null)
 
-PROMPT="Unclaimed tasks exist for role ${COORD_ROLE}. Run ./coord inbox, then ./coord next. Claim and complete the next task. When no tasks remain, stop."
+PROMPT="Unclaimed tasks exist for role ${COORD_ROLE}. Run coord inbox, then coord next. Claim and complete the next task. When no tasks remain, stop."
 
 # Run detached: let the ending session exit cleanly, then resume in one-shot mode.
 HERMES_ACCEPT_HOOKS=1 nohup hermes chat --oneshot --yolo --accept-hooks \

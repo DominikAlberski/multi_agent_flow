@@ -9,7 +9,7 @@
 # are available, letting the session end normally.
 #
 # Claude Code (.claude/settings.json):
-#   {"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ruby coordination/harness-hooks/next-task.rb"}]}]}}
+#   {"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ruby .maf/coordination/harness-hooks/next-task.rb"}]}]}}
 # Codex (~/.codex/hooks.json):
 #   {"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ruby ~/.codex/hooks/next-task.rb"}]}]}}
 #
@@ -20,12 +20,12 @@ require "rbconfig"
 role = ENV["COORD_ROLE"].to_s
 exit 0 if role.empty? || role == "unknown"
 
-coord_dir = ENV.fetch("COORD_DIR", "coordination")
+coord_dir = ENV.fetch("COORD_DIR", ".maf/coordination")
 taskrc    = ENV.fetch("TASKRC", File.join(coord_dir, "taskrc"))
 
 coord = [
-  File.join(Dir.pwd, "coord"),
-  File.join(File.expand_path("..", coord_dir), "coord")
+  File.join(Dir.pwd, ".maf", "bin", "coord"),
+  File.join(File.expand_path("..", coord_dir), "bin", "coord")
 ].find { |p| File.executable?(p) }
 exit 0 unless coord
 
@@ -41,6 +41,6 @@ exit 0 unless output.match?(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 $stdout.print JSON.generate(
   decision: "block",
   reason: "Unclaimed tasks exist for role #{role}. " \
-          "Run ./coord inbox to read messages, then ./coord next to list tasks. " \
+          "Run coord inbox to read messages, then coord next to list tasks. " \
           "Claim the next task and complete it. When no tasks remain, stop."
 )

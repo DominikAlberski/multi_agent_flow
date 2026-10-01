@@ -14,7 +14,7 @@ load File.expand_path("../assets/dashboard", __dir__)
 class DashboardCollectorTest < Minitest::Test
   def setup
     @dir = Dir.mktmpdir("dashboard-test")
-    @coord = File.join(@dir, "coordination")
+    @coord = File.join(@dir, ".maf/coordination")
     FileUtils.mkdir_p(@coord)
   end
 

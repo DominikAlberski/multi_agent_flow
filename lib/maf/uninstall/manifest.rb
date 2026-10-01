@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
 module Uninstall
-  # .agent-flow.json lists the generated agents. Hermes skills live outside
+  # .maf/config.json lists the generated agents. Hermes skills live outside
   # the project, so only the manifest tells which ones belong to it.
   class Manifest
     def initialize(project)
       @project = project
-      @path = File.join(project, ".agent-flow.json")
+      @path = File.join(project, ".maf/config.json")
     end
 
     def steps = File.exist?(@path) ? [Owned.remove(@path)] : []

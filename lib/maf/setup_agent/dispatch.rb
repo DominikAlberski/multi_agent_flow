@@ -1,14 +1,16 @@
 # frozen_string_literal: true
 
 module SetupAgent
-  # Dispatch runs ./dispatcher in the worktree instead of an interactive
+  # Dispatch runs dispatcher in the worktree instead of an interactive
   # session. The worktree's own copy of the dispatcher is used, so the
   # project must have committed it. The current Ruby runs it, so an old
   # system Ruby on the shebang path never parses it.
   module Dispatch
+    DISPATCHER = ".maf/bin/dispatcher"
+
     def self.launch(args, model)
       require_dispatcher!
-      cmd = [RbConfig.ruby, "./dispatcher", args.role, "--harness", args.harness]
+      cmd = [RbConfig.ruby, DISPATCHER, args.role, "--harness", args.harness]
       cmd += ["--model", model] if model
       cmd += args.dispatcher_args
       args.detach ? detach(cmd, args.worker) : Launcher.exec_or_die(cmd)
@@ -31,10 +33,10 @@ module SetupAgent
     end
 
     def self.require_dispatcher!
-      return if File.exist?("dispatcher")
+      return if File.exist?(DISPATCHER)
 
       main = ENV["COORD_DIR"] ? File.dirname(File.expand_path(ENV["COORD_DIR"])) : nil
-      hint = main ? "\n  Fix:\n    cd #{main}\n    git add dispatcher && git commit -m 'Add dispatcher'\n  Then re-run setup_agent." \
+      hint = main ? "\n  Fix:\n    cd #{main}\n    git add .maf/bin && git commit -m 'Add dispatcher'\n  Then re-run setup_agent." \
                   : " Commit dispatcher from your main project directory first, then re-run."
       abort "setup_agent: dispatcher missing in this worktree (worktrees only contain committed files).#{hint}"
     end

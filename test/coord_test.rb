@@ -105,7 +105,7 @@ class TaskwarriorTest < Minitest::Test
     skip "Taskwarrior ('task') not installed" unless Coord::TaskCli.new.available?
 
     @dir = Dir.mktmpdir("coord-test")
-    coord_dir = File.join(@dir, "coordination")
+    coord_dir = File.join(@dir, ".maf/coordination")
     @env = { "COORD_DIR" => coord_dir, "TASKRC" => File.join(coord_dir, "taskrc"),
              "COORD_ROLE" => "backend-developer", "COORD_WORKER" => "backend-1" }
     isolate_env(@env)
@@ -258,7 +258,7 @@ class TaskwarriorTest < Minitest::Test
       Coord::CLI.new(["next", "--wait", "--interval", "1", "--timeout", "5"], env: @env).run
     end
     assert_match(/1 unread message/, out)
-    assert_match(%r{\./coord inbox}, out)
+    assert_match(/coord inbox/, out)
   end
 
   # Regression: a failed `task add` used to return nil, so `coord add` printed
@@ -347,7 +347,7 @@ end
     end
   end
 
-  # A hook at coordination/message-hooks/<role>.sh runs when a message is delivered
+  # A hook at .maf/coordination/message-hooks/<role>.sh runs when a message is delivered
   # to that role. The hook is a plain shell script — coord does not know or
   # care what harness the agent runs in.
   def test_msg_fires_hook_when_installed
@@ -375,7 +375,7 @@ end
     File.delete(hook)
   end
 
-  # Hook output goes to coordination/message-hooks/<role>.log, not /dev/null, so a
+  # Hook output goes to .maf/coordination/message-hooks/<role>.log, not /dev/null, so a
   # broken hook is debuggable.
   def test_hook_output_goes_to_role_log
     install_hook("backend-developer", "echo from-hook\n")
@@ -396,7 +396,7 @@ end
   # manifest declares them.
   def test_broadcast_reaches_roles_from_the_manifest
     manifest = { agents: [{ harness: "claude", role: "tester" }] }
-    File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(manifest))
+    File.write(File.join(@dir, ".maf/config.json"), JSON.generate(manifest))
     capture_io { Coord::CLI.new(["broadcast", "--from", "architect", "heads up"], env: @env).run }
     refute_empty Dir.glob(File.join(@env["COORD_DIR"], "inbox", "tester", "*.md"))
   end
@@ -406,7 +406,7 @@ end
   def write_team_manifest
     roles = %w[project-manager architect tester]
     manifest = { agents: roles.map { |role| { harness: "claude", role: role } } }
-    File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(manifest))
+    File.write(File.join(@dir, ".maf/config.json"), JSON.generate(manifest))
   end
 
   # Notices about ports or test databases are for workers. The project
@@ -442,12 +442,12 @@ end
     assert_includes File.read(inbox("architect").first), "Task #{id} is done: finished work."
   end
 
-  def write_verify(command) = File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(verify: command))
+  def write_verify(command) = File.write(File.join(@dir, ".maf/config.json"), JSON.generate(verify: command))
 
   def test_status_shows_the_token_totals_per_worker
-    FileUtils.mkdir_p(File.join(@dir, "coordination", "usage"))
+    FileUtils.mkdir_p(File.join(@dir, ".maf/coordination", "usage"))
     usage = { "input_tokens" => 120, "output_tokens" => 30, "runs" => 2 }
-    File.write(File.join(@dir, "coordination", "usage", "tester-bot.json"), JSON.generate(usage))
+    File.write(File.join(@dir, ".maf/coordination", "usage", "tester-bot.json"), JSON.generate(usage))
     out, = capture_io { Coord::CLI.new(["status"], env: @env).run }
 
     assert_includes out, "tokens tester-bot: input=120 output=30 runs=2"
@@ -485,7 +485,7 @@ end
   def test_next_wait_is_refused_for_a_lead_role
     _out, err = capture_io { assert_raises(SystemExit) { Coord::CLI.new(%w[next --wait], env: lead_env).run } }
 
-    assert_includes err, "./coord inbox --wait"
+    assert_includes err, "coord inbox --wait"
   end
 
   def session_env(role, worker, pid = Process.pid)
@@ -642,7 +642,7 @@ end
   # must still appear only once per role, not on every `coord add`.
   def test_an_unstaffed_role_warns_once_without_a_project_manager
     manifest = { agents: [{ harness: "claude", role: "architect" }] }
-    File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(manifest))
+    File.write(File.join(@dir, ".maf/config.json"), JSON.generate(manifest))
     write_registry("architect-1" => { "role" => "architect" })
 
     _out, err = capture_io do
@@ -745,7 +745,7 @@ class TaskrcSafetyTest < Minitest::Test
   end
 
   def test_ensure_taskrc_writes_data_location_for_its_own_project_local_file
-    coord_dir = File.join(@dir, "coordination")
+    coord_dir = File.join(@dir, ".maf/coordination")
     taskrc = File.join(coord_dir, "taskrc")
     Coord::Setup.new(Coord::Paths.new(coord_dir), taskrc).ensure_taskrc
 
@@ -755,7 +755,7 @@ class TaskrcSafetyTest < Minitest::Test
   # Regression: a user's own TASKRC (e.g. ~/.taskrc, pointed at their real
   # Taskwarrior database) must never be rewritten to point at this project.
   def test_ensure_taskrc_refuses_to_redirect_an_external_taskrc
-    coord_dir = File.join(@dir, "coordination")
+    coord_dir = File.join(@dir, ".maf/coordination")
     external_taskrc = File.join(@dir, "external", ".taskrc")
     FileUtils.mkdir_p(File.dirname(external_taskrc))
     File.write(external_taskrc, "# pre-existing personal config\n")
@@ -772,7 +772,7 @@ class TaskrcSafetyTest < Minitest::Test
   # taskrc already has data.location (e.g. a personal ~/.taskrc), not only when
   # it is missing.
   def test_ensure_taskrc_warns_for_an_external_taskrc_with_data_location
-    coord_dir = File.join(@dir, "coordination")
+    coord_dir = File.join(@dir, ".maf/coordination")
     external_taskrc = File.join(@dir, "external", ".taskrc")
     personal_data = File.join(@dir, "my-tasks")
     FileUtils.mkdir_p(File.dirname(external_taskrc))
@@ -780,14 +780,14 @@ class TaskrcSafetyTest < Minitest::Test
 
     _, err = capture_io { Coord::Setup.new(Coord::Paths.new(coord_dir), external_taskrc).ensure_taskrc }
 
-    assert_match(/outside coordination\//, err)
+    assert_match(%r{outside \.maf/coordination/}, err)
     assert_includes File.read(external_taskrc), "data.location=#{personal_data}"
   end
 
   # Regression: a marked taskrc from an older install that has no
   # data.location would silently fall back to the global ~/.task database.
   def test_ensure_taskrc_adds_data_location_to_an_old_marked_taskrc
-    coord_dir = File.join(@dir, "coordination")
+    coord_dir = File.join(@dir, ".maf/coordination")
     taskrc = File.join(coord_dir, "taskrc")
     FileUtils.mkdir_p(coord_dir)
     File.write(taskrc, "# #{Coord::MARKER}\nuda.role.type=string\n")
@@ -807,13 +807,12 @@ class WorktreeTest < Minitest::Test
 
     @root = Dir.mktmpdir("coord-worktree-test")
     run_git("init", "-q")
-    # `coordination/.../.gitkeep` and `coord` are normally tracked in git, so a
-    # fresh worktree checks out its own real copies of them.
-    FileUtils.mkdir_p(File.join(@root, "coordination", "exports"))
-    FileUtils.touch(File.join(@root, "coordination", "exports", ".gitkeep"))
-    FileUtils.touch(File.join(@root, "coord"))
-    File.write(File.join(@root, ".gitignore"), "coord-env.sh\n")
-    run_git("add", "coord", "coordination", ".gitignore")
+    # `.maf/bin/coord` is normally tracked in git, so a fresh worktree checks
+    # out its own real copy of it.
+    FileUtils.mkdir_p([File.join(@root, ".maf", "bin"), File.join(@root, ".maf", "coordination")])
+    FileUtils.touch(File.join(@root, ".maf", "bin", "coord"))
+    File.write(File.join(@root, ".gitignore"), ".maf/env.sh\n")
+    run_git("add", ".maf/bin/coord", ".gitignore")
     run_git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init")
   end
 
@@ -825,20 +824,21 @@ class WorktreeTest < Minitest::Test
     system("git", "-C", @root, *args, out: File::NULL) || raise("git #{args.join(" ")} failed")
   end
 
-  # All worktrees live inside the project, under <project>/.worktrees/<slug>.
+  # All worktrees live inside the project, under <project>/.maf/worktrees/<slug>.
   def worktrees_root
-    File.join(@root, ".worktrees")
+    File.join(@root, ".maf/worktrees")
   end
 
   def test_worktree_lives_under_the_worktrees_folder
     Coord::Worktree.new(@root).create("tester", nil)
     @worktree_dir = File.join(worktrees_root, "tester")
-    env_file = File.read(File.join(@worktree_dir, "coord-env.sh"))
+    env_file = File.read(File.join(@worktree_dir, ".maf/env.sh"))
 
-    assert_equal "#{@root}/.worktrees/tester", @worktree_dir
+    assert_equal "#{@root}/.maf/worktrees/tester", @worktree_dir
     assert Dir.exist?(@worktree_dir)
-    assert_includes env_file, "COORD_DIR=#{File.join(@root, "coordination")}"
-    assert_includes env_file, "TASKRC=#{File.join(@root, "coordination", "taskrc")}"
+    assert_includes env_file, "COORD_DIR=#{File.join(@root, ".maf/coordination")}"
+    assert_includes env_file, "TASKRC=#{File.join(@root, ".maf/coordination", "taskrc")}"
+    assert_includes env_file, "MAF_BIN=#{File.join(@root, ".maf", "bin")}"
   end
 
   # The tracked coord/coordination checked out into the worktree must be left
@@ -881,7 +881,7 @@ class WorktreeTest < Minitest::Test
     assert_equal "worker/tester", `git -C #{@worktree_dir} branch --show-current`.strip
   end
 
-  def env_file(slug) = File.read(File.join(worktrees_root, slug, "coord-env.sh"))
+  def env_file(slug) = File.read(File.join(worktrees_root, slug, ".maf/env.sh"))
 
   def test_each_worktree_gets_its_own_slot
     worktree = Coord::Worktree.new(@root)
@@ -904,7 +904,7 @@ class WorktreeTest < Minitest::Test
   # A retired worker must give its slot back, or the port map climbs forever.
   def test_a_removed_worktree_frees_its_slot
     %w[tester reviewer].each { |slug| FileUtils.mkdir_p(File.join(worktrees_root, slug)) }
-    slots = Coord::Slots.new(File.join(@root, "coordination"))
+    slots = Coord::Slots.new(File.join(@root, ".maf/coordination"))
 
     assert_equal 1, slots.assign("tester")
     assert_equal 2, slots.assign("reviewer")
@@ -914,17 +914,17 @@ class WorktreeTest < Minitest::Test
   end
 
   def test_the_project_hook_output_is_appended_to_the_env_file
-    File.write(File.join(@root, "coordination", "worktree-env.rb"),
+    File.write(File.join(@root, ".maf/coordination", "worktree-env.rb"),
                'puts "export PORT=#{3000 + ENV.fetch("COORD_SLOT").to_i}"')
     Coord::Worktree.new(@root).create("tester", nil)
 
     assert_includes env_file("tester"), "export PORT=3001\n"
   end
 
-  # A shell sources coord-env.sh. Keep only exports, so a hook that prints
+  # A shell sources .maf/env.sh. Keep only exports, so a hook that prints
   # other text cannot run a command in every later shell.
   def test_the_project_hook_output_keeps_only_export_lines
-    File.write(File.join(@root, "coordination", "worktree-env.rb"), <<~RUBY)
+    File.write(File.join(@root, ".maf/coordination", "worktree-env.rb"), <<~RUBY)
       puts "echo not allowed"
       puts "export OK=1"
     RUBY
@@ -935,7 +935,7 @@ class WorktreeTest < Minitest::Test
   end
 
   def test_a_failing_project_hook_does_not_stop_the_worktree
-    File.write(File.join(@root, "coordination", "worktree-env.rb"), "exit 1")
+    File.write(File.join(@root, ".maf/coordination", "worktree-env.rb"), "exit 1")
     _out, err = capture_subprocess_io { Coord::Worktree.new(@root).create("tester", nil) }
 
     assert_includes env_file("tester"), "export COORD_SLOT=1\n"
@@ -951,8 +951,8 @@ end
 
 # Regression: on a first run, `coord` and the flow's .gitignore block are not
 # committed yet. `git worktree add` then brings neither, so the worktree had no
-# ./coord and showed coord-env.sh as untracked. The command must copy coord in
-# and keep coord-env.sh out of the worktree's status.
+# coord and showed .maf/env.sh as untracked. The command must copy coord in
+# and keep .maf/env.sh out of the worktree's status.
 class WorktreeFirstRunTest < Minitest::Test
   def setup
     skip "git not installed" unless system("git", "--version", out: File::NULL)
@@ -962,8 +962,9 @@ class WorktreeFirstRunTest < Minitest::Test
     File.write(File.join(@root, "README.md"), "x\n")
     run_git("add", "README.md")
     run_git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init")
-    File.write(File.join(@root, "coord"), "#!/usr/bin/env ruby\n")
-    @worktree_dir = File.join(@root, ".worktrees", "tester")
+    FileUtils.mkdir_p(File.join(@root, ".maf", "bin"))
+    File.write(File.join(@root, ".maf", "bin", "coord"), "#!/usr/bin/env ruby\n")
+    @worktree_dir = File.join(@root, ".maf/worktrees", "tester")
   end
 
   def teardown
@@ -977,13 +978,13 @@ class WorktreeFirstRunTest < Minitest::Test
   def test_worktree_copies_uncommitted_coord_and_hides_env_file
     Coord::Worktree.new(@root).create("tester", nil)
 
-    assert File.exist?(File.join(@worktree_dir, "coord"))
+    assert File.exist?(File.join(@worktree_dir, ".maf", "bin", "coord"))
     status = `git -C #{@worktree_dir} status --porcelain`
-    refute_includes status, "coord-env.sh"
+    refute_includes status, ".maf/env.sh"
   end
 
-  HOOK_FILES = %w[.claude/settings.json coordination/harness-hooks/board-watch.rb
-                  coordination/harness-hooks/next-task.rb .opencode/plugins/board-watch.js].freeze
+  HOOK_FILES = %w[.claude/settings.json .maf/coordination/harness-hooks/board-watch.rb
+                  .maf/coordination/harness-hooks/next-task.rb .opencode/plugins/board-watch.js].freeze
 
   # Regression: an uncommitted .claude/settings.json never reached the
   # worktree, so Claude agents there ran without the board-watch hook.
@@ -1020,7 +1021,7 @@ class GoalTest < Minitest::Test
 
     @root = File.realpath(Dir.mktmpdir("coord-goal-test"))
     init_repo
-    coord_dir = File.join(@root, "coordination")
+    coord_dir = File.join(@root, ".maf/coordination")
     @env = { "COORD_DIR" => coord_dir, "TASKRC" => File.join(coord_dir, "taskrc"),
              "COORD_ROLE" => "architect", "COORD_WORKER" => "architect-1" }
     isolate_env(@env)
@@ -1034,7 +1035,7 @@ class GoalTest < Minitest::Test
 
   def init_repo
     git(@root, "init", "-q", "-b", "main")
-    File.write(File.join(@root, ".gitignore"), "coordination/\n.worktrees/\n")
+    File.write(File.join(@root, ".gitignore"), ".maf/coordination/\n.maf/worktrees/\n")
     commit(@root, "init")
   end
 
@@ -1057,7 +1058,7 @@ class GoalTest < Minitest::Test
 
   def test_goal_add_creates_a_goal_branch_and_worktree_from_the_base_branch
     uuid = add_goal
-    dir = File.join(@root, ".worktrees", "goal-#{short(uuid)}")
+    dir = File.join(@root, ".maf/worktrees", "goal-#{short(uuid)}")
 
     assert_equal "goal/#{short(uuid)}", `git -C #{dir} branch --show-current`.strip
     assert_includes coord("goal", "list"), "Show prices"
@@ -1070,10 +1071,10 @@ class GoalTest < Minitest::Test
   # An empty base_branch is not a branch. Fall back to the default branch
   # instead of aborting with "base branch  does not exist".
   def test_an_empty_base_branch_falls_back_to_the_default_branch
-    File.write(File.join(@root, ".agent-flow.json"), JSON.generate(base_branch: ""))
+    File.write(File.join(@root, ".maf/config.json"), JSON.generate(base_branch: ""))
     uuid = add_goal
 
-    dir = File.join(@root, ".worktrees", "goal-#{short(uuid)}")
+    dir = File.join(@root, ".maf/worktrees", "goal-#{short(uuid)}")
     assert_equal "goal/#{short(uuid)}", `git -C #{dir} branch --show-current`.strip
   end
 
@@ -1095,7 +1096,7 @@ class GoalTest < Minitest::Test
 
   def test_start_task_branches_from_the_goal_branch
     uuid = add_goal
-    goal_dir = File.join(@root, ".worktrees", "goal-#{short(uuid)}")
+    goal_dir = File.join(@root, ".maf/worktrees", "goal-#{short(uuid)}")
     commit(goal_dir, "goal work")
     task = coord("add", "--role", "tester", "--scope", "test/**", "--goal", uuid, "--title", "t").strip
     worker_dir = worker_worktree
@@ -1116,7 +1117,7 @@ class GoalTest < Minitest::Test
 
   def worker_worktree
     coord("worktree", "tester", "1")
-    File.join(@root, ".worktrees", "tester-1")
+    File.join(@root, ".maf/worktrees", "tester-1")
   end
 
   # A task with own commits and a goal branch that moved on after the start.
@@ -1126,7 +1127,7 @@ class GoalTest < Minitest::Test
     worker_dir = worker_worktree
     coord("start-task", task, dir: worker_dir)
     commit(worker_dir, "task work")
-    commit(File.join(@root, ".worktrees", "goal-#{short(uuid)}"), "sibling task merged")
+    commit(File.join(@root, ".maf/worktrees", "goal-#{short(uuid)}"), "sibling task merged")
     [uuid, task, worker_dir]
   end
 
@@ -1157,7 +1158,7 @@ class GoalTest < Minitest::Test
     task = coord("add", "--role", "tester", "--scope", "test/**", "--goal", uuid, "--title", "t").strip
     worker_dir = worker_worktree
     coord("start-task", task, dir: worker_dir)
-    commit(File.join(@root, ".worktrees", "goal-#{short(uuid)}"), "sibling task merged")
+    commit(File.join(@root, ".maf/worktrees", "goal-#{short(uuid)}"), "sibling task merged")
 
     assert_includes coord("done", task, dir: worker_dir), "done #{task}"
   end
@@ -1223,7 +1224,7 @@ class GoalTest < Minitest::Test
   end
 
   def write_copy_list(list)
-    File.write(File.join(@root, ".agent-flow.json"), JSON.generate(copy_to_worktree: list))
+    File.write(File.join(@root, ".maf/config.json"), JSON.generate(copy_to_worktree: list))
   end
 
   # Untracked host files like .env never reach a new worktree through git.
@@ -1255,14 +1256,14 @@ class GoalTest < Minitest::Test
     _out, err = capture_io { Dir.chdir(@root) { Coord::CLI.new(%w[worktree tester 1], env: @env).run } }
 
     assert_includes err, "copy_to_worktree skips paths outside the project"
-    refute File.exist?(File.join(@root, ".worktrees", "outside-#{File.basename(@root)}"))
+    refute File.exist?(File.join(@root, ".maf/worktrees", "outside-#{File.basename(@root)}"))
   ensure
     FileUtils.rm_f(File.join(File.dirname(@root), "outside-#{File.basename(@root)}"))
   end
 
   def test_worktree_warns_when_a_harness_has_no_file_for_the_role
     manifest = { agents: [{ harness: "claude", role: "architect" }, { harness: "opencode", role: "tester" }] }
-    File.write(File.join(@root, ".agent-flow.json"), JSON.generate(manifest))
+    File.write(File.join(@root, ".maf/config.json"), JSON.generate(manifest))
     _out, err = capture_io { Dir.chdir(@root) { Coord::CLI.new(%w[worktree tester 1], env: @env).run } }
 
     assert_includes err, "maf add claude:tester"
