@@ -11,4 +11,6 @@
 .maf/*.pid
 # env.sh is written by `coord worktree` in each worktree. It holds absolute paths.
 .maf/env.sh
+# Claude Code writes the local settings of each user here.
+.claude/settings.local.json
 # <<< multi-agent-flow <<<

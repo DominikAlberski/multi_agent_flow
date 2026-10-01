@@ -339,6 +339,92 @@ end
     assert_match(/no events yet/, out)
   end
 
+  def run_coord(*argv) = capture_io { Coord::CLI.new(argv, env: @env).run }.first
+
+  def test_show_prints_the_fields_and_the_annotations_of_a_task
+    id = add("show me")
+    tasks.annotate(id, "Goal: x. Acceptance: y.")
+
+    out = run_coord("show", id)
+
+    assert_includes out, "description: show me"
+    assert_includes out, "role: backend-developer"
+    assert_match(/^note .*: Goal: x\. Acceptance: y\.$/, out)
+  end
+
+  def test_show_refuses_an_unknown_task
+    _, err = capture_io do
+      assert_raises(SystemExit) { Coord::CLI.new(["show", "00000000-0000-0000-0000-000000000000"], env: @env).run }
+    end
+
+    assert_includes err, "no task found"
+  end
+
+  def test_add_and_annotate_write_events
+    id = run_coord("add", "--role", "tester", "--title", "log me").strip
+    run_coord("annotate", id, "a note")
+
+    log = run_coord("log")
+
+    assert_match(/\tadd\tbackend-1\t#{id} log me$/, log)
+    assert_match(/\tannotate\tbackend-1\t#{id}$/, log)
+  end
+
+  def test_with_lock_writes_an_event_with_the_result
+    assert_raises(SystemExit) { capture_io { Coord::CLI.new(["with-lock", "suite", "--", "false"], env: @env).run } }
+
+    assert_match(/\twith-lock\tbackend-1\tsuite failed \d+s$/, run_coord("log"))
+  end
+
+  def escalate_env(role) = @env.merge("COORD_ROLE" => role, "COORD_WORKER" => role)
+
+  def write_manifest(*roles)
+    File.write(File.join(@dir, ".maf", "config.json"), JSON.generate("agents" => roles.map { |r| { "role" => r } }))
+  end
+
+  def inbox_files(role) = Dir.glob(File.join(@dir, ".maf/coordination/inbox", role, "*.md"))
+
+  def test_escalate_messages_the_project_manager_and_copies_the_architect
+    write_manifest("project-manager", "architect", "backend-developer")
+    id = add("blocked task")
+
+    capture_io { Coord::CLI.new(["escalate", "--task", id, "no ameba installed"], env: @env).run }
+
+    assert_match(/ESCALATION from backend-1 \(task #{id}\): no ameba installed/, File.read(inbox_files("project-manager").first))
+    assert_equal 1, inbox_files("architect").size
+    assert_match(/\tescalate\tbackend-1\t#{id} no ameba/, run_coord("log"))
+    assert_equal "ESCALATED: no ameba installed", find(id)["annotations"].last["description"]
+  end
+
+  def test_escalate_without_a_project_manager_goes_to_the_architect_only
+    write_manifest("architect", "backend-developer")
+
+    capture_io { Coord::CLI.new(["escalate", "disk full"], env: @env).run }
+
+    assert_equal 1, inbox_files("architect").size
+    assert_empty inbox_files("project-manager")
+  end
+
+  def test_the_project_manager_cannot_escalate_to_itself
+    write_manifest("project-manager")
+    env = escalate_env("project-manager")
+
+    _, err = capture_io { assert_raises(SystemExit) { Coord::CLI.new(["escalate", "x"], env: env).run } }
+
+    assert_includes err, "cannot escalate to itself"
+  end
+
+  def test_a_task_without_a_scope_never_conflicts
+    run_coord("add", "--role", "reviewer", "--title", "review one")
+    run_coord("add", "--role", "reviewer", "--title", "review two")
+
+    assert_includes run_coord("conflicts"), "no scope conflicts"
+  end
+
+  def test_taskrc_hides_the_override_footnote
+    refute_includes File.read(@env["TASKRC"])[/^verbose=.*$/], "override"
+  end
+
   # `coord log N` must reject a non-numeric N instead of silently printing
   # nothing (the old `&.to_i` turned garbage into 0).
   def test_log_rejects_non_numeric_count
@@ -824,6 +910,17 @@ class TaskrcSafetyTest < Minitest::Test
     assert_includes content, "uda.role.type=string"
     assert_equal 1, content.scan(Coord::MARKER).size
   end
+
+  def test_an_older_taskrc_gets_the_verbose_line
+    coord_dir = File.join(@dir, ".maf/coordination")
+    taskrc = File.join(coord_dir, "taskrc")
+    FileUtils.mkdir_p(coord_dir)
+    File.write(taskrc, "# #{Coord::MARKER}\nuda.role.type=string\ndata.location=#{coord_dir}\n# <<< multi-agent-flow <<<\n")
+
+    Coord::Setup.new(Coord::Paths.new(coord_dir), taskrc).ensure_taskrc
+
+    assert_match(/^verbose=/, File.read(taskrc))
+  end
 end
 
 class WorktreeTest < Minitest::Test
@@ -875,6 +972,20 @@ class WorktreeTest < Minitest::Test
     status = `git -C #{@worktree_dir} status --porcelain`
 
     assert_empty status.strip
+  end
+
+  # The HEAD of the main checkout can be a task branch of another role.
+  def test_a_new_worker_branch_starts_on_the_base_branch_not_on_the_main_head
+    run_git("checkout", "-q", "-B", "main")
+    base = `git -C #{@root} rev-parse main`.strip
+    run_git("checkout", "-q", "-b", "task/aaaa1111")
+    File.write(File.join(@root, "foreign.txt"), "x")
+    run_git("add", "foreign.txt")
+    run_git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "foreign")
+
+    Coord::Worktree.new(@root).create("pr-organizer", nil)
+
+    assert_equal base, `git -C #{File.join(worktrees_root, "pr-organizer")} rev-parse HEAD`.strip
   end
 
   # Calling `coord worktree` again for the same role/worker (e.g. a second

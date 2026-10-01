@@ -1,6 +1,6 @@
 # ADR 0003: The project manager writes terms, the architect commits them
 
-Status: accepted. Date: 2026-10-01.
+Status: accepted. The architect commit rule is superseded by [ADR 0004](0004-workers-commit-architect-artifacts.md). Date: 2026-10-01.
 
 ## Context
 

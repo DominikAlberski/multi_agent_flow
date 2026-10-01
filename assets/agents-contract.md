@@ -13,6 +13,7 @@ coord goal add --title T                    # create a goal, branch goal/<short-
 coord goal list                             # open goals with their open task count
 coord goal show ID                          # one goal and its tasks
 coord goal done ID                          # close a goal (refused while a task is open)
+coord show ID                               # one task: its fields and annotations (the task spec)
 coord add --role ROLE --scope S --title T [--goal ID]  # architect: add a task (prints id)
 coord annotate ID "Goal: ... Inputs: ... Out of scope: ... Acceptance: ... Report format: ..."  # architect: add the task's spec, right after `add`
 coord next [ROLE] [--wait [--interval S]]   # list unclaimed tasks (or block until a task or message appears)
@@ -24,6 +25,7 @@ coord unclaim ID                            # release a claim without finishing 
 coord done ID [--force]                     # complete (refused while the task branch lacks the goal head,
                                               # or while the verify command fails)
 coord annotate ID TEXT                      # task-scoped update
+coord escalate [--task ID] TEXT             # a problem you cannot fix: the project manager asks the user
 coord status                                # per-role summary
 coord who                                   # each worker with its presence: live or gone
 coord board                                 # regenerate Obsidian kanban
@@ -113,8 +115,8 @@ coord unlock ollama
 
 1. Work in your own git worktree or branch (`coord worktree ROLE` creates one).
    Run `source .maf/env.sh` once. It puts `coord` on `PATH`. In a worktree, it
-   also points `COORD_DIR`/`TASKRC` at the main project, so every worktree
-   shares one board.
+   also points `COORD_DIR`/`TASKRC` at the `.maf/coordination` folder of the main
+   project, so every worktree shares one board.
    Never edit outside your task scope.
    After a claim, run `coord start-task ID`. The command checks out branch
    `task/<short-id>` from the goal branch. Commit the work on that branch.
@@ -128,7 +130,7 @@ coord unlock ollama
 4. If the task has a goal, merge the goal branch into the task branch
    (`git merge goal/<goal-short-id>`). `coord done` refuses a task branch
    that lacks the goal branch head. Before you report, run the task tests (see "Tests and shared resources").
-   Check the task's acceptance criteria.
+   Check the task's acceptance criteria. Read the task spec with `coord show ID`. Never use raw `task`.
    If the task spec has a Report format, use it. Otherwise report with
    `coord annotate ID "STATUS: done or blocked. FILES: <paths>.
    TESTS: <one-line result>. NOTES: <assumptions or risks>"`. Ask other
@@ -138,6 +140,9 @@ coord unlock ollama
    Annotate the blocker and the missing parts. Message the architect. Stop. Do not retry a failing approach. Do not
    `unclaim` a blocked task — that returns it to the pool for another worker
    to hit the same wall.
+   If the blocker is outside the task and you cannot fix it (a missing tool, no access, a refused
+   guard, rules that contradict), run `coord escalate --task ID TEXT`. The project manager asks the
+   user, then sends you the answer. Wait for the answer.
 6. The architect inspects a done task's diff in the worker's worktree
    (`git -C .maf/worktrees/<role>-<worker> diff`) and the TESTS line of the
    report before trusting it. The architect does not rerun the task tests.
@@ -179,10 +184,10 @@ coord unlock ollama
 
 - A shared working file is an artifact. Write it to
   `$COORD_DIR/artifacts/<goal>/<name>.md`. Run `mkdir -p` for the folder first.
-  `COORD_DIR` points at the main project, so each worktree sees this path.
+  `COORD_DIR` points at the `.maf/coordination` folder of the main project, so each worktree sees this path.
 - Never write an artifact inside a worktree. Worktrees do not share files.
 - A durable artifact (an approved spec, an ADR) is committed on the goal branch.
-  Only the architect commits it.
+  The architect cannot commit. The architect creates a task for a worker that can edit files. That worker commits it.
 
 ### Domain documentation
 
@@ -193,7 +198,8 @@ coord unlock ollama
 - The project manager writes each resolved term to
   `$COORD_DIR/artifacts/<goal>/glossary-draft.md`. The project manager never commits.
 - The architect owns the committed `GLOSSARY.md`. After the reviewer agrees, the architect
-  promotes the terms and commits them on the goal branch. Other roles read the glossary.
+  creates a task for a worker that can edit files. That worker commits the agreed terms on the goal branch.
+  Other roles read the glossary.
 - `GLOSSARY.md` is one file for all goals. Two goals that add terms conflict at merge time.
   The architect serializes the goals that add terms, or promotes an agreed term to the base branch at once.
 - ADRs go in the decisions folder (see "Shared memory"). Offer an ADR only if all three hold:

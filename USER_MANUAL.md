@@ -499,7 +499,7 @@ Talk to the project manager session (terminal 1). Example:
 Workers hand work to each other with artifacts. An artifact is a shared working file:
 
 - Write it to `$COORD_DIR/artifacts/<goal>/<name>.md`, in the main project.
-  Each worktree sees this path, because `COORD_DIR` points at the main project.
+  Each worktree sees this path, because `COORD_DIR` points at the `.maf/coordination` folder of the main project.
 - Never write an artifact inside a worktree. Worktrees do not share files.
 - The architect commits a durable artifact (an approved spec, an ADR) on the goal branch.
 
@@ -524,6 +524,7 @@ Check the goals at any time:
 ```sh
 coord goal list
 coord goal show <id>
+coord show <task-id>   # one task: its fields and its annotations
 ```
 
 Set the base branch in `.maf/config.json` if it is not `main` or `origin/HEAD`:
@@ -575,7 +576,8 @@ How it works:
    because `can_edit` is `false` for the project manager.
 3. The architect and the reviewer check the draft. The reviewer checks one meaning per term,
    no implementation detail, no duplicate term, and no contradiction with an existing entry.
-4. The architect commits the agreed terms to `GLOSSARY.md` on the goal branch.
+4. The architect creates a task. A worker that can edit files commits the agreed terms to `GLOSSARY.md` on the goal branch.
+   The architect cannot commit, because `can_edit` is `false` for the architect.
 
 `GLOSSARY.md` is one file for all goals. Two goals that add terms conflict at merge time.
 The architect starts these goals one after the other, or promotes an agreed term to the base branch at once.

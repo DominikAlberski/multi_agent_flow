@@ -43,6 +43,7 @@ module Flow
     2. List unclaimed tasks for your role: `coord next`.
     3. Claim one: `coord claim <id>`.
     4. Check out the task branch: `coord start-task <id>`. It starts from the goal branch.
+       Read the task spec: `coord show <id>`. Never use raw `task`.
     5. Do the work. Stay inside the task scope.
     6. Before any local model generation: `coord with-lock ollama -- <command>`.
     7. If the task has a goal, merge the goal branch into the task branch: `git merge goal/<goal-short-id>`.
@@ -51,12 +52,15 @@ module Flow
     8. Commit the work on the task branch. The architect merges the task branch.
     9. Report. If the task spec has a Report format, use it. Otherwise use:
          coord annotate <id> "STATUS: done or blocked. FILES: <paths>. TESTS: <one-line result>. NOTES: <assumptions or risks>"
-    10. Finish: `coord done <id>`.
+    10. Finish: `coord done <id>`. The command sends a message to the architect.
 
     Rules:
     - You are one worker in a role pool. COORD_WORKER identifies you.
     - One writer per path. Never edit outside the task scope.
     - Do not create tasks. Ask the architect: `coord msg --from %{role} architect "<text>"`.
+    - If a problem is outside your task and you cannot fix it, escalate: `coord escalate --task <id> "<text>"`.
+      Examples: a missing tool, no access, a refused guard, rules that contradict.
+      The project manager asks the user and answers you. Then stop. Do not retry.
     - Finish the whole task. Report done only when each acceptance criterion passes.
     - If you cannot finish, do the parts you can. Keep the claim. Annotate the
       blocker and the missing parts. Message the architect. Stop. Do not retry
@@ -95,7 +99,8 @@ module Flow
     - Start each goal from the base branch. Never start a goal from another goal branch.
     - Take the `ollama` lock only if you run a local model yourself.
     - Hand work between stages with artifacts: `$COORD_DIR/artifacts/<goal>/<name>.md`. Never use a path inside a worktree.
-    - Commit a durable artifact (an approved spec, an ADR) on the goal branch yourself.
+    - Do not commit. For a durable artifact (an approved spec, an ADR), create a task for a worker that can edit files.
+      That worker commits the artifact on the goal branch.
     - Create tasks in stage order. Do not create the task of the next stage until the gate of the current stage passes.
       A task that does not exist cannot be claimed.
   TEXT

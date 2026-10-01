@@ -72,8 +72,8 @@ their tool reads them:
 | Path | Reason |
 |---|---|
 | `AGENTS.md` | Every harness reads the contract there. |
-| `GLOSSARY.md` | The domain glossary. The project manager drafts it. The architect commits it. |
-| `docs/decisions/` | ADRs. The architect writes them. |
+| `GLOSSARY.md` | The domain glossary. The project manager drafts it. A worker commits it on the architect's task. |
+| `docs/decisions/` | ADRs. The architect decides them. A worker commits them. |
 | `.gitignore` | Git reads it there. |
 | `.git/hooks/*` | Git reads them there. |
 | `.claude/settings.json` | Claude Code reads it there. |

@@ -34,6 +34,8 @@ module Coord
     uda.scope.type=string
     uda.taskref.type=string
     uda.goalid.type=string
+    # Hide the "TASKRC override" footnote. coord always sets TASKRC.
+    verbose=blank,header,footnote,label,new-id,affected,edit,special,project,sync,filter,recur
     # <<< multi-agent-flow <<<
   BLOCK
 
@@ -55,6 +57,7 @@ module Coord
       coord goal list                      list open goals
       coord goal show ID                   show a goal and its tasks
       coord goal done ID                   close a goal (refused while a task is open)
+      coord show ID                        show one task: its fields and its annotations
       coord start-task ID                  check out branch task/<id> from its goal branch
       coord next [ROLE] [--mine] [--wait [--interval S] [--timeout S]]
       coord conflicts                      list pending tasks with overlapping scopes
@@ -64,6 +67,7 @@ module Coord
                                            or while the verify command fails)
       coord annotate ID TEXT...
       coord msg [--from A] TO TEXT...
+      coord escalate [--task ID] TEXT...   report a problem you cannot fix to the project manager (copy to the architect)
       coord broadcast [--from A] [--to workers|leads|all] TEXT...
                                            send to a group of roles (default: workers)
       coord inbox [ROLE] [--peek] [--all] [--wait [--interval S] [--timeout S]]
@@ -89,6 +93,7 @@ module Coord
     "log" => :cmd_log, "hooks" => :cmd_hooks,
     "lock" => :cmd_lock, "unlock" => :cmd_unlock, "with-lock" => :cmd_with_lock,
     "worktree" => :cmd_worktree, "goal" => :cmd_goal, "start-task" => :cmd_start_task,
+    "show" => :cmd_show, "escalate" => :cmd_escalate,
     "status" => :cmd_status, "board" => :cmd_board, "export" => :cmd_export,
     "who" => :cmd_who, "help" => :cmd_help
   }.freeze
@@ -200,11 +205,11 @@ module Coord
       end
     end
 
-    # A taskrc from an older coord lacks UDAs added later. Taskwarrior reads an
-    # unknown NAME:VALUE as description text, so add each missing UDA.
+    # A taskrc from an older coord lacks UDAs and settings added later. Taskwarrior reads an
+    # unknown NAME:VALUE as description text, so add each missing line.
     def add_missing_udas
       text = File.read(@taskrc)
-      missing = TASKRC_BLOCK.lines.grep(/\Auda\./).reject { |line| text.include?(line) }
+      missing = TASKRC_BLOCK.lines.grep(/\A(uda\.|verbose=)/).reject { |line| text.include?(line) }
       File.write(@taskrc, text.sub(/^# <<< multi-agent-flow <<<$/) { missing.join + $& }) unless missing.empty?
     end
 
@@ -430,6 +435,20 @@ module Coord
     end
   end
 
+  # TaskView formats one task with its annotations. An agent reads the task
+  # spec through `coord show`, never through raw `task`.
+  module TaskView
+    FIELDS = %w[uuid description role scope goalid worker status start].freeze
+
+    def self.lines(task)
+      FIELDS.filter_map { |field| "#{field}: #{task[field]}" if task[field] } + notes(task)
+    end
+
+    def self.notes(task)
+      (task["annotations"] || []).map { |note| "note #{note["entry"]}: #{note["description"]}" }
+    end
+  end
+
   # Tasks exposes the task operations the flow needs.
   class Tasks
     # The previous owner of a task, split so a steal notice can go to the
@@ -564,8 +583,7 @@ module Coord
     end
 
     def run_locked(name, command)
-      ok = system(*command)
-      exit(ok ? 0 : 1)
+      system(*command)
     ensure
       release(name)
     end
@@ -1303,7 +1321,14 @@ end
     # part of the work.
     def create(role, worker)
       slug = self.class.slug(role, worker)
-      checkout(slug, "worker/#{slug}")
+      checkout(slug, "worker/#{slug}", base_branch)
+    end
+
+    # A new worker branch starts on the base branch, not on the HEAD of the
+    # main checkout. That HEAD can be a task branch of another role.
+    def base_branch
+      name = Git.base_branch(@root, Manifest.new(File.join(@root, ".maf/config.json")))
+      name if Git.branch?(@root, name)
     end
 
     # BASE is the start point of a new branch. Without BASE, git uses HEAD.
@@ -1490,6 +1515,7 @@ end
       abort "usage: coord add --role R --scope S --title T" if opts[:title].to_s.empty?
       opts[:goal] &&= goal_uuid(opts[:goal])
       id = tasks.add(**opts)
+      event_log.append("add", @worker, "#{id} #{opts[:title]}")
       conflicts.warn_with(opts[:scope], exclude: id)
       report_unstaffed(opts[:role], id)
       puts id
@@ -1572,6 +1598,7 @@ end
     def cmd_annotate
       id = @args.require_arg("annotate", "ID")
       tasks.annotate(id, @args.require_text("annotate"))
+      event_log.append("annotate", @worker, id)
       puts "annotated #{id}"
     end
 
@@ -1581,6 +1608,37 @@ end
       text = @args.require_text("msg")
       deliver(to, from, text)
       event_log.append("msg", @worker, "to #{to}: #{text}")
+    end
+
+    ESCALATE_PM = "project-manager"
+
+    # A worker cannot fix a problem outside its task, such as a missing tool
+    # or a refused guard. The project manager asks the user. The architect
+    # gets a copy, because the task waits.
+    def cmd_escalate
+      task = @args.value_of("--task")
+      text = @args.require_text("escalate")
+      abort "coord: the project manager cannot escalate to itself. Ask the user." if @role == ESCALATE_PM
+      tasks.annotate(find_task!(task)["uuid"], "ESCALATED: #{text}") if task
+      send_escalation(task, text)
+      event_log.append("escalate", @worker, "#{task} #{text}".strip)
+    end
+
+    def send_escalation(task, text)
+      targets = escalation_targets
+      abort "coord: no project manager and no other lead to receive the escalation. Ask the user." if targets.empty?
+      targets.each { |to| deliver(to, @role, escalation_text(task, text)) }
+    end
+
+    def escalation_text(task, text)
+      where = task ? " (task #{task})" : ""
+      "ESCALATION from #{@worker}#{where}: #{text}"
+    end
+
+    # Without a project manager in the project, the architect is the only receiver.
+    def escalation_targets
+      pm = manifest.agents.any? { |agent| agent["role"] == ESCALATE_PM }
+      [(ESCALATE_PM if pm), ("architect" unless @role == "architect")].compact
     end
 
     def cmd_inbox
@@ -1612,7 +1670,10 @@ end
       command = @args.take_command
       abort "usage: coord with-lock NAME [--ttl SECONDS] -- CMD..." if command.nil? || command.empty?
 
-      locks.with_lock(name, ttl: @args.ttl, command: command, worker: @worker)
+      started = Time.now
+      ok = locks.with_lock(name, ttl: @args.ttl, command: command, worker: @worker)
+      event_log.append("with-lock", @worker, "#{name} #{ok ? "ok" : "failed"} #{(Time.now - started).round}s")
+      exit(ok ? 0 : 1)
     end
 
     # Broadcast sends a message to every known role except the sender (see
@@ -1665,12 +1726,22 @@ end
       send(GOAL_COMMANDS[sub])
     end
 
-    def cmd_start_task
-      task = tasks.find(@args.require_arg("start-task", "ID"))
-      raise Error, "no task found" if task["uuid"].nil?
+    def cmd_show
+      puts TaskView.lines(find_task!(@args.require_arg("show", "ID")))
+    end
 
+    def cmd_start_task
+      task = find_task!(@args.require_arg("start-task", "ID"))
       base = task["goalid"] ? Goals.branch(task["goalid"]) : Git.base_branch(@project_root, manifest)
       TaskBranch.new(@project_root).start(task["uuid"], base)
+      event_log.append("start-task", @worker, task["uuid"])
+    end
+
+    def find_task!(id)
+      task = tasks.find(id)
+      raise Error, "no task found" if task["uuid"].nil?
+
+      task
     end
 
     def cmd_status = board.status
@@ -1736,7 +1807,7 @@ end
       id = @args.require_arg("goal done", "ID")
       goal = goals.done(id)
       event_log.append("goal-done", @worker, goal["description"])
-      puts "goal #{id} done. Open the pull request from #{Goals.branch(goal["uuid"])}."
+      puts "goal #{id} done. The goal branch is #{Goals.branch(goal["uuid"])}."
     end
 
     def goal_add

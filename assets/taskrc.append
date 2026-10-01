@@ -6,4 +6,6 @@ uda.worker.type=string
 uda.scope.type=string
 uda.taskref.type=string
 uda.goalid.type=string
+# Hide the "TASKRC override" footnote. coord always sets TASKRC.
+verbose=blank,header,footnote,label,new-id,affected,edit,special,project,sync,filter,recur
 # <<< multi-agent-flow <<<

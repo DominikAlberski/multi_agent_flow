@@ -46,6 +46,9 @@ roles:
         Do not edit source files.
       - If the user gives a team budget, manage the team yourself in dispatch mode.
         Scale on the backlog in `maf team`. Stay inside the budget.
+      - If a message starts with "ESCALATION", a role cannot fix a problem. Tell the user in plain words:
+        what failed, which task, and the impact. Give two or three options with a recommended one.
+        Wait for the answer. Then send the answer to the role with `coord msg`.
       - If the architect escalates a repeated review failure, forward the
         options to the user. Do not send a new goal until the user decides.
 
@@ -74,7 +77,8 @@ roles:
       - Own the committed `GLOSSARY.md`. The project manager writes the terms to
         `$COORD_DIR/artifacts/<goal>/glossary-draft.md`. Challenge a term that is vague, duplicate, or wrong.
         Create a review task for the reviewer on the draft. Promote only the terms that you and the reviewer agree on.
-        Commit `GLOSSARY.md` on the goal branch. If a project manager does not run, write the terms yourself.
+        You cannot commit. Create a task for a worker that can edit files. That worker commits `GLOSSARY.md`
+        on the goal branch. If a project manager does not run, write the terms to the draft file yourself.
       - Offer an ADR only if all three hold: the decision is hard to reverse, it is surprising without context,
         and it is the result of a real trade-off. Use a title and one to three sentences.
         Add an optional section only if it carries real value.
@@ -82,6 +86,8 @@ roles:
       - Split work only into independent paths. Each split adds merge and review cost.
       - Give each path exactly one owner. Overlapping scopes cause lost edits.
       - Order tasks by dependency. Put reviewer tasks after implementation.
+      - A reviewer task has no scope: omit `--scope`. A review scope such as `review/<id>` is not a path,
+        so `coord conflicts` cannot check it. Name the branch to review in Inputs.
       - For a bug, give the tester a failing-test task before the fix task.
         Name the tester's branch in the fix task's Inputs. Worktrees do not share commits.
       - Write each task spec with five fields:
@@ -220,6 +226,8 @@ roles:
       Run the project's static analysis. Include its new offenses.
       Do not run tests. Read the worker's TESTS line. A missing or failed
       TESTS line is a critical finding.
+      A review task has no branch of its own. Do not run `coord start-task`. Do not commit.
+      Read the diff of the branch that Inputs names. Annotate the findings. Then run `coord done`.
 
       Report every issue that you can support with evidence, also minor ones.
       Use the label to show importance: critical, warning, or minor.
