@@ -3,11 +3,12 @@
 
 # vault - shared knowledge base watcher (graphify + Obsidian + MCP).
 #
-# Usage: vault [start|export|stop|status|mcp]
+# Usage: vault [start|export|stop|status|age|mcp]
 #   vault           # start the watcher (default); no-op if already running
 #   vault export    # regenerate the Obsidian vault once, then exit
 #   vault stop
 #   vault status
+#   vault age [--json]  # commits since the graph was built, and whether the graph is stale
 #   vault mcp       # exec the stdio MCP server (for an MCP client config)
 #
 # graphify 0.9 removed the --obsidian/--obsidian-dir/--watch/--mcp flags. The
@@ -25,6 +26,7 @@
 # after installing graphify if it was not on PATH at bootstrap time.
 
 require "fileutils"
+require "json"
 require "rbconfig"
 
 abort "vault: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
@@ -54,7 +56,55 @@ module Vault
                "mcp" => :mcp, "daemon" => :loop_forever }.freeze
 
   def self.run(argv)
+    return age(argv) if argv.first == "age"
+
     Daemon.public_send(COMMANDS.fetch(argv.first, :start))
+  end
+
+  # The graph lives in the main checkout. An agent in a worktree gets its age.
+  def self.age(argv)
+    Dir.chdir(Daemon.main_root)
+    GraphAge.print(json: argv.include?("--json"))
+  end
+
+  # GraphAge counts the commits since the graph was built. The graph is stale
+  # when one of these commits changed a source or markdown file. The build
+  # time is the mtime of graph.json. It never fails: an unreadable state is
+  # reported as "unknown".
+  module GraphAge
+    SOURCE = /\.(md|rb|erb|py|js|jsx|ts|tsx|go|rs|java|kt|swift|c|h|cc|cpp|cs|php|sh|ex|exs|lua|scala)\z/
+
+    def self.state
+      return { state: "missing", commits: nil } unless File.exist?(GRAPH)
+
+      since = "--since=#{File.mtime(GRAPH).to_i}"
+      commits = git("rev-list", "--count", since, "HEAD")&.to_i
+      return { state: "unknown", commits: nil } unless commits
+
+      { state: stale?(since) ? "stale" : "fresh", commits: commits }
+    end
+
+    def self.stale?(since)
+      git("log", since, "--name-only", "--format=").to_s.lines.any? { |line| line.strip.match?(SOURCE) }
+    end
+
+    def self.git(*args)
+      output = IO.popen(["git", *args], err: File::NULL, &:read)
+      $?.success? ? output : nil
+    rescue SystemCallError
+      nil
+    end
+
+    def self.text(data)
+      return "graph age: #{data[:state]}" unless data[:commits]
+
+      "graph age: #{data[:commits]} #{data[:commits] == 1 ? "commit" : "commits"} since build (#{data[:state]})"
+    end
+
+    def self.print(json: false)
+      data = state
+      puts json ? JSON.generate(data) : text(data)
+    end
   end
 
   module Daemon
@@ -74,11 +124,21 @@ module Vault
 
     # MCP is a stdio server the client spawns, not a background daemon. Point
     # an MCP client at this command instead of a long-running process.
+    # An agent in a worktree starts this command too. The graph lives in the
+    # main checkout, so the command moves there first.
     def self.mcp
       abort "vault: graphify-mcp not found on PATH. Install: pip/uv install graphifyy" unless which("graphify-mcp")
+      Dir.chdir(main_root)
       abort "vault: #{GRAPH} missing. Run `vault` to build it first." unless File.exist?(GRAPH)
 
-      Kernel.exec("graphify-mcp", GRAPH)
+      Kernel.exec("graphify-mcp", File.expand_path(GRAPH))
+    end
+
+    def self.main_root
+      common = IO.popen(%w[git rev-parse --git-common-dir], err: File::NULL, &:read).to_s.strip
+      common.empty? ? Dir.pwd : File.dirname(File.expand_path(common))
+    rescue SystemCallError
+      Dir.pwd
     end
 
     def self.build_initial_graph
@@ -131,6 +191,7 @@ module Vault
       puts Pid.running? ? "vault: running (pid #{Pid.read})" : "vault: not running"
       puts File.exist?(GRAPH) ? "graph: #{GRAPH}" : "graph: #{GRAPH} missing"
       puts File.directory?(DIR) ? "obsidian: #{DIR}/" : "obsidian: #{DIR}/ missing"
+      puts GraphAge.text(GraphAge.state)
     end
 
     def self.which(bin)

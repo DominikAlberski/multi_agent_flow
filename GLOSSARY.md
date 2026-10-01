@@ -44,6 +44,7 @@ If a text needs a new term, add the term here first.
 | workflow | The stage instructions of a project, in words. The architect reads them and creates the tasks stage by stage. The other roles do not see them. | `.maf/workflow.md`, `Flow::Workflow` |
 | orchestrator | The role that runs the workflow. It is the architect. | `architect` |
 | artifact | A working file that one worker writes and another worker reads. It lives in the main project, so each worktree sees it. | `.maf/coordination/artifacts/<goal>/<name>.md` |
+| graph age | The number of commits since the shared knowledge graph was built. The graph is stale when a commit after the build changed a source or markdown file. | `vault age`, `vault status`, `coord status` |
 | out-of-scope log | The list of requests that the project rejects on purpose, each with its reason. | `docs/out-of-scope.md` |
 
 ## Rules

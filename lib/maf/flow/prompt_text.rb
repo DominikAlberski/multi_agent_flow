@@ -84,7 +84,8 @@ module Flow
     7. Merge each accepted task branch into the goal worktree:
        `git -C .maf/worktrees/goal-<goal-short-id> merge task/<task-short-id>`.
        If the merge conflicts, run `git merge --abort` and open a fix task.
-    8. When every task of the goal is merged, run the merge suite one time in the goal worktree:
+    8. When every task of the goal is merged, check the graph with `vault age`. Put its state in your report.
+       Then run the merge suite one time in the goal worktree:
        `coord with-lock system-test -- <merge suite command>`. Source its `.maf/env.sh` first.
     9. Close the goal: `coord goal done <goal-id>`. The pull request starts from branch goal/<goal-short-id>.
   TEXT

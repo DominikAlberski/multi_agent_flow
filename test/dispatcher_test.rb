@@ -993,3 +993,90 @@ class ReportBlockTest < Minitest::Test
     refute_nil parse(Dispatcher::ReportBlock::REPORT_FORMAT).error
   end
 end
+
+# GraphQuery needs a git project with a graph and a graphify on PATH. The
+# tests use a fake graphify script, so the real tool is not needed.
+class GraphQueryTest < Minitest::Test
+  Board = Struct.new(:text) { def next_output = text }
+  UUID = "0b7e5c1a-2f4d-4e8a-9c3b-6d1f0a2b3c4d"
+
+  def setup
+    skip "git not installed" unless system("git", "--version", out: File::NULL)
+    @dir = File.realpath(Dir.mktmpdir("dispatcher-graph-test"))
+    system("git", "-C", @dir, "init", "-q", exception: true)
+    @bin = File.join(@dir, "fakebin")
+    FileUtils.mkdir_p(@bin)
+    @path = ENV["PATH"]
+  end
+
+  def teardown
+    ENV["PATH"] = @path
+    FileUtils.remove_entry(@dir)
+  end
+
+  def graph = File.join(@dir, ".maf", "graphify-out", "graph.json")
+
+  def build_graph = FileUtils.mkdir_p(File.dirname(graph)) && File.write(graph, "{}")
+
+  def fake_graphify(body)
+    File.write(File.join(@bin, "graphify"), "#!/bin/sh\n#{body}\n")
+    FileUtils.chmod(0o755, File.join(@bin, "graphify"))
+    ENV["PATH"] = "#{@bin}:#{@path}"
+  end
+
+  def commands(role = "tester", text = "#{UUID}\tfix login\tapp/auth\n")
+    Dir.chdir(@dir) { Dispatcher::Prefetch.commands(Board.new(text), role) }
+  end
+
+  def test_the_query_holds_the_title_and_the_scope
+    build_graph
+    fake_graphify('echo "args: $@"')
+
+    out = Dir.chdir(@dir) { commands.fetch(Dispatcher::GraphQuery::LABEL).call }
+
+    assert_includes out, "query fix login app/auth --graph #{graph}"
+  end
+
+  def test_no_query_without_the_graph
+    fake_graphify("echo x")
+
+    refute commands.key?(Dispatcher::GraphQuery::LABEL)
+  end
+
+  def test_no_query_without_graphify_on_path
+    build_graph
+    ENV["PATH"] = @bin
+
+    refute commands.key?(Dispatcher::GraphQuery::LABEL)
+  end
+
+  def test_a_lead_role_gets_no_query
+    build_graph
+    fake_graphify("echo x")
+
+    refute commands("architect").key?(Dispatcher::GraphQuery::LABEL)
+  end
+
+  def test_no_query_without_a_task
+    build_graph
+    fake_graphify("echo x")
+
+    refute commands("tester", "no unclaimed tasks for tester\n").key?(Dispatcher::GraphQuery::LABEL)
+  end
+
+  def test_a_failed_query_is_left_out
+    build_graph
+    fake_graphify("exit 1")
+
+    assert_nil Dir.chdir(@dir) { commands.fetch(Dispatcher::GraphQuery::LABEL).call }
+  end
+
+  def test_the_graph_text_is_bounded
+    build_graph
+    fake_graphify("ruby -e 'print %q(y) * 5000'")
+
+    text = Dir.chdir(@dir) { Dispatcher::Prefetch.section(Dispatcher::GraphQuery::LABEL, commands.fetch(Dispatcher::GraphQuery::LABEL)) }
+
+    assert_includes text, "[cut at #{Dispatcher::Prefetch::LIMIT} characters]"
+  end
+end

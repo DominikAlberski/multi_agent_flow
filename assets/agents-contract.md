@@ -140,8 +140,10 @@ coord unlock ollama
    (`git -C .maf/worktrees/<role>-<worker> diff`) and the TESTS line of the
    report before trusting it. The architect does not rerun the task tests.
    A bad result gets a new fix task, not a silent re-close.
-7. Prefer the shared knowledge graph over grep when `.maf/graphify-out/` exists
-   (query it via MCP or `graphify query "..." --graph .maf/graphify-out/graph.json`).
+7. Query the shared knowledge graph before you plan and before you implement.
+   Run `vault age` first. Query it via MCP, or with
+   `graphify query "..." --graph "$COORD_DIR/../graphify-out/graph.json"`.
+   If the graph is missing or stale, say so in your report.
 8. Worker roles: if no task is available, use `coord next --wait` instead of
    a manual poll loop. Lead roles (project manager, architect) never claim a
    task. A lead role waits with `coord inbox --wait`. `coord claim` and

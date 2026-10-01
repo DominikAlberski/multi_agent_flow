@@ -29,6 +29,7 @@ module Uninstall
       manifest = Manifest.new(project)
       [VaultWatcher.new(project), Worktrees.new(project, @opts[:force]), Scripts.new(project), CommitGuard.new(project),
        DocGraphHooks.new(project), RoleFiles.new(project, manifest), ClaudeSettings.new(project),
+       McpEntries.new(project),
        MarkedFiles.new(project), Coordination.new(project), manifest].flat_map(&:steps)
     end
 

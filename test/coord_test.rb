@@ -453,6 +453,31 @@ end
     assert_includes out, "tokens tester-bot: input=120 output=30 runs=2"
   end
 
+def write_vault(body)
+  FileUtils.mkdir_p(File.join(@dir, ".maf", "bin"))
+  File.write(File.join(@dir, ".maf", "bin", "vault"), body)
+end
+
+def test_status_shows_the_graph_age
+  write_vault("puts '{\"state\":\"stale\",\"commits\":3}'\n")
+  out, = capture_io { Coord::CLI.new(["status"], env: @env).run }
+
+  assert_includes out, "graph age: 3 commits (stale)"
+end
+
+def test_status_shows_no_graph_line_without_the_vault_script
+  out, = capture_io { Coord::CLI.new(["status"], env: @env).run }
+
+  refute_includes out, "graph age"
+end
+
+def test_status_survives_a_broken_vault_script
+  write_vault("exit 1\n")
+  out, = capture_io { Coord::CLI.new(["status"], env: @env).run }
+
+  refute_includes out, "graph age"
+end
+
   # The verify command is a mechanical gate: a failing check refuses done.
   def test_done_is_refused_while_the_verify_command_fails
     write_verify("echo 2 failures; exit 1")

@@ -16,6 +16,7 @@ require "json"
 require "fileutils"
 require "time"
 require "optparse"
+require "rbconfig"
 begin
   require "webrick"
 rescue LoadError
@@ -51,6 +52,8 @@ module Dashboard
     def manifest     = File.join(File.dirname(coord_dir), "config.json")
     def workers_path = File.join(coord_dir, "workers.json")
     def usage_dir    = File.join(coord_dir, "usage")
+    def vault_path   = File.join(File.dirname(File.expand_path(coord_dir)), "bin", "vault")
+    def root         = File.dirname(File.dirname(File.expand_path(coord_dir)))
     def lease_ttl
       v = Integer(ENV.fetch("COORD_LEASE_TTL", ""), exception: false)
       v&.positive? ? v : DEFAULT_LEASE
@@ -96,6 +99,20 @@ module Dashboard
     end
   end
 
+# GraphReader asks `vault age --json` for the graph age. An absent vault
+# script or a failure gives nil.
+class GraphReader
+  def initialize(cfg)
+    @cfg = cfg
+  end
+
+  def read
+    JSON.parse(IO.popen([RbConfig.ruby, @cfg.vault_path, "age", "--json"], chdir: @cfg.root, err: File::NULL, &:read))
+  rescue SystemCallError, JSON::ParserError
+    nil
+  end
+end
+
   class Collector
     def initialize(cfg)
       @cfg = cfg
@@ -111,6 +128,7 @@ module Dashboard
         declared_roles:   declared_roles,
         workers:          workers,
         tokens:           TokenReader.new(@cfg.usage_dir).read,
+        graph:            GraphReader.new(@cfg).read,
         tasks:            task_summary(tasks),
         events:           recent_events,
         inboxes:          inbox_messages,
@@ -285,6 +303,7 @@ module Dashboard
       <div id="stats" class="stats"></div>
       <div class="card" style="margin-bottom:10px"><h3>Workers</h3><div id="workers"></div></div>
       <div class="card" style="margin-bottom:10px"><h3>Tokens</h3><div id="tokens"></div></div>
+      <div class="card" style="margin-bottom:10px"><h3>Knowledge graph</h3><div id="graph"></div></div>
       <div id="roles" class="grid"></div>
       <div class="two">
         <div class="card"><h3>Recent Events</h3><div id="events"></div></div>
@@ -332,6 +351,9 @@ module Dashboard
 
           const tks=Object.entries(d.tokens||{});
           document.getElementById('tokens').innerHTML=tks.length?tks.map(([w,u])=>`<div class="row"><strong>${esc(w)}</strong> <span class="meta">input ${u.input_tokens||0} &middot; output ${u.output_tokens||0} &middot; ${u.runs||0} runs</span></div>`).join(''):'<div class="muted">no token usage yet</div>';
+
+          const g=d.graph;
+          document.getElementById('graph').innerHTML=g?`<div class="row">${b(g.state,g.state==='fresh'?'ok':'warn')} <span class="meta">${g.commits==null?'no age':g.commits+' commits since build'}</span></div>`:'<div class="muted">graph age unknown</div>';
 
           const roles=d.declared_roles||[];
           const byRole={};

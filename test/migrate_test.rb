@@ -88,7 +88,7 @@ class MigrateMovesTest < MigrateTestCase
     out, status = migrate("--yes")
 
     assert_equal 0, status, out
-    assert_equal %w[.claude .git .gitignore .maf AGENTS.md], Dir.children(@dir).sort
+    assert_equal %w[.claude .git .gitignore .maf .mcp.json AGENTS.md], Dir.children(@dir).sort
   end
 
   def test_rewrites_the_paths_inside_the_files

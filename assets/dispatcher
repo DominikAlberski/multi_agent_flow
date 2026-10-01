@@ -286,10 +286,48 @@ module Dispatcher
     end
   end
 
+  # GraphQuery asks the shared knowledge graph about the first unclaimed task.
+  # The query is the task title and scope. It is skipped, without a log line,
+  # when graphify is not on PATH or the graph does not exist.
+  module GraphQuery
+    LABEL = "graphify query (first task)"
+
+    def self.command(board_text)
+      return nil unless graph_ready?
+
+      query = query_text(board_text)
+      query && -> { run(query) }
+    end
+
+    def self.graph_path = File.join(Project.root, ".maf", "graphify-out", "graph.json")
+
+    def self.graph_ready?
+      on_path = ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).any? { |d| File.executable?(File.join(d, "graphify")) }
+      on_path && File.exist?(graph_path)
+    rescue SystemCallError
+      false
+    end
+
+    # coord next prints: id, title, scope, separated by tabs. The text of an
+    # empty board has no id, so it gives no query.
+    def self.query_text(board_text)
+      id, title, scope = board_text.to_s.lines.first.to_s.strip.split("\t")
+      title && id.match?(/\A[0-9a-f-]{36}\z/) ? [title, scope].compact.join(" ") : nil
+    end
+
+    def self.run(query)
+      output = IO.popen(["graphify", "query", query, "--graph", graph_path], err: File::NULL, &:read)
+      $?.success? && !output.strip.empty? ? output : nil
+    rescue SystemCallError
+      nil
+    end
+  end
+
   # Prefetch adds live context to a dispatch prompt: the output of
-  # `coord next ROLE` and of `git log --oneline -10`. Each part is cut to
-  # LIMIT characters. A failed command is logged and left out. Lead roles own
-  # no tasks, so they get no `coord next` part.
+  # `coord next ROLE`, of `git log --oneline -10`, and of a graph query for the
+  # first task. Each part is cut to LIMIT characters. A failed command is
+  # logged and left out. Lead roles own no tasks, so they get no `coord next`
+  # part and no graph query.
   module Prefetch
     LIMIT = 2000
 
@@ -299,8 +337,11 @@ module Dispatcher
     end
 
     def self.commands(poller, role)
-      board = LEADS.include?(role) ? {} : { "coord next #{role}" => -> { poller.next_output } }
-      board.merge("git log --oneline -10" => -> { git_log })
+      return { "git log --oneline -10" => -> { git_log } } if LEADS.include?(role)
+
+      board_text = poller.next_output
+      { "coord next #{role}" => -> { board_text }, GraphQuery::LABEL => GraphQuery.command(board_text),
+        "git log --oneline -10" => -> { git_log } }.compact
     end
 
     def self.section(label, run)

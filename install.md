@@ -146,6 +146,9 @@ Then run the same command without `--check`.
 1. Sets up the coordination layer.
 2. Writes a role file for each role, in the format of its harness.
 3. Writes a manifest at `$PROJECT/.maf/config.json`.
+4. Writes the graphify MCP server into `.mcp.json` (Claude Code) and `opencode.json` (opencode).
+   For Codex and Hermes, `maf add` prints a command. Run it to add the server.
+   To turn the server off, set `"mcp": false` in `.maf/config.json`.
 
 `maf add` is idempotent. It skips files that are already correct.
 
@@ -216,7 +219,7 @@ Worktrees contain only committed files. Commit before starting any agent.
 
 ```sh
 cd "$PROJECT"
-git add .maf AGENTS.md .gitignore .claude .opencode .codex
+git add .maf AGENTS.md .gitignore .claude .opencode .codex .mcp.json opencode.json
 git rm --cached -q --ignore-unmatch CLAUDE.md .claude/CLAUDE.md   # maf add moved it into AGENTS.md
 git commit -m "Add multi-agent flow"
 ```

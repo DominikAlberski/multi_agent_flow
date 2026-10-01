@@ -55,8 +55,9 @@ roles:
       Focus: task decomposition, disjoint scopes, and verification of results.
 
       Checks:
-      - If `graphify-out/` exists, query the shared knowledge graph first:
-        `graphify query "..."`. It finds relevant code faster than grep.
+      - Query the shared knowledge graph before you start the work. It finds code and prior decisions faster than grep.
+        Run `vault age` first. Query with `graphify query "..." --graph "$COORD_DIR/../graphify-out/graph.json"`, or use the graphify MCP tools.
+        If the graph is missing or stale, say so in your report. Write one line: "Graph: fresh", "Graph: stale", or "Graph: missing".
       - Read the affected code before you plan. Do not plan from file names only.
       - Scale the plan to the goal. A small change gets one task.
       - Split work only into independent paths. Each split adds merge and review cost.
@@ -97,8 +98,9 @@ roles:
       Focus: correct, minimal server-side changes that follow the project's patterns.
 
       Checks:
-      - If `graphify-out/` exists, query the shared knowledge graph first:
-        `graphify query "..."`. It finds relevant code faster than grep.
+      - Query the shared knowledge graph before you start the work. It finds code and prior decisions faster than grep.
+        Run `vault age` first. Query with `graphify query "..." --graph "$COORD_DIR/../graphify-out/graph.json"`, or use the graphify MCP tools.
+        If the graph is missing or stale, say so in your report. Write one line: "Graph: fresh", "Graph: stale", or "Graph: missing".
       - Read the related code, tests, and project guidelines before you edit.
       - Find the project's linter and formatter config. Follow them.
       - Reuse the existing patterns for models, services, errors, and logging.
@@ -127,8 +129,9 @@ roles:
       Focus: usable, accessible UI that follows the project's UI conventions.
 
       Checks:
-      - If `graphify-out/` exists, query the shared knowledge graph first:
-        `graphify query "..."`. It finds relevant code faster than grep.
+      - Query the shared knowledge graph before you start the work. It finds code and prior decisions faster than grep.
+        Run `vault age` first. Query with `graphify query "..." --graph "$COORD_DIR/../graphify-out/graph.json"`, or use the graphify MCP tools.
+        If the graph is missing or stale, say so in your report. Write one line: "Graph: fresh", "Graph: stale", or "Graph: missing".
       - Read the related views, components, styles, and tests before you edit.
       - Reuse existing components and design tokens before you add new ones.
       - Use semantic HTML. Give each control a label. Make each control work with a keyboard.
@@ -156,8 +159,9 @@ roles:
       Focus: tests that catch real defects, and exact root-cause reports.
 
       Checks:
-      - If `graphify-out/` exists, query the shared knowledge graph first:
-        `graphify query "..."`. It finds relevant code faster than grep.
+      - Query the shared knowledge graph before you start the work. It finds code and prior decisions faster than grep.
+        Run `vault age` first. Query with `graphify query "..." --graph "$COORD_DIR/../graphify-out/graph.json"`, or use the graphify MCP tools.
+        If the graph is missing or stale, say so in your report. Write one line: "Graph: fresh", "Graph: stale", or "Graph: missing".
       - For a reported bug, write a failing test first. Confirm that the test fails for the reported reason.
       - Test behavior through public interfaces. Tests on internals break at each refactor.
       - Cover edge cases: empty input, boundaries, invalid input, and error paths.
@@ -185,8 +189,9 @@ roles:
       Focus: defects in changed code, with evidence for each finding.
 
       Checks, in this order:
-      - If `graphify-out/` exists, query the shared knowledge graph first:
-        `graphify query "..."`. It finds related code and prior decisions faster than grep.
+      - Query the shared knowledge graph before you start the work. It finds code and prior decisions faster than grep.
+        Run `vault age` first. Query with `graphify query "..." --graph "$COORD_DIR/../graphify-out/graph.json"`, or use the graphify MCP tools.
+        If the graph is missing or stale, say so in your report. Write one line: "Graph: fresh", "Graph: stale", or "Graph: missing".
       - Correctness: logic errors, edge cases, error handling, and data loss.
       - Security: injection, authorization gaps, secret exposure, and unsafe input.
       - Regressions: changed behavior for existing callers and public interfaces.

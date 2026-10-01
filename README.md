@@ -75,6 +75,8 @@ their tool reads them:
 | `.git/hooks/*` | Git reads them there. |
 | `.claude/settings.json` | Claude Code reads it there. |
 | `.opencode/plugins/board-watch.js` | opencode reads it there. |
+| `.mcp.json` | Claude Code reads the MCP servers there. |
+| `opencode.json` | opencode reads the MCP servers there. |
 | `~/.hermes/skills/<project>-<role>/SKILL.md` | Hermes reads it there. |
 
 `.claude/agents/`, `.opencode/agents/`, and `.codex/prompts/` are relative
@@ -121,6 +123,7 @@ multi_agent_flow/
     migrate.rb                # maf migrate: moves an old-layout install into .maf/
     flow/role_catalog.rb      # merges .maf/roles.yml over the built-in roles
     flow/workflow.rb          # reads .maf/workflow.md for the architect prompt
+    flow/mcp_config.rb        # writes the graphify MCP server into .mcp.json and opencode.json
   scripts/
     check.rb                  # repo consistency check (UDA sync, marker blocks, worktree formula)
   templates/
@@ -134,7 +137,7 @@ multi_agent_flow/
   assets/
     coord                     # coordination CLI (Ruby)
     dispatcher                # polls task board + inbox, starts one-shot agents (Ruby)
-    vault                     # graphify + Obsidian + MCP watcher control (Ruby)
+    vault                     # graphify + Obsidian + MCP watcher control, graph age (Ruby)
     dashboard                 # web dashboard: stuck-detection UI (Ruby/Sinatra)
     doc-graph-refresh         # graphify rebuild runner called by the git hooks (Ruby)
     env.sh                    # shell environment: .maf/bin on PATH (installed as .maf/env.sh)
@@ -152,6 +155,8 @@ multi_agent_flow/
     uninstaller_test.rb       # tests for uninstall.rb
     migrate_test.rb           # tests for migrate.rb
     roles_workflow_test.rb    # tests for project roles and the workflow
+    graph_age_test.rb         # tests for vault age and the graph prompt rules
+    mcp_test.rb               # tests for the MCP server wiring
     doc_graph_refresh_test.rb # tests for the doc-graph refresh script
 ```
 
@@ -216,6 +221,8 @@ ruby test/installer_test.rb  # covers bootstrap.rb, flow.rb, setup_agent.rb
 ruby test/uninstaller_test.rb  # covers uninstall.rb
 ruby test/migrate_test.rb    # covers migrate.rb
 ruby test/roles_workflow_test.rb  # covers project roles and the workflow
+ruby test/graph_age_test.rb  # covers vault age and the graph prompt rules
+ruby test/mcp_test.rb        # covers the MCP server wiring
 ruby test/maf_test.rb        # covers the maf command
 ruby test/dashboard_test.rb  # covers the dashboard data
 ruby test/doc_graph_refresh_test.rb  # covers the doc-graph refresh

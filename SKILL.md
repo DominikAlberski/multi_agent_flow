@@ -201,7 +201,13 @@ watcher, with its pid in `.maf/coordination/vault.pid` and its output in
 `graphify-mcp` stdio binary that a client spawns, not a background flag. If
 `graphify` was not installed yet, run `vault` by hand once it is.
 
-- Agents query the graph over MCP or `graphify query "..."` instead of grepping.
+- Each role queries the graph before the work (MCP, or `graphify query "..." --graph "$COORD_DIR/../graphify-out/graph.json"`).
+  A missing or stale graph goes into the report. `vault age` shows the graph age:
+  the commits since the build. `coord status` and the dashboard show it too.
+- `maf add` writes the MCP server into `.mcp.json` (Claude Code) and `opencode.json`
+  (opencode). For Codex and Hermes, it prints the command that adds the server.
+  Set `"mcp": false` in `.maf/config.json` to turn this off.
+- The graph holds code knowledge. Plans and specs use artifacts, not the graph.
 - `.maf/obsidian/` is the human-facing Obsidian base (graph notes, canvas). It is
   regenerated and gitignored — durable decisions belong in the decisions folder
   (`.agent/decisions/` if it exists, else `docs/decisions/`),

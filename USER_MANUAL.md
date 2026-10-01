@@ -188,7 +188,7 @@ files, so commit before starting any agent.
 
 ```sh
 cd "$PROJECT"
-git add .maf AGENTS.md .gitignore .claude .opencode .codex
+git add .maf AGENTS.md .gitignore .claude .opencode .codex .mcp.json opencode.json
 git rm --cached -q --ignore-unmatch CLAUDE.md .claude/CLAUDE.md   # maf add moved it into AGENTS.md
 git commit -m "Add multi-agent flow"
 ```
@@ -627,8 +627,43 @@ block to the `post-commit` and `post-merge` hooks. The block starts
 logs a skip in `.maf/coordination/doc-graph.log`. A non-markdown commit makes no LLM
 call.
 
-MCP: set `vault mcp` as the command in your MCP client config. `graphify-mcp`
-is a separate stdio binary; it is not a background flag.
+### Graph in the workflow
+
+The graph holds code knowledge. It helps the architect plan and the developer
+find code. It does not carry the plan and spec exchange. That exchange uses
+artifacts (see "Give the team work").
+
+- **Rule.** Each role queries the graph before the work. If the graph is
+  missing or stale, the role says so in its report.
+- **Prefetch.** The dispatcher runs `graphify query` with the title and scope of
+  the first unclaimed task. It adds the first 2000 characters to the dispatch
+  prompt. A lead role gets no query. The dispatcher skips the query without
+  `graphify` or without a graph.
+- **Age.** The graph age is the number of commits since the graph was built.
+  The graph is stale when a commit after the build changed a source or
+  markdown file. Show the age with `vault age`, `vault status`, `coord status`,
+  or the dashboard. The architect checks it before the merge suite.
+- **A missing, stale, or unreadable graph never fails a run.**
+
+### MCP server
+
+`maf add` writes the graphify MCP server for each harness. The server runs
+`vault mcp`. In a worktree, `vault mcp` serves the graph of the main project.
+
+| Harness | Where | Written by maf |
+|---|---|---|
+| Claude Code | `.mcp.json` | yes |
+| opencode | `opencode.json` | yes |
+| Codex | `~/.codex/config.toml` (global) | no. `maf add` prints `codex mcp add ...`. |
+| Hermes | `~/.hermes/config.yaml` (global) | no. `maf add` prints `hermes mcp add ...`. |
+
+`maf add` merges into an existing file. It never replaces a graphify entry that
+it did not write. It leaves a file that is not valid JSON as it is.
+`maf uninstall` removes only the entry that `maf add` wrote.
+
+To turn the server off, set `"mcp": false` in `.maf/config.json`.
+Then remove the `graphify` entry from `.mcp.json` and `opencode.json`.
+With `"mcp": false`, `maf add` and `maf update` do not write the entry again.
 
 Open the `.maf/obsidian/` folder in Obsidian to see the code graph. To see
 `.maf/coordination/exports/board.md` as a kanban alongside the graph, open the project

@@ -14,6 +14,7 @@ require "json"
 require "fileutils"
 require "time"
 require "shellwords"
+require "rbconfig"
 require "optparse"
 
 module Coord
@@ -133,6 +134,7 @@ module Coord
     def presence_dir = File.join(coord_dir, "presence")
     def usage_dir = File.join(coord_dir, "usage")
     def manifest_path = File.join(File.dirname(File.expand_path(coord_dir)), "config.json")
+    def vault_path = File.join(File.dirname(File.expand_path(coord_dir)), "bin", "vault")
   end
 
   # Setup creates the coordination directories and the Taskwarrior UDAs.
@@ -915,7 +917,26 @@ module Coord
     end
   end
 
-  # Board renders status summaries and the Obsidian kanban file.
+# GraphAge asks `vault age --json` for the graph age: the commits since the
+# graph build. Without the vault script or on a failure it gives no line.
+class GraphAge
+  def initialize(paths)
+    @paths = paths
+  end
+
+  def line
+    data = JSON.parse(IO.popen([RbConfig.ruby, @paths.vault_path, "age", "--json"], chdir: root, err: File::NULL, &:read))
+    data["commits"] ? "graph age: #{data["commits"]} commits (#{data["state"]})" : "graph age: #{data["state"]}"
+  rescue SystemCallError, JSON::ParserError
+    nil
+  end
+
+  private
+
+  def root = File.dirname(File.dirname(File.expand_path(@paths.coord_dir)))
+end
+
+# Board renders status summaries and the Obsidian kanban file.
   class Board
     SECTIONS = {
       "Backlog" => ->(task) { !Schedule.waiting?(task) && !task["start"] },
@@ -932,6 +953,7 @@ module Coord
       rows = grouped
       rows.empty? ? puts("no tasks") : rows.each { |role, list| puts summary_line(role, list) }
       TokenTotals.new(@paths).lines.each { |line| puts line }
+      GraphAge.new(@paths).line&.then { |line| puts line }
     end
 
     def next_tasks(role, worker = nil)

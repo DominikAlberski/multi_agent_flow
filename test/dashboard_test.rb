@@ -40,6 +40,19 @@ class DashboardCollectorTest < Minitest::Test
     assert_equal "2026-09-26T10:00:00Z", workers.first["last_event"]
   end
 
+def graph = Dashboard::Collector.new(Dashboard::Config.new(["--coord", @coord])).collect[:graph]
+
+def test_the_graph_age_comes_from_the_vault_script
+  FileUtils.mkdir_p(File.join(@dir, ".maf", "bin"))
+  File.write(File.join(@dir, ".maf", "bin", "vault"), "puts '{\"state\":\"fresh\",\"commits\":0}'\n")
+
+  assert_equal({ "state" => "fresh", "commits" => 0 }, graph)
+end
+
+def test_the_graph_age_is_nil_without_the_vault_script
+  assert_nil graph
+end
+
   def test_token_usage_per_worker
     FileUtils.mkdir_p(File.join(@coord, "usage"))
     File.write(File.join(@coord, "usage", "tester-bot.json"), JSON.generate("input_tokens" => 5, "runs" => 1))
