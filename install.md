@@ -269,6 +269,14 @@ Then give the user these instructions.
 > `project-manager` role was set up, talk to the architect session directly
 > instead.
 
+## Domain documentation
+
+Do not create `GLOSSARY.md` at install time. The project has no terms yet.
+The project manager creates the first draft when the first term resolves.
+The architect commits `GLOSSARY.md` on the goal branch. Tell the user this in the report of Step 7.
+Do not add a `GLOSSARY-MAP.md` unless the project has more than one bounded context.
+ADRs use the decisions folder: `.agent/decisions/` if it exists, else `docs/decisions/`.
+
 ## Notes
 
 - One writer per path. The task scope defines the paths. `coord add`/`conflicts`

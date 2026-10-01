@@ -57,3 +57,33 @@ Decided: 2026-10-01.
 Source: design discussion for the workflow fragment.
 The coordination state lives in `.maf/coordination/` and is not committed.
 A durable artifact is committed on the goal branch by the architect.
+
+## A second ADR folder (`docs/adr/`)
+
+Decided: 2026-10-01.
+Source: design discussion for the domain documentation.
+The flow has one decisions folder. A second folder gives two conventions for one record.
+
+## `GLOSSARY-MAP.md` for a single-context project
+
+Decided: 2026-10-01.
+Source: design discussion for the domain documentation.
+A map of one context has no content. The project adds a map only with more than one bounded context.
+
+## Automatic glossary extraction from the code
+
+Decided: 2026-10-01.
+Source: design discussion for the domain documentation.
+The glossary holds domain meaning. The code does not hold it. An extractor writes names, not meaning.
+
+## A vendored copy of the grill-with-docs or domain-modeling skill
+
+Decided: 2026-10-01.
+Source: design discussion for the domain documentation.
+The flow inlines the discipline as prompt text. A copy adds a licence obligation, a copy that goes stale, and a skill dependency.
+
+## A skill-file installer for the harnesses
+
+Decided: 2026-10-01.
+Source: design discussion for the domain documentation.
+Each harness installs skills in a different place. An installer adds a per-harness dependency for no gain.

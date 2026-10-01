@@ -163,10 +163,10 @@ module Flow
 
   PM_LOOP = <<~LOOP
     Work loop:
-    1. Read the user's request.
-    2. Turn it into one goal. Create the goal: `coord goal add --title "<outcome>"`.
+    1. Read the user's request. Interview the user, as the duties describe.
+    2. Turn the request into one goal. Create the goal at the start of the interview: `coord goal add --title "<outcome>"`.
        The command prints the goal id and creates the goal branch.
-    3. Hand the goal to the architect:
+    3. When the interview ends, hand the goal to the architect:
          coord msg --from project-manager architect "GOAL <goal-id>: <goal>"
     4. Check status with `coord goal list` and `coord goal show <goal-id>`.
        Wait for reports with `coord inbox project-manager --wait`.

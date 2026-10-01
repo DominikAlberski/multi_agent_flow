@@ -34,7 +34,7 @@ All shared state lives in a `.maf/coordination/` folder inside your project.
 
 ## 2. Concepts
 
-[GLOSSARY.md](GLOSSARY.md) defines every term. In short:
+[docs/flow-glossary.md](docs/flow-glossary.md) defines every term. In short:
 
 - A **harness** (Claude Code, opencode, Codex, Hermes) runs a **role** (architect,
   tester) as a **worker** (`tester-1`). That running session is an **agent**.

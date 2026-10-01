@@ -215,3 +215,57 @@ class UninstallKeepsUserFilesTest < RolesWorkflowTestCase
     assert File.exist?(path(".maf", "workflow.md"))
   end
 end
+
+class DomainDocsPromptTest < RolesWorkflowTestCase
+  def setup
+    super
+    out, status = maf("add", "opencode:project-manager", "opencode:architect", "opencode:reviewer", "opencode:tester", "--no-bootstrap")
+    assert_equal 0, status, out
+  end
+
+  def test_the_project_manager_runs_a_round_based_interview
+    text = role_file("project-manager")
+
+    assert_includes text, "Interview the user in rounds"
+    assert_includes text, "Ask the whole frontier in one round"
+    assert_includes text, "The interview ends when the frontier is empty."
+    refute_includes text, "If two readings of the request lead to different work, ask the user first."
+  end
+
+  def test_the_project_manager_writes_terms_to_the_draft_and_never_commits
+    text = role_file("project-manager")
+
+    assert_includes text, "$COORD_DIR/artifacts/<goal>/glossary-draft.md"
+    assert_includes text, "Never commit: the architect owns the committed `GLOSSARY.md`"
+  end
+
+  def test_the_architect_owns_the_glossary_and_the_adr_gates
+    text = role_file("architect")
+
+    assert_includes text, "Own the committed `GLOSSARY.md`"
+    assert_includes text, "hard to reverse, it is surprising without context"
+    refute_includes text, "ADRs for small choices"
+  end
+
+  def test_the_reviewer_checks_the_vocabulary
+    assert_includes role_file("reviewer"), "one meaning per term, no implementation detail"
+  end
+
+  def test_other_roles_do_not_get_the_glossary_rules
+    refute_includes role_file("tester"), "glossary-draft"
+  end
+
+  def test_the_contract_holds_the_domain_documentation_rules
+    contract = File.read(File.expand_path("../assets/agents-contract.md", __dir__))
+
+    assert_includes contract, "### Domain documentation"
+    assert_includes contract, "The file does not exist until the first term resolves."
+    assert_includes contract, "Two goals that add terms conflict at merge time."
+  end
+
+  def test_no_skill_text_or_dependency_is_shipped
+    files = Dir.glob(File.expand_path("../{assets,templates,lib}/**/*", __dir__)).select { |f| File.file?(f) }
+
+    assert_empty files.select { |f| File.read(f).match?(/grill-with-docs|domain-modeling/) }
+  end
+end

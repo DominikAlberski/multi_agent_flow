@@ -35,7 +35,7 @@ Token optimization comes from three sources:
 
 ## New domain terms
 
-Add these terms to GLOSSARY.md before code uses them.
+Add these terms to docs/flow-glossary.md before code uses them.
 
 | Term | Meaning |
 |---|---|

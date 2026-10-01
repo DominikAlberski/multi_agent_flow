@@ -553,6 +553,36 @@ directly.
 
 ---
 
+## The glossary and the ADRs
+
+The flow keeps two documents of the project domain.
+
+- **`GLOSSARY.md`** at the repository root holds the domain terms. Each term has a bold name,
+  one or two sentences, and an `_Avoid_` line for rejected words. It holds no implementation detail.
+  The file does not exist until the first term resolves. A project with more than one bounded
+  context also gets a `GLOSSARY-MAP.md`. A project with one context gets none.
+- **ADRs** are in the decisions folder (`.agent/decisions/` if it exists, else `docs/decisions/`).
+  An ADR has a title and one to three sentences. The architect offers an ADR only if the decision
+  is hard to reverse, surprising without context, and the result of a real trade-off.
+
+How it works:
+
+1. The project manager interviews you in rounds. Each round holds the questions that are open now,
+   numbered, each with a recommended answer. The project manager finds each fact itself and asks you only for decisions.
+   The interview ends when no open question is left.
+2. The project manager writes each resolved term to
+   `.maf/coordination/artifacts/<goal>/glossary-draft.md` at once. It never commits,
+   because `can_edit` is `false` for the project manager.
+3. The architect and the reviewer check the draft. The reviewer checks one meaning per term,
+   no implementation detail, no duplicate term, and no contradiction with an existing entry.
+4. The architect commits the agreed terms to `GLOSSARY.md` on the goal branch.
+
+`GLOSSARY.md` is one file for all goals. Two goals that add terms conflict at merge time.
+The architect starts these goals one after the other, or promotes an agreed term to the base branch at once.
+Without a project manager, the architect writes the terms.
+
+This flow does not depend on a skill and does not ship one. The rules are in the role prompts and in `AGENTS.md`.
+
 ## Monitor progress
 
 Run from any terminal in the project:
@@ -816,9 +846,9 @@ Commit the result.
 
 ---
 
-## Upgrade from a version before GLOSSARY.md
+## Upgrade from a version before the flow glossary
 
-This version renames terms (see [GLOSSARY.md](GLOSSARY.md)). It does not read
+This version renames terms (see [docs/flow-glossary.md](docs/flow-glossary.md)). It does not read
 the old names. Old task boards and worktrees do not work with it.
 
 | Old | New |

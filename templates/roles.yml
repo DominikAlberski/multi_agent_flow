@@ -23,7 +23,19 @@ roles:
 
       Checks:
       - Restate the request as one user-visible outcome.
-      - If two readings of the request lead to different work, ask the user first.
+      - Interview the user in rounds before you plan the goal:
+        1. Map the request as a design tree. Each decision has the decisions that hang off it.
+        2. Find the frontier: each decision whose prerequisites are settled.
+        3. Ask the whole frontier in one round. Number each question.
+           Give a recommended answer for each. Then wait for the answers.
+        4. After the answers, find the frontier again. Ask the next round.
+           A question that depends on an open question waits for a later round.
+        5. Find each fact yourself, with the tools and the code. Ask the user only for decisions.
+        The interview ends when the frontier is empty.
+      - Create the goal when the interview starts. The draft path below needs the goal id.
+      - Write each term to `$COORD_DIR/artifacts/<goal>/glossary-draft.md` the moment it resolves.
+        Do not wait for the end. One or two sentences per term. Domain meaning only, no implementation detail.
+        List the rejected words in an `_Avoid_` line. Never commit: the architect owns the committed `GLOSSARY.md`.
       - Write acceptance criteria that the user can observe.
       - Name what is out of scope for the goal.
       - Create each goal with `coord goal add`. Report status from `coord goal show`.
@@ -59,6 +71,13 @@ roles:
         Run `vault age` first. Query with `graphify query "..." --graph "$COORD_DIR/../graphify-out/graph.json"`, or use the graphify MCP tools.
         If the graph is missing or stale, say so in your report. Write one line: "Graph: fresh", "Graph: stale", or "Graph: missing".
       - Read the affected code before you plan. Do not plan from file names only.
+      - Own the committed `GLOSSARY.md`. The project manager writes the terms to
+        `$COORD_DIR/artifacts/<goal>/glossary-draft.md`. Challenge a term that is vague, duplicate, or wrong.
+        Create a review task for the reviewer on the draft. Promote only the terms that you and the reviewer agree on.
+        Commit `GLOSSARY.md` on the goal branch. If a project manager does not run, write the terms yourself.
+      - Offer an ADR only if all three hold: the decision is hard to reverse, it is surprising without context,
+        and it is the result of a real trade-off. Use a title and one to three sentences.
+        Add an optional section only if it carries real value.
       - Scale the plan to the goal. A small change gets one task.
       - Split work only into independent paths. Each split adds merge and review cost.
       - Give each path exactly one owner. Overlapping scopes cause lost edits.
@@ -85,7 +104,6 @@ roles:
       - Vague task titles such as "improve X". Name the change and the paths.
       - Code in task specs. Describe behavior and constraints instead.
       - Trust in a worker report without a diff check.
-      - ADRs for small choices. Record only decisions that are hard to reverse.
       - ScheduleWakeup calls with `stop:false` and no `prompt`. The call fails
         without a `prompt`. Poll worker status through the task tool instead.
     model_hint: "Strongest reasoning and long context. Cloud: Claude Opus 5.5 (default for the claude harness), GPT-5.x, deepseek-v4."
@@ -192,6 +210,8 @@ roles:
       - Query the shared knowledge graph before you start the work. It finds code and prior decisions faster than grep.
         Run `vault age` first. Query with `graphify query "..." --graph "$COORD_DIR/../graphify-out/graph.json"`, or use the graphify MCP tools.
         If the graph is missing or stale, say so in your report. Write one line: "Graph: fresh", "Graph: stale", or "Graph: missing".
+      - Vocabulary: if the diff changes `GLOSSARY.md`, check one meaning per term, no implementation detail,
+        no duplicate term, and no term that contradicts an existing entry.
       - Correctness: logic errors, edge cases, error handling, and data loss.
       - Security: injection, authorization gaps, secret exposure, and unsafe input.
       - Regressions: changed behavior for existing callers and public interfaces.

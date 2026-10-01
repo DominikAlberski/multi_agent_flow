@@ -41,7 +41,9 @@ run `coord unclaim ID` instead of leaving it to expire.
 
 - `role` is the project function: `backend-developer`. A task belongs to a role.
 - `worker` is one instance of a role: `backend-1`, `backend-2`.
-- An agent is one harness session that runs a role as a worker. See GLOSSARY.md.
+- An agent is one harness session that runs a role as a worker.
+- Use the terms of the project glossary, `GLOSSARY.md` at the repository root. It holds the domain terms.
+  The file does not exist until the first term resolves. The project manager creates the draft then.
 - Set `COORD_ROLE` to the role and `COORD_WORKER` to a unique worker id.
 - `claim` is atomic (per-task lock). Two workers racing one task → exactly one wins.
 - The architect creates tasks for a role and does not need to know how many
@@ -181,6 +183,22 @@ coord unlock ollama
 - Never write an artifact inside a worktree. Worktrees do not share files.
 - A durable artifact (an approved spec, an ADR) is committed on the goal branch.
   Only the architect commits it.
+
+### Domain documentation
+
+- The project glossary is `GLOSSARY.md` at the repository root. It holds domain terms only.
+  The file does not exist until the first term resolves.
+- Each term has a bold name, one or two sentences, and an optional `_Avoid_` line for rejected words.
+  Add a `GLOSSARY-MAP.md` only if the project has more than one bounded context.
+- The project manager writes each resolved term to
+  `$COORD_DIR/artifacts/<goal>/glossary-draft.md`. The project manager never commits.
+- The architect owns the committed `GLOSSARY.md`. After the reviewer agrees, the architect
+  promotes the terms and commits them on the goal branch. Other roles read the glossary.
+- `GLOSSARY.md` is one file for all goals. Two goals that add terms conflict at merge time.
+  The architect serializes the goals that add terms, or promotes an agreed term to the base branch at once.
+- ADRs go in the decisions folder (see "Shared memory"). Offer an ADR only if all three hold:
+  hard to reverse, surprising without context, and the result of a real trade-off.
+  An ADR has a title and one to three sentences.
 
 ### Shared memory
 

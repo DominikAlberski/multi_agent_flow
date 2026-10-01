@@ -65,12 +65,15 @@ The flow keeps every file that it owns in one folder, `.maf/`, in the project.
   env.sh          source it: puts .maf/bin on PATH
 ```
 
-The project root keeps `.maf/` and `AGENTS.md`. These files must stay where
+The project root keeps `.maf/` and `AGENTS.md`. `GLOSSARY.md` (the domain glossary) and the
+decisions folder join them when the first term or decision resolves. These files must stay where
 their tool reads them:
 
 | Path | Reason |
 |---|---|
 | `AGENTS.md` | Every harness reads the contract there. |
+| `GLOSSARY.md` | The domain glossary. The project manager drafts it. The architect commits it. |
+| `docs/decisions/` | ADRs. The architect writes them. |
 | `.gitignore` | Git reads it there. |
 | `.git/hooks/*` | Git reads them there. |
 | `.claude/settings.json` | Claude Code reads it there. |
@@ -91,7 +94,7 @@ section of [USER_MANUAL.md](USER_MANUAL.md).
 
 | File | Audience | What it covers |
 |---|---|---|
-| **[GLOSSARY.md](GLOSSARY.md)** | Everyone | Domain terms: harness, role, worker, agent, task, message, claim, lock, hooks |
+| **[docs/flow-glossary.md](docs/flow-glossary.md)** | Everyone | Flow terms: harness, role, worker, agent, task, message, claim, lock, hooks. [docs/flow-cli-names.md](docs/flow-cli-names.md) lists their names in code and CLI |
 | **[GETTING_STARTED.md](GETTING_STARTED.md)** | First-time user | Concepts, prerequisites, manual install, basic workflow |
 | **[USER_MANUAL.md](USER_MANUAL.md)** | Setting up a real team | Full install (maf), all harnesses, dispatcher, monitoring |
 | **[install.md](install.md)** | An AI coding agent | Interactive wizard: asks the user for harnesses/roles, runs `maf add` |
@@ -107,7 +110,8 @@ multi_agent_flow/
   install.md                  # agent instruction: interactive setup wizard
   SKILL.md                    # portable skill for agent skill loaders
   README.md                   # this file
-  GLOSSARY.md                 # domain terms
+  docs/flow-glossary.md       # flow terms
+  docs/flow-cli-names.md      # code and CLI name of each flow term
   GETTING_STARTED.md          # first-time walkthrough (concepts + manual setup)
   USER_MANUAL.md              # full team setup reference
   bin/
@@ -241,7 +245,7 @@ those tools are absent. If wiring into CI, install both to get full coverage.
   `coord board`/`export` are read-only projections.
 - **Agents never call `task` directly.** `coord` keeps the protocol stable and
   lets the storage backend change later.
-- **Terminology:** see [GLOSSARY.md](GLOSSARY.md). One role can run as several
+- **Terminology:** see [docs/flow-glossary.md](docs/flow-glossary.md). One role can run as several
   workers. `claim` is atomic, so two workers cannot take the same task.
 - **A claim is a lease.** Idle past `COORD_LEASE_TTL` seconds (default 4 hours)
   it becomes claimable again without `--force`. `coord unclaim` releases one on
