@@ -286,7 +286,8 @@ module MafProject
   end
 
   def git(*args)
-    system("git", "-c", "user.name=test", "-c", "user.email=test@example.com", *args,
+    system("git", "-c", "user.name=test", "-c", "user.email=test@example.com",
+           "-c", "core.hooksPath=#{File::NULL}", *args,
            chdir: @project, exception: true, out: File::NULL)
   end
 
@@ -456,6 +457,18 @@ class MafTeamTest < Minitest::Test
     refute_equal 0, status
     assert_includes out, "not valid JSON"
     assert_equal "{ not json", File.read(File.join(@project, ".agent-flow.json"))
+  end
+
+  # The installed post-commit hook starts a detached doc-graph refresh. That
+  # process outlives the test and writes into @dir while teardown removes it.
+  def test_git_helper_runs_no_hook
+    marker = File.join(@dir, "hook-ran")
+    hook = File.join(@project, ".git", "hooks", "post-commit")
+    File.write(hook, "#!/bin/sh\ntouch \"#{marker}\"\n")
+    FileUtils.chmod("+x", hook)
+    git("commit", "-q", "--allow-empty", "-m", "probe")
+
+    refute_path_exists marker
   end
 
   def test_prepare_uses_the_only_allowed_model
