@@ -16,7 +16,7 @@ module Maf
   MANIFEST = ".maf/config.json"
 
   def self.flow(*args) = Flow::Generator.new(["--project", Dir.pwd, *args]).run
-  def self.role_names = YAML.load_file(File.join(Flow::TEMPLATES, "roles.yml")).fetch("roles").keys
+  def self.role_names = Flow::RoleCatalog.new(Dir.pwd).roles.keys
 
   def self.agents = File.exist?(MANIFEST) ? JSON.parse(File.read(MANIFEST)).fetch("agents") : []
   def self.agent_specs = agents.map { |a| "#{a["harness"]}:#{a["role"]}" }
@@ -38,7 +38,8 @@ module Maf
       "remove" => "HARNESS:ROLE ...                        remove agents",
       "update" => "                                        regenerate the files of the current agents",
       "agents" => "                                        list the current agents",
-      "roles" => "                                        list the available roles",
+      "roles" => "                                        list the built-in roles and the project roles",
+      "role" => "add NAME                                add a stub role to .maf/roles.yml",
       "start" => "[HARNESS ROLE[_WORKER]] [--dispatch [--detach]]  start one agent in its worktree",
       "prepare" => "HARNESS ROLE[_WORKER] [--dispatch] [--replace W]  prepare a worker (--dispatch also starts it)",
       "retire" => "ROLE[_WORKER]                           remove a worker; its tasks return to the pool",
@@ -77,6 +78,13 @@ module Maf
     def run_remove = Maf.flow(*AgentArgs.convert(@args, "--remove"))
     def run_update = Maf.flow(*@args)
     def run_roles = Maf.flow("--list-roles")
+
+    def run_role
+      abort "usage: maf role add NAME" unless @args.first == "add" && @args[1]
+
+      status = Flow::RoleStub.new(Dir.pwd, @args[1]).add
+      puts(status == :create ? "Role added: #{Flow::RoleCatalog::FILE}. Fill in the TODO lines." : "Role exists: #{@args[1]}")
+    end
     def run_start = @args.empty? ? SetupAgent.run_here : SetupAgent.run(@args)
     def run_prepare = Prepare.new(@args).run
     def run_team = TeamCommand.new(@args, SetupAgent::Project.root).run

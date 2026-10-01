@@ -12,7 +12,9 @@ module Flow
 
     def run
       @options.parse
-      @roles = YAML.load_file(File.join(TEMPLATES, "roles.yml")).fetch("roles")
+      validate_project
+      @catalog = RoleCatalog.new(@options.project)
+      @roles = @catalog.roles
       return print_roles if @options.list_roles
 
       validate
@@ -53,14 +55,13 @@ module Flow
       puts "Available roles (model_hint is a recommendation only):"
       @roles.each do |key, data|
         puts
-        puts "  #{key}"
+        puts "  #{key} (#{@catalog.source(key)})"
         puts "    #{data.fetch("description")}"
         puts "    model hint: #{data.fetch("model_hint")}"
       end
     end
 
     def validate
-      validate_project
       @options.agents = Roster.new(@options.project).merge(@options.agents, @options.removed)
       validate_agents
     end

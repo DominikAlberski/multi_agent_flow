@@ -46,7 +46,8 @@ ln -sf "$PWD/bin/maf" ~/.local/bin/maf
 Then run `maf` in the project root. The project is the current directory.
 
 ```sh
-maf roles                                           # list the roles
+maf roles                                           # list the roles and their source
+maf role add NAME                                   # add a stub role to .maf/roles.yml
 maf add claude:architect opencode:backend-developer # add agents, install the flow
 maf add opencode:tester                             # add one more agent later
 maf remove opencode:tester                          # remove an agent

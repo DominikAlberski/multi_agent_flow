@@ -40,6 +40,10 @@ If a text needs a new term, add the term here first.
 | flow folder | The folder `.maf/` in a project. It holds every file that the flow owns. A few files stay outside it, because a tool reads them at a fixed path. | `.maf/`, `MAF_DIR`, `maf migrate` |
 | harness folder | The folder where a harness reads role files: `.claude/agents/`, `.opencode/agents/`, or `.codex/prompts/`. It is a relative symlink to `.maf/agents/<harness>/`. | `Flow::HARNESS_DIRS`, `Flow::AgentLinks` |
 | old layout | The file layout of the versions before the flow folder. The scripts, `coordination/`, and `.agent-flow.json` are in the project root. | `Migrate.old_layout?`, `maf migrate` |
+| project role | A role that the project defines in `.maf/roles.yml`. It adds a role to the built-in roles, or replaces one. | `.maf/roles.yml`, `Flow::RoleCatalog`, `maf role add` |
+| workflow | The stage instructions of a project, in words. The architect reads them and creates the tasks stage by stage. The other roles do not see them. | `.maf/workflow.md`, `Flow::Workflow` |
+| orchestrator | The role that runs the workflow. It is the architect. | `architect` |
+| artifact | A working file that one worker writes and another worker reads. It lives in the main project, so each worktree sees it. | `.maf/coordination/artifacts/<goal>/<name>.md` |
 | out-of-scope log | The list of requests that the project rejects on purpose, each with its reason. | `docs/out-of-scope.md` |
 
 ## Rules

@@ -36,3 +36,24 @@ Sandcastle is a TypeScript library that orchestrates one agent run.
 multi_agent_flow coordinates many workers through files and the coord CLI.
 The project adopts single mechanisms only: the report block, the completion signal,
 the idle timeout, the verify command, token usage, the copy list, and the prefetch.
+
+## Flow schema and `coord flow` command
+
+Decided: 2026-10-01.
+Source: design discussion for the workflow fragment.
+The workflow is text in `.maf/workflow.md`. The architect prompt carries the behavior.
+A schema and a command add a second language and a workflow engine.
+
+## Task dependencies (`coord add --after`)
+
+Decided: 2026-10-01.
+Source: design discussion for the workflow fragment.
+The architect creates the task of the next stage after the gate passes.
+A task that does not exist cannot be claimed, so no dependency field is needed.
+
+## A `maf/coordination` git branch
+
+Decided: 2026-10-01.
+Source: design discussion for the workflow fragment.
+The coordination state lives in `.maf/coordination/` and is not committed.
+A durable artifact is committed on the goal branch by the architect.

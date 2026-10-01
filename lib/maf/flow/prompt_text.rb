@@ -93,6 +93,10 @@ module Flow
     - Never edit files directly. Dispatch work. Merges of task branches are allowed.
     - Start each goal from the base branch. Never start a goal from another goal branch.
     - Take the `ollama` lock only if you run a local model yourself.
+    - Hand work between stages with artifacts: `$COORD_DIR/artifacts/<goal>/<name>.md`. Never use a path inside a worktree.
+    - Commit a durable artifact (an approved spec, an ADR) on the goal branch yourself.
+    - Create tasks in stage order. Do not create the task of the next stage until the gate of the current stage passes.
+      A task that does not exist cannot be claimed.
   TEXT
 
   # The architect takes goals from the project manager when that role exists,

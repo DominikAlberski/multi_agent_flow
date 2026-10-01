@@ -3,9 +3,10 @@
 module Flow
   # PromptBuilder builds the prompt text of one role file.
   class PromptBuilder
-    def initialize(roles, agents)
+    def initialize(roles, agents, workflow = nil)
       @roles = roles
       @agents = agents
+      @workflow = workflow
     end
 
     def build(harness, role, data)
@@ -32,8 +33,11 @@ module Flow
     def architect_prompt(data)
       loop_text = project_manager? ? ARCHITECT_LOOP_PM : ARCHITECT_LOOP_DIRECT
       "#{intro(data)} You do not implement code yourself.\n\n#{duties_block(data)}\n\n" \
-        "#{format(loop_text, roles: dispatch_roles_text)}"
+        "#{format(loop_text, roles: dispatch_roles_text)}#{workflow_block}"
     end
+
+    # The workflow goes into the orchestrator prompt only. Workers stay workflow-blind.
+    def workflow_block = @workflow ? "\n\n#{@workflow}" : ""
 
     def project_manager?
       @agents.any? { |a| a[:role] == "project-manager" }

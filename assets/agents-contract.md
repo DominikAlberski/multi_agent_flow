@@ -171,6 +171,15 @@ coord unlock ollama
   adds its `export` lines to `.maf/env.sh`. Use this hook for a unique test
   database and server port per worktree. Do not share a test database.
 
+### Handoff artifacts
+
+- A shared working file is an artifact. Write it to
+  `$COORD_DIR/artifacts/<goal>/<name>.md`. Run `mkdir -p` for the folder first.
+  `COORD_DIR` points at the main project, so each worktree sees this path.
+- Never write an artifact inside a worktree. Worktrees do not share files.
+- A durable artifact (an approved spec, an ADR) is committed on the goal branch.
+  Only the architect commits it.
+
 ### Shared memory
 
 - The vault script controls the graphify watcher. It is named `vault`.

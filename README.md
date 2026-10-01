@@ -60,6 +60,8 @@ The flow keeps every file that it owns in one folder, `.maf/`, in the project.
   obsidian/       generated Obsidian vault
   agents/         role files: claude/, opencode/, codex/
   config.json     the agents and settings of the project
+  roles.yml       project roles (you write it; maf role add NAME)
+  workflow.md     stage instructions for the architect (you write it)
   env.sh          source it: puts .maf/bin on PATH
 ```
 
@@ -117,10 +119,14 @@ multi_agent_flow/
     setup_agent.rb            # maf start: worktree + harness launch
     uninstall.rb              # removes the flow from a project; keeps .maf/graphify-out/ and .maf/obsidian/
     migrate.rb                # maf migrate: moves an old-layout install into .maf/
+    flow/role_catalog.rb      # merges .maf/roles.yml over the built-in roles
+    flow/workflow.rb          # reads .maf/workflow.md for the architect prompt
   scripts/
     check.rb                  # repo consistency check (UDA sync, marker blocks, worktree formula)
   templates/
     roles.yml                 # role definitions + model hints
+    role-stub.yml.erb         # stub that maf role add writes
+    workflows/                # default workflows: simple, plan-review, tdd
     opencode.md.erb           # role file templates per harness
     claude.md.erb
     codex.md.erb
@@ -145,6 +151,7 @@ multi_agent_flow/
     dispatcher_test.rb        # tests for the dispatcher
     uninstaller_test.rb       # tests for uninstall.rb
     migrate_test.rb           # tests for migrate.rb
+    roles_workflow_test.rb    # tests for project roles and the workflow
     doc_graph_refresh_test.rb # tests for the doc-graph refresh script
 ```
 
@@ -208,6 +215,7 @@ ruby test/coord_test.rb      # covers the coord CLI
 ruby test/installer_test.rb  # covers bootstrap.rb, flow.rb, setup_agent.rb
 ruby test/uninstaller_test.rb  # covers uninstall.rb
 ruby test/migrate_test.rb    # covers migrate.rb
+ruby test/roles_workflow_test.rb  # covers project roles and the workflow
 ruby test/maf_test.rb        # covers the maf command
 ruby test/dashboard_test.rb  # covers the dashboard data
 ruby test/doc_graph_refresh_test.rb  # covers the doc-graph refresh

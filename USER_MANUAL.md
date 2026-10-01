@@ -103,6 +103,46 @@ maf roles
 Each role has a description and a model hint. The model hint is a recommendation
 only.
 
+### 3b. Add a project role
+
+A project can own a role. Run:
+
+```sh
+maf role add data-engineer
+```
+
+The command writes a stub role into `.maf/roles.yml`. Replace each `TODO` line.
+The stub has four duty parts: focus, checks, done condition, and avoid.
+Write them in Simplified Technical English.
+
+The file `.maf/roles.yml` merges over the built-in roles. A role with a new
+name adds a role. A role with the name of a built-in role replaces it.
+`maf roles` shows the source of each role: `built-in` or `project`.
+If the role exists already, `maf role add` changes nothing.
+
+### 3c. Choose a workflow
+
+A workflow is a list of stages in words. The architect reads it. The architect
+creates the tasks of one stage at a time. The other roles do not see it.
+
+Write the stages to `.maf/workflow.md`. Three examples are in
+`templates/workflows/`: `simple`, `plan-review`, and `tdd`. Example:
+
+```sh
+cp templates/workflows/tdd.md .maf/workflow.md
+maf update
+```
+
+`maf uninstall` keeps `.maf/roles.yml` and `.maf/workflow.md`, because you wrote them.
+
+`maf update` splices the text into the architect role file under the heading
+`Workflow:`. If `.maf/workflow.md` does not exist, the architect role file does
+not change.
+
+The architect does not create the task of the next stage before the gate of the
+current stage passes. A task that does not exist cannot be claimed.
+Task dependencies are not needed.
+
 ### 4. Preview the install
 
 ```sh
@@ -455,6 +495,13 @@ Set `--cache-window` to your provider's cache time minus a margin. For a
 Talk to the project manager session (terminal 1). Example:
 
 > "Add a /health endpoint that returns the app version. Add tests and a UI badge."
+
+Workers hand work to each other with artifacts. An artifact is a shared working file:
+
+- Write it to `$COORD_DIR/artifacts/<goal>/<name>.md`, in the main project.
+  Each worktree sees this path, because `COORD_DIR` points at the main project.
+- Never write an artifact inside a worktree. Worktrees do not share files.
+- The architect commits a durable artifact (an approved spec, an ADR) on the goal branch.
 
 Expected sequence:
 

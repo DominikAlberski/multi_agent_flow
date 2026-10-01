@@ -67,6 +67,53 @@ from the user. Ask the user to map roles to harnesses. Example answer:
 
 You may run more than one role in one harness. Open one session per role.
 
+## Step 3b - Ask the user for the number of workers
+
+Ask: "How many workers do you want for each worker role?"
+
+A worker role is a role other than `project-manager` and `architect`.
+Default: one worker per role.
+Remember the answer. Step 7 uses it for the `maf start` commands.
+
+## Step 3c - Ask the user for custom roles
+
+Ask: "Do you need a role that is not in the list? Describe it in one sentence."
+
+If the user needs no custom role, skip this step.
+If the user needs a custom role, do these steps for each role:
+
+1. Run `maf role add NAME`. The command writes a stub into `.maf/roles.yml`.
+2. Replace each `TODO` line in the stub. Use the four duty parts: focus,
+   checks, done condition, and avoid. Write them in Simplified Technical English.
+3. Use `NAME` as a role in Step 5.
+
+A role in `.maf/roles.yml` with the name of a built-in role replaces the built-in role.
+`maf roles` shows the source of each role.
+
+## Step 3d - Ask the user for the workflow
+
+The workflow tells the architect in which order to create tasks.
+Ask: "Which workflow do you want? Choose one, or describe your own in your own words."
+
+| Name | Stages |
+|---|---|
+| `simple` | Implement, review, merge. |
+| `plan-review` | Plan, review the plan, implement, review, merge. |
+| `tdd` | Plan, review the plan, write specs, implement, review, merge. |
+
+If the user chooses a name, copy the file `FLOW/templates/workflows/<name>.md`
+to `.maf/workflow.md`.
+If the user describes a workflow, write the description to `.maf/workflow.md` as
+stage instructions. Use Simplified Technical English. Write one instruction per
+sentence. Write "Stage N." at the start of each stage. State the gate that ends
+each stage. Do not create tasks for a stage in advance: the architect creates
+the tasks of the next stage after the gate passes.
+If the user wants no workflow, create no `.maf/workflow.md`.
+
+Only the architect reads `.maf/workflow.md`. Other roles do not see it.
+Run `maf update` after each later change of the file.
+Step 5 reads `.maf/roles.yml` and `.maf/workflow.md`, so write both before Step 5.
+
 ## Step 4 - Ask the user for a model per role
 
 Do not choose models yourself. Ask the user.
@@ -179,7 +226,10 @@ sessions, logs).
 
 ## Step 7 - Report to the user
 
-Report the generated files. Then give the user these instructions.
+Report the generated files. Then print one `maf start` command for each worker.
+Use the number of workers from Step 3b. A worker role with N workers gets the
+names `ROLE_1` to `ROLE_N`. A role with one worker may use the bare role name.
+Then give the user these instructions.
 
 > For each claude, opencode, or codex agent, open a terminal in the project
 > folder and run:

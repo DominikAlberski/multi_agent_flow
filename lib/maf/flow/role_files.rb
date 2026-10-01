@@ -8,7 +8,7 @@ module Flow
     def initialize(options, roles)
       @options = options
       @roles = roles
-      @prompts = PromptBuilder.new(roles, options.agents)
+      @prompts = PromptBuilder.new(roles, options.agents, Workflow.new(options.project).block)
     end
 
     def generate
