@@ -38,9 +38,6 @@ module Vault
   DIR = File.join(".maf", "obsidian")
   GRAPH_DIR = File.join(".maf", "graphify-out")
   GRAPH = File.join(GRAPH_DIR, "graph.json")
-  # graphify writes its output where GRAPHIFY_OUT points. Every graphify call
-  # of this script, and of its daemon, inherits the variable.
-  ENV["GRAPHIFY_OUT"] = File.expand_path(GRAPH_DIR)
   PID_FILE = ".maf/coordination/vault.pid"
   LOG_FILE = ".maf/coordination/vault.log"
   # A garbage or tiny VAULT_POLL would turn the watcher into a busy loop.
@@ -55,15 +52,19 @@ module Vault
   COMMANDS = { "stop" => :stop, "status" => :status, "export" => :export,
                "mcp" => :mcp, "daemon" => :loop_forever }.freeze
 
+  # Every path of this script is relative to the main checkout, where the graph
+  # and the watcher live. A command from a worktree moves there first.
+  # graphify writes its output where GRAPHIFY_OUT points. Every graphify call
+  # of this script, and of its daemon, inherits the variable.
   def self.run(argv)
+    Dir.chdir(Daemon.main_root)
+    ENV["GRAPHIFY_OUT"] = File.expand_path(GRAPH_DIR)
     return age(argv) if argv.first == "age"
 
     Daemon.public_send(COMMANDS.fetch(argv.first, :start))
   end
 
-  # The graph lives in the main checkout. An agent in a worktree gets its age.
   def self.age(argv)
-    Dir.chdir(Daemon.main_root)
     GraphAge.print(json: argv.include?("--json"))
   end
 
@@ -124,11 +125,8 @@ module Vault
 
     # MCP is a stdio server the client spawns, not a background daemon. Point
     # an MCP client at this command instead of a long-running process.
-    # An agent in a worktree starts this command too. The graph lives in the
-    # main checkout, so the command moves there first.
     def self.mcp
       abort "vault: graphify-mcp not found on PATH. Install: pip/uv install graphifyy" unless which("graphify-mcp")
-      Dir.chdir(main_root)
       abort "vault: #{GRAPH} missing. Run `vault` to build it first." unless File.exist?(GRAPH)
 
       Kernel.exec("graphify-mcp", File.expand_path(GRAPH))

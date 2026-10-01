@@ -107,6 +107,15 @@ def test_age_in_a_worktree_reads_the_graph_of_the_main_project
   assert_equal "fresh", JSON.parse(out).fetch("state")
 end
 
+  def test_status_in_a_worktree_reports_the_graph_of_the_main_project
+    build_graph
+    git("worktree", "add", "-q", "-b", "w", ".maf/worktrees/w")
+    out = IO.popen([RbConfig.ruby, VAULT, "status"], chdir: File.join(@dir, ".maf", "worktrees", "w"), err: [:child, :out], &:read)
+
+    assert_includes out, "graph: .maf/graphify-out/graph.json\n"
+    refute_includes out, "graph.json missing"
+  end
+
   def test_status_shows_the_age
     out = IO.popen([RbConfig.ruby, VAULT, "status"], chdir: @dir, err: [:child, :out], &:read)
 
