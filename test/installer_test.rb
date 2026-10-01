@@ -351,6 +351,16 @@ class FlowTest < InstallerTestCase
     refute_match(/COORD_AGENT|coord add --agent/, content)
   end
 
+  # The dispatcher reads the report block to decide if a dispatched run is done.
+  def test_role_files_ask_for_the_report_block_in_a_dispatched_run
+    out, status = flow("--agent", "claude:backend-developer", "--agent", "opencode:architect")
+
+    assert_equal 0, status, out
+    [File.join(@dir, ".claude", "agents", "backend-developer.md"), architect_file].each do |path|
+      assert_includes File.read(path), Flow::REPORT_FORMAT
+    end
+  end
+
   def test_bootstrap_contract_uses_the_new_names
     contract = File.read(File.join(ROOT, "assets", "agents-contract.md"))
 

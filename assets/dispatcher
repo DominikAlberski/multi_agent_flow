@@ -13,7 +13,9 @@
 # Usage:
 #   ./dispatcher ROLE [--harness NAME | --command TEMPLATE] [--model M]
 #                     [--skill NAME | --no-skill] [--interval S] [--max-turns N]
-#                     [--timeout S] [--cache-window S] [--no-poll-tasks]
+#                     [--timeout S] [--idle-timeout S] [--grace S]
+#                     [--completion-signal TEXT] [--abort-signal TEXT]
+#                     [--cache-window S] [--no-poll-tasks]
 #                     [--once] [--verbose]
 #
 #   ./dispatcher tester                            # hermes (default)
@@ -37,6 +39,17 @@
 #   --max-turns N      Hermes max tool-calling turns per run (default: 50).
 #   --timeout S        Max wall-clock seconds per run (default: 300). The
 #                      dispatcher kills the agent's process group after it.
+#   --idle-timeout S   Fail a run that prints no output for S seconds
+#                      (default: 0, off). Claude Code prints its JSON only at
+#                      the end, so keep this off for --harness claude.
+#   --grace S          Seconds to wait for the agent to exit after the
+#                      completion signal, and for a child that holds stdout
+#                      (default: 5).
+#   --completion-signal TEXT  The agent prints TEXT when the work is complete.
+#                      The run is a success, and the dispatcher stops the
+#                      agent after the grace window. Default: off.
+#   --abort-signal TEXT  The agent prints TEXT when it gives up. The run is a
+#                      failure. Default: off.
 #   --cache-window S   Resume a session only if its last run ended less than
 #                      S seconds ago (default: 3300, 55 minutes). 0 means
 #                      never resume.
@@ -90,9 +103,11 @@ module Dispatcher
   MANIFEST = ".agent-flow.json"
   MAX_ATTEMPTS = 3
   MAX_BACKOFF = 3600
+  REPORT_RETRIES = 1
 
   Config = Struct.new(:role, :harness, :command, :model, :skill, :no_skill, :interval, :max_turns,
-                      :timeout, :cache_window, :once, :poll_tasks, :worker, :coord_dir, :verbose, keyword_init: true)
+                      :timeout, :idle_timeout, :grace, :completion_signal, :abort_signal,
+                      :cache_window, :once, :poll_tasks, :worker, :coord_dir, :verbose, keyword_init: true)
 
   module Log
     def self.line(message)
@@ -270,6 +285,39 @@ module Dispatcher
     end
   end
 
+  # Prefetch adds live context to a dispatch prompt: the output of
+  # `coord next ROLE` and of `git log --oneline -10`. Each part is cut to
+  # LIMIT characters. A failed command is logged and left out. Lead roles own
+  # no tasks, so they get no `coord next` part.
+  module Prefetch
+    LIMIT = 2000
+
+    def self.context(poller, role)
+      sections = commands(poller, role).filter_map { |label, run| section(label, run) }
+      sections.empty? ? "" : "\nLive context at dispatch time:\n\n#{sections.join("\n")}"
+    end
+
+    def self.commands(poller, role)
+      board = LEADS.include?(role) ? {} : { "./coord next #{role}" => -> { poller.next_output } }
+      board.merge("git log --oneline -10" => -> { git_log })
+    end
+
+    def self.section(label, run)
+      text = run.call
+      Log.line("prefetch failed: #{label}; the prompt goes out without it") unless text
+      text && "$ #{label}\n#{bound(text.strip)}\n"
+    end
+
+    def self.bound(text) = text.length > LIMIT ? "#{text[0, LIMIT]}\n[cut at #{LIMIT} characters]" : text
+
+    def self.git_log
+      output = IO.popen(%w[git log --oneline -10], err: File::NULL, &:read)
+      $?.success? ? output : nil
+    rescue SystemCallError
+      nil
+    end
+  end
+
   # Poller lists the role's unclaimed task IDs via `coord next`.
   class Poller
     def initialize(env, role)
@@ -277,11 +325,14 @@ module Dispatcher
       @role = role
     end
 
-    def unclaimed_task_ids
+    def unclaimed_task_ids = next_output.to_s.scan(/^([0-9a-f-]{36})\b/).flatten
+
+    # The output of `coord next ROLE`, or nil when the command fails.
+    def next_output
       output = IO.popen(@env, coord_command + ["next", @role], err: File::NULL, &:read)
-      $?.success? ? output.scan(/^([0-9a-f-]{36})\b/).flatten : []
+      $?.success? ? output : nil
     rescue Errno::ENOENT
-      []
+      nil
     end
 
     private
@@ -294,27 +345,128 @@ module Dispatcher
     end
   end
 
-  Result = Struct.new(:output, :success, :timed_out)
+  Result = Struct.new(:output, :success, :timed_out, :reason)
 
-  # Spawn runs a command in its own process group with a wall-clock limit. On
-  # timeout it kills the whole group (TERM, then KILL), which also stops the
-  # children of an `sh -c` template.
-  module Spawn
-    GRACE = 5
+  # Limits are the run limits besides the hard --timeout. idle: seconds
+  # without output before the run fails (0 means off). grace: seconds to
+  # wait after a completion signal, and for a child that holds stdout.
+  # complete and abort: signal strings in the output (nil means off).
+  Limits = Struct.new(:idle, :grace, :complete, :abort) do
+    def self.from(config)
+      new(config.idle_timeout || 0, config.grace || Spawn::GRACE, config.completion_signal, config.abort_signal)
+    end
+  end
 
-    def self.run(cmd, env:, timeout:)
-      reader, writer = IO.pipe
-      pid = Process.spawn(env, *cmd, in: File::NULL, out: writer, err: writer, pgroup: true)
-      collect(pid, reader.tap { writer.close }, timeout)
-    rescue Errno::ENOENT => e
-      Result.new(e.message, false, false)
+  # Stream reads the output of a child in a thread and records the time of
+  # the last output.
+  class Stream
+    def initialize(reader)
+      @reader = reader
+      @lock, @text, @last_at = Mutex.new, String.new, Time.now
+      @thread = Thread.new { pump }
     end
 
-    def self.collect(pid, reader, timeout)
-      output = Thread.new { reader.read }
+    def idle_seconds = Time.now - @last_at
+    def include?(signal) = @lock.synchronize { @text.include?(signal.b) }
+
+    # A background grandchild can hold the pipe open after the agent exits.
+    # Then the reader thread is still blocked: kill it before closing the pipe,
+    # so it never dies with an IOError and never lingers.
+    def close(grace)
+      @thread.join(grace)
+      @thread.kill
+      @reader.close
+      @lock.synchronize { @text.dup.force_encoding(Encoding::UTF_8) }
+    end
+
+    private
+
+    def pump
+      loop { append(@reader.readpartial(4096)) }
+    rescue EOFError, IOError
+      nil
+    end
+
+    def append(chunk) = @lock.synchronize { (@text << chunk.b) && (@last_at = Time.now) }
+  end
+
+  # Watch decides why a run ends. :exit means the process exited. :complete
+  # and :abort mean a signal string appeared in the output. :idle means no
+  # output for limits.idle seconds. :timeout means the hard --timeout passed.
+  # After a completion signal, the process gets limits.grace seconds to exit.
+  class Watch
+    TICK = 0.2
+
+    def initialize(timeout, limits)
+      @deadline = Time.now + timeout
+      @limits = limits
+    end
+
+    def grace = @limits.grace
+
+    def wait(waiter, stream)
+      loop do
+        reason = signal(stream) || (waiter.join(TICK) ? :exit : limit(stream))
+        return settle(reason, waiter) if reason
+      end
+    end
+
+    # A signal in the last output chunk can arrive after the exit.
+    def final(reason, output)
+      return reason unless reason == :exit
+
+      signal(output) || :exit
+    end
+
+    private
+
+    def settle(reason, waiter)
+      waiter.join(grace) if reason == :complete
+      reason
+    end
+
+    def signal(text)
+      return :abort if seen?(text, @limits.abort)
+
+      :complete if seen?(text, @limits.complete)
+    end
+
+    def seen?(text, signal) = !signal.to_s.empty? && text.include?(signal)
+
+    def limit(stream)
+      return :timeout if Time.now >= @deadline
+
+      :idle if @limits.idle.positive? && stream.idle_seconds >= @limits.idle
+    end
+  end
+
+  # Spawn runs a command in its own process group. Any end reason except a
+  # normal exit kills the whole group (TERM, then KILL), which also stops the
+  # children of an `sh -c` template. A completion signal is success even when
+  # the process must be killed. An abort signal is failure.
+  module Spawn
+    GRACE = 5
+    TIMEOUTS = %i[timeout idle].freeze
+
+    def self.run(cmd, env:, timeout:, limits: Limits.new(0, GRACE))
+      reader, writer = IO.pipe
+      pid = Process.spawn(env, *cmd, in: File::NULL, out: writer, err: writer, pgroup: true)
+      collect(pid, Stream.new(reader.tap { writer.close }), Watch.new(timeout, limits))
+    rescue Errno::ENOENT => e
+      Result.new(e.message, false, false, :missing)
+    end
+
+    def self.collect(pid, stream, watch)
       waiter = Process.detach(pid)
-      timed_out = waiter.join(timeout).nil? && stop(pid, waiter)
-      Result.new(drain(output, reader), waiter.value.success?, timed_out)
+      reason = watch.wait(waiter, stream)
+      stop(pid, waiter) unless reason == :exit
+      result(stream.close(watch.grace), waiter, watch, reason)
+    end
+
+    def self.result(output, waiter, watch, reason)
+      reason = watch.final(reason, output)
+      success = reason == :complete || (reason == :exit && waiter.value.success?)
+      Result.new(output, success, TIMEOUTS.include?(reason), reason)
     end
 
     def self.stop(pid, waiter)
@@ -323,16 +475,6 @@ module Dispatcher
       true
     rescue Errno::ESRCH
       true
-    end
-
-    # A background grandchild can hold the pipe open after the agent exits.
-    # Then the reader thread is still blocked: kill it before closing the pipe,
-    # so it never dies with an IOError and never lingers.
-    def self.drain(output, reader)
-      text = output.join(GRACE)&.value
-      output.kill
-      reader.close
-      text.to_s
     end
   end
 
@@ -352,6 +494,41 @@ module Dispatcher
     end
   end
 
+  # TokenUsage reads the token usage of one run and adds it to the totals of
+  # the worker in coordination/usage/<worker>.json. Claude Code, Hermes, and
+  # Codex report usage. A run without usage data adds nothing. A usage error
+  # never fails a run.
+  class TokenUsage
+    KEYS = { "input_tokens" => %w[input_tokens prompt_tokens],
+             "output_tokens" => %w[output_tokens completion_tokens] }.freeze
+
+    def self.normalize(data)
+      return nil unless data.is_a?(Hash)
+
+      KEYS.transform_values { |names| data.values_at(*names).compact.first.to_i }
+    end
+
+    def self.sum(list) = list.empty? ? nil : list.reduce { |total, usage| total.merge(usage) { |_, a, b| a + b } }
+
+    def initialize(coord_dir, worker)
+      @path = File.join(coord_dir, "usage", "#{worker}.json")
+    end
+
+    def add(usage)
+      return unless usage
+
+      totals = read
+      write(usage.to_h { |key, value| [key, totals[key].to_i + value] }.merge("runs" => totals["runs"].to_i + 1))
+    rescue SystemCallError, JSON::ParserError => e
+      Log.line("token usage not saved: #{e.message}")
+    end
+
+    private
+
+    def read = File.exist?(@path) ? JSON.parse(File.read(@path)) : {}
+    def write(data) = FileUtils.mkdir_p(File.dirname(@path)) && File.write(@path, JSON.generate(data))
+  end
+
   module Harness
     # Adapter is the part every built-in adapter shares. Each adapter sets
     # STALE_SESSION to the error its CLI prints for an unknown session ID.
@@ -359,6 +536,7 @@ module Dispatcher
       def stale_session?(output) = output.include?(self::STALE_SESSION)
       def resume(session_id, *flag) = session_id ? [*flag, session_id] : []
       def present(value) = value.to_s.empty? ? nil : value
+      def usage(_output) = nil
     end
 
     # Hermes: `hermes chat --oneshot`, JSONL output, skill preload.
@@ -380,6 +558,7 @@ module Dispatcher
       def self.result_event(output) = Events.last(output) { |event| event["type"] == "result" }
       def self.result_text(output) = result_event(output)["text"]
       def self.session_id(output) = present(result_event(output)["session_id"])
+      def self.usage(output) = TokenUsage.normalize(result_event(output)["usage"])
     end
 
     # Claude Code: `claude -p` prints one JSON object with session_id and
@@ -397,6 +576,7 @@ module Dispatcher
       def self.result_event(output) = Events.last(output) { |event| event.key?("result") }
       def self.result_text(output) = result_event(output)["result"]
       def self.session_id(output) = present(result_event(output)["session_id"])
+      def self.usage(output) = TokenUsage.normalize(result_event(output)["usage"])
     end
 
     # Codex: `codex exec` (or `codex exec resume ID`) with JSONL events. Codex
@@ -424,6 +604,12 @@ module Dispatcher
 
       def self.session_id(output)
         present(Events.last(output) { |event| event["type"] == "thread.started" }["thread_id"])
+      end
+
+      # Codex reports the usage of each turn in a turn.completed event.
+      def self.usage(output)
+        turns = Events.all(output).select { |event| event["type"] == "turn.completed" }
+        TokenUsage.sum(turns.filter_map { |event| TokenUsage.normalize(event["usage"]) })
       end
     end
 
@@ -455,13 +641,14 @@ module Dispatcher
 
       def self.build_command(config, prompt, _session_id)
         values = { prompt: prompt, role: config.role, skill: config.skill, model: config.model }
-        line = PLACEHOLDERS.reduce(config.command) { |cmd, key| cmd.gsub("%{#{key}}", values[key].to_s.shellescape) }
+        line = PLACEHOLDERS.reduce(config.command) { |cmd, key| cmd.gsub("%{#{key}}") { values[key].to_s.shellescape } }
         ["sh", "-c", line]
       end
 
       def self.stale_session?(_output) = false
       def self.session_id(_output) = nil
       def self.result_text(_output) = nil
+      def self.usage(_output) = nil
     end
 
     REGISTRY = { "hermes" => Hermes, "claude" => Claude, "codex" => Codex, "opencode" => Opencode }.freeze
@@ -470,6 +657,100 @@ module Dispatcher
       return Generic if config.command
 
       REGISTRY.fetch(config.harness) { abort "dispatcher: unknown harness '#{config.harness}'. Use --command." }
+    end
+  end
+
+  # ReportBlock reads the typed result that an agent puts at the end of its
+  # final reply: <report>{"status":"done","tests":"pass","next":"..."}</report>.
+  # parse returns nil when no block is present. Otherwise it returns a Parsed
+  # with the data or with the validation error.
+  # NOTE: lib/maf/flow/prompt_text.rb carries the same REPORT_FORMAT; both run standalone.
+  module ReportBlock
+    REPORT_FORMAT = '<report>{"status":"<done|blocked|needs_review>","tests":"<pass|fail>","next":"<next>"}</report>'
+    STATUSES = %w[done blocked needs_review].freeze
+    TESTS = %w[pass fail].freeze
+    PATTERN = %r{<report>(.*?)</report>}m
+    Parsed = Struct.new(:data, :error)
+
+    def self.parse(text) = text.to_s.scan(PATTERN).flatten.last&.then { |body| check(decode(body.strip)) }
+
+    # Raw harness output holds the block inside a JSON string, with escaped quotes.
+    def self.decode(body) = load(body) || load(load(%("#{body}")).to_s)
+
+    def self.load(text)
+      JSON.parse(text)
+    rescue JSON::ParserError
+      nil
+    end
+
+    def self.check(value)
+      return Parsed.new(nil, "the report block is not a JSON object") unless value.is_a?(Hash)
+
+      error = errors(value).first
+      Parsed.new(error ? nil : value, error)
+    end
+
+    def self.errors(value)
+      [("status must be one of #{STATUSES.join(", ")}" unless STATUSES.include?(value["status"])),
+       ("tests must be pass or fail" unless value["tests"].nil? || TESTS.include?(value["tests"])),
+       ("status done needs tests pass, not fail" if value["status"] == "done" && value["tests"] == "fail")].compact
+    end
+  end
+
+  # Verify runs the verify command of .agent-flow.json after a successful
+  # run, in the worktree. A non-zero exit makes the run no success. No key
+  # means no check. Lead roles own no task, so they get no check.
+  module Verify
+    def self.pass?(config, env)
+      command = Project.manifest["verify"].to_s
+      return true if command.empty? || LEADS.include?(config.role)
+
+      check(Spawn.run(["sh", "-c", command], env: env, timeout: config.timeout), command)
+    end
+
+    def self.check(result, command)
+      Log.line("verify command failed (#{command}): #{result.output.lines.last(5).join.strip}") unless result.success
+      result.success
+    end
+  end
+
+  # Outcome decides what a finished run means. No report block keeps the old
+  # rule: exit 0 is success. A report block with status done is success.
+  # Status blocked or needs_review, and an invalid block, are no success. The
+  # session stays, so the next run resumes it.
+  class Outcome
+    def initialize(session, started_at)
+      @session = session
+      @started_at = started_at
+    end
+
+    def conclude(block, text)
+      keep_handoff(text)
+      return finished(text, block) if block.nil? || block.data&.fetch("status") == "done"
+
+      unfinished(block)
+    end
+
+    private
+
+    def finished(text, block)
+      Log.line("agent finished#{" (no report block)" unless block}: #{text.slice(0, 80)}")
+      true
+    end
+
+    def unfinished(block)
+      reason = block.error ? "an invalid report block: #{block.error}" : "status #{block.data["status"]}"
+      Log.line("agent ended with #{reason}; next: #{block.data&.fetch("next", nil) || "-"}")
+      false
+    end
+
+    # Some models skip the handoff instruction. Then the agent's final reply
+    # becomes the note, so a later fresh session still gets some context.
+    def keep_handoff(text)
+      note = text.gsub(ReportBlock::PATTERN, "").strip
+      return if note.empty? || @session.handoff_written_since?(@started_at)
+
+      @session.write_handoff(note)
     end
   end
 
@@ -512,8 +793,14 @@ module Dispatcher
     def attempt(prompt, session_id)
       @started_at = Time.now
       Log.line("dispatching #{@config.role} (session: #{session_id || "new"})")
-      cmd = @harness.build_command(@config, Prompt.with_handoff(prompt, @session, session_id), session_id)
-      Spawn.run(cmd, env: @env, timeout: @config.timeout)
+      text = Prompt.with_handoff(prompt, @session, session_id) + Prompt.signals(@config)
+      spawn(@harness.build_command(@config, text, session_id))
+    end
+
+    def spawn(cmd)
+      result = Spawn.run(cmd, env: @env, timeout: @config.timeout, limits: Limits.from(@config))
+      TokenUsage.new(@config.coord_dir, @config.worker).add(@harness.usage(result.output))
+      result
     end
 
     def retry_fresh(prompt)
@@ -522,31 +809,37 @@ module Dispatcher
       attempt(prompt, nil)
     end
 
-    def report(result)
+    # A missing or invalid report block resumes the session with the error,
+    # at most REPORT_RETRIES times. A harness without a session gets no retry.
+    def report(result, retries = REPORT_RETRIES)
       return failed(result) unless result.success
 
       @harness.session_id(result.output)&.then { |id| @session.save(id) }
-      finished(@harness.result_text(result.output).to_s)
+      block = ReportBlock.parse(@harness.result_text(result.output) || result.output)
+      retry_report?(block, retries) ? report(ask_for_report(block), retries - 1) : conclude(block, result)
     end
 
-    def finished(text)
-      keep_handoff(text)
-      Log.line("agent finished: #{text.slice(0, 80)}")
-      true
+    def retry_report?(block, retries) = retries.positive? && @session.id && (block.nil? || block.error)
+
+    def ask_for_report(block)
+      problem = block ? "Your report block is invalid: #{block.error}." : "Your final reply has no report block."
+      Log.line("#{problem} Resuming session #{@session.id} once for the report block")
+      spawn(@harness.build_command(@config, "#{problem}\n#{Prompt.report}", @session.id))
     end
 
-    # Some models skip the handoff instruction. Then the agent's final reply
-    # becomes the note, so a later fresh session still gets some context.
-    def keep_handoff(text)
-      return if text.empty? || @session.handoff_written_since?(@started_at)
-
-      @session.write_handoff(text)
+    def conclude(block, result)
+      Outcome.new(@session, @started_at).conclude(block, @harness.result_text(result.output).to_s) &&
+        Verify.pass?(@config, @env)
     end
 
     def failed(result)
-      reason = result.timed_out ? "timed out after #{@config.timeout}s" : "failed"
-      Log.line("agent #{reason}: #{result.output.lines.last(5).join.strip}")
+      Log.line("agent #{failure_label(result.reason)}: #{result.output.lines.last(5).join.strip}")
       false
+    end
+
+    def failure_label(reason)
+      { timeout: "timed out after #{@config.timeout}s", idle: "idle for #{@config.idle_timeout}s (no output)",
+        abort: "sent the abort signal" }.fetch(reason, "failed")
     end
   end
 
@@ -582,10 +875,29 @@ module Dispatcher
     # A fresh session starts with the previous session's handoff note. A
     # resumed session already has that context. Every run writes a new note
     # while its cache is still warm, which is cheap.
+    REPORT = <<~TEXT
+      End your final reply with one report block on its own line:
+      %<format>s
+      Use status done only when the work is complete. Use blocked or needs_review otherwise.
+    TEXT
+
+    SIGNALS = <<~TEXT
+      When the work is complete, print %<complete>s on its own line as the last output.
+      If you give up, print %<abort>s on its own line instead.
+    TEXT
+
+    def self.signals(config)
+      return "" unless config.completion_signal || config.abort_signal
+
+      format(SIGNALS, complete: config.completion_signal || "-", abort: config.abort_signal || "-")
+    end
+
+    def self.report = format(REPORT, format: ReportBlock::REPORT_FORMAT)
+
     def self.with_handoff(prompt, session, session_id)
       note = session.handoff
       intro = session_id || note.empty? ? "" : "Handoff note from your previous session:\n#{note}\n\n"
-      "#{intro}#{prompt}\n#{format(HANDOFF, path: session.handoff_path)}"
+      "#{intro}#{prompt}\n#{format(HANDOFF, path: session.handoff_path)}#{report}"
     end
   end
 
@@ -648,6 +960,7 @@ module Dispatcher
 
     private
 
+    def context = Prefetch.context(@poller, @config.role)
     def timing_label = "interval=#{@config.interval}s cache_window=#{@config.cache_window}s"
     def harness_label = @config.command ? "command=#{@config.command.inspect}" : "harness=#{@config.harness}"
 
@@ -660,7 +973,7 @@ module Dispatcher
       messages = @mailbox.take
       return false if messages.empty?
 
-      settle(messages, @runner.dispatch(Prompt.messages(messages, @config.role)))
+      settle(messages, @runner.dispatch(Prompt.messages(messages, @config.role) + context))
     end
 
     # Tasks still unclaimed after a message run count as dispatched, so the
@@ -675,7 +988,7 @@ module Dispatcher
       ids = @poller.unclaimed_task_ids
       return false unless @watch.due?(ids)
 
-      @runner.dispatch(Prompt.tasks(@config.role))
+      @runner.dispatch(Prompt.tasks(@config.role) + context)
       @watch.dispatched(ids)
       true
     end
@@ -686,10 +999,14 @@ module Dispatcher
     VALUES = { "--harness NAME" => [:harness, String], "--command TEMPLATE" => [:command, String],
                "--model M" => [:model, String], "--skill NAME" => [:skill, String],
                "--interval S" => [:interval, Integer], "--max-turns N" => [:max_turns, Integer],
-               "--timeout S" => [:timeout, Integer], "--cache-window S" => [:cache_window, Integer] }.freeze
+               "--timeout S" => [:timeout, Integer], "--cache-window S" => [:cache_window, Integer],
+               "--idle-timeout S" => [:idle_timeout, Integer], "--grace S" => [:grace, Integer],
+               "--completion-signal TEXT" => [:completion_signal, String],
+               "--abort-signal TEXT" => [:abort_signal, String] }.freeze
     SWITCHES = { "--no-skill" => [:no_skill, true], "--no-poll-tasks" => [:poll_tasks, false],
                  "--once" => [:once, true], "--verbose" => [:verbose, true] }.freeze
-    DEFAULTS = { harness: "hermes", interval: 60, max_turns: 50, timeout: 300, cache_window: 3300, poll_tasks: true,
+    DEFAULTS = { harness: "hermes", interval: 60, max_turns: 50, timeout: 300, idle_timeout: 0, grace: Spawn::GRACE,
+                 cache_window: 3300, poll_tasks: true,
                  no_skill: false, once: false, verbose: false }.freeze
 
     def self.parse(argv, env = ENV)
@@ -704,6 +1021,12 @@ module Dispatcher
       positive = config.interval.positive? && config.timeout.positive?
       abort "dispatcher: --interval and --timeout must be positive" unless positive
       abort "dispatcher: --cache-window must be 0 or more" if config.cache_window.negative?
+      validate_limits(config)
+    end
+
+    def self.validate_limits(config)
+      limits = [config.idle_timeout, config.grace]
+      abort "dispatcher: --idle-timeout and --grace must be 0 or more" if limits.any?(&:negative?)
       config
     end
 

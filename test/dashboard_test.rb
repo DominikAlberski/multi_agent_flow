@@ -40,6 +40,15 @@ class DashboardCollectorTest < Minitest::Test
     assert_equal "2026-09-26T10:00:00Z", workers.first["last_event"]
   end
 
+  def test_token_usage_per_worker
+    FileUtils.mkdir_p(File.join(@coord, "usage"))
+    File.write(File.join(@coord, "usage", "tester-bot.json"), JSON.generate("input_tokens" => 5, "runs" => 1))
+    File.write(File.join(@coord, "usage", "broken.json"), "{")
+    tokens = Dashboard::Collector.new(Dashboard::Config.new(["--coord", @coord])).collect[:tokens]
+
+    assert_equal({ "tester-bot" => { "input_tokens" => 5, "runs" => 1 }, "broken" => {} }, tokens)
+  end
+
   def test_no_registry_means_no_workers
     assert_empty workers
   end

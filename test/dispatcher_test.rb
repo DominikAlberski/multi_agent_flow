@@ -206,6 +206,58 @@ class SpawnTest < Minitest::Test
     refute result.timed_out
   end
 
+  def limits(**values) = Dispatcher::Limits.new(values.fetch(:idle, 0), values.fetch(:grace, 1),
+                                                 values[:complete], values[:abort])
+
+  # The agent prints the signal but a child keeps it alive: the run succeeds.
+  def test_completion_signal_succeeds_and_stops_a_hanging_agent
+    started = Time.now
+    result = Dispatcher::Spawn.run(["sh", "-c", "echo work; echo DONE-1; sleep 30"], env: {}, timeout: 20,
+                                                                                   limits: limits(complete: "DONE-1"))
+    assert result.success
+    assert_equal :complete, result.reason
+    assert_operator Time.now - started, :<, 10
+  end
+
+  def test_completion_signal_wins_over_a_failing_exit_status
+    result = Dispatcher::Spawn.run(["sh", "-c", "echo DONE-1; exit 3"], env: {}, timeout: 5,
+                                                                       limits: limits(complete: "DONE-1"))
+    assert result.success
+  end
+
+  def test_abort_signal_fails_even_with_exit_zero
+    result = Dispatcher::Spawn.run(["sh", "-c", "echo GIVE-UP; exit 0"], env: {}, timeout: 5,
+                                                                        limits: limits(abort: "GIVE-UP"))
+    refute result.success
+    assert_equal :abort, result.reason
+  end
+
+  def test_idle_timeout_fails_a_silent_agent
+    started = Time.now
+    result = Dispatcher::Spawn.run(["sh", "-c", "echo start; sleep 30"], env: {}, timeout: 20, limits: limits(idle: 1))
+    refute result.success
+    assert result.timed_out
+    assert_equal :idle, result.reason
+    assert_operator Time.now - started, :<, 10
+  end
+
+  def test_output_resets_the_idle_timer
+    script = "for i in 1 2 3 4; do echo tick; sleep 0.5; done"
+    result = Dispatcher::Spawn.run(["sh", "-c", script], env: {}, timeout: 20, limits: limits(idle: 1))
+    assert result.success
+    assert_equal :exit, result.reason
+  end
+
+  # A grandchild holds stdout after the agent exits: the exit status decides
+  # after the grace window, and the run does not hang.
+  def test_a_child_that_holds_stdout_does_not_block_the_run
+    started = Time.now
+    result = Dispatcher::Spawn.run(["sh", "-c", "(sleep 30 &); echo out"], env: {}, timeout: 20, limits: limits)
+    assert result.success
+    assert_includes result.output, "out"
+    assert_operator Time.now - started, :<, 10
+  end
+
   def test_missing_binary_is_a_failure
     result = Dispatcher::Spawn.run(["no-such-agent-binary"], env: {}, timeout: 5)
     refute result.success
@@ -283,6 +335,13 @@ class GenericHarnessTest < Minitest::Test
     assert_equal "agent backend-developer p-backend-developer fix\\ it\\;\\ rm\\ -rf\\ /", cmd.last
   end
 
+  # Regression: gsub read the \' of an escaped apostrophe as the text after
+  # the match, so a prompt with "user's" broke the shell command.
+  def test_an_apostrophe_in_the_prompt_survives_the_template
+    cmd = Dispatcher::Harness::Generic.build_command(config(command: "printf %s %{prompt}"), "the user's fix", nil)
+    assert_equal "the user's fix", IO.popen(cmd, &:read)
+  end
+
   def test_has_no_session_support
     refute Dispatcher::Harness::Generic.stale_session?("Session not found")
     assert_nil Dispatcher::Harness::Generic.session_id("{}")
@@ -297,8 +356,11 @@ class RunnerTest < Minitest::Test
     def self.build_command(config, prompt, session_id) = ["sh", "-c", config.command, "sh", session_id.to_s, prompt]
     def self.stale_session?(output) = output.include?("Session not found")
     def self.session_id(output) = output[/session=(\S+)/, 1]
-    def self.result_text(_output) = "ok"
+    def self.result_text(output) = output[/^reply: (.*)/m, 1] || "ok #{DONE}"
+    def self.usage(output) = output[/tokens=(\d+)/, 1]&.then { |n| { "input_tokens" => n.to_i, "output_tokens" => 1 } }
   end
+
+  DONE = '<report>{"status":"done","tests":"pass"}</report>'
 
   def setup
     @dir = Dir.mktmpdir("dispatcher-runner-test")
@@ -383,6 +445,100 @@ class RunnerTest < Minitest::Test
     assert_includes File.read("#{@calls}.prompt"), "carry this"
   end
 
+  def reply(text) = %(echo "$1" >> #{@calls}; echo session=s-1; printf 'reply: %s' '#{text}')
+  def calls = File.readlines(@calls, chomp: true)
+
+  def test_report_done_is_a_success
+    capture_io { assert runner(reply("ok #{DONE}")).dispatch("go") }
+    assert_equal [""], calls
+  end
+
+  # An agent that gives up but exits 0 must not count as done.
+  def test_report_blocked_is_no_success_and_keeps_the_session
+    blocked = '<report>{"status":"blocked","next":"ask the architect"}</report>'
+    out, err = capture_io { refute runner(reply("stuck #{blocked}")).dispatch("go") }
+    assert_equal "s-1", session.id
+    assert_includes out + err, "status blocked"
+  end
+
+  def test_report_needs_review_is_no_success
+    capture_io { refute runner(reply('<report>{"status":"needs_review"}</report>')).dispatch("go") }
+  end
+
+  def test_missing_block_resumes_the_session_once_then_counts_the_exit_status
+    capture_io { assert runner(reply("no block")).dispatch("go") }
+    assert_equal ["", "s-1"], calls
+  end
+
+  def test_invalid_block_resumes_once_then_fails
+    capture_io { refute runner(reply('<report>{"status":"maybe"}</report>')).dispatch("go") }
+    assert_equal ["", "s-1"], calls
+  end
+
+  def test_retry_prompt_names_the_validation_error
+    script = %(echo session=s-1; printf '%s' "$2" >> #{@calls}.prompt; printf 'reply: <report>{"status":"x"}</report>')
+    capture_io { runner(script).dispatch("go") }
+    assert_includes File.read("#{@calls}.prompt"), "Your report block is invalid: status must be one of"
+  end
+
+  # A custom command has no session, so the runner cannot resume it.
+  def test_missing_block_without_a_session_counts_the_exit_status
+    capture_io { assert runner(%(echo x >> #{@calls}; printf 'reply: plain')).dispatch("go") }
+    assert_equal ["x"], calls
+  end
+
+  def test_abort_signal_fails_the_run_and_logs_it
+    runner = Dispatcher::Runner.new(config(command: "echo GIVE-UP", timeout: 5, abort_signal: "GIVE-UP"), FakeHarness, {})
+    out, err = capture_io { refute runner.dispatch("go") }
+    assert_includes out + err, "sent the abort signal"
+  end
+
+  def with_verify(command, &block)
+    File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(verify: command))
+    Dir.chdir(@dir, &block)
+  end
+
+  def test_failing_verify_command_makes_a_done_run_no_success
+    with_verify("echo broken; exit 1") do
+      out, err = capture_io { refute runner(reply("ok #{DONE}")).dispatch("go") }
+      assert_includes out + err, "verify command failed (echo broken; exit 1): broken"
+    end
+  end
+
+  def test_passing_verify_command_keeps_the_success
+    with_verify("true") { capture_io { assert runner(reply("ok #{DONE}")).dispatch("go") } }
+  end
+
+  def test_a_lead_role_gets_no_verify_check
+    with_verify("exit 1") do
+      lead = Dispatcher::Runner.new(config(role: "architect", command: reply("ok #{DONE}"), timeout: 5), FakeHarness, {})
+      capture_io { assert lead.dispatch("go") }
+    end
+  end
+
+  def usage_totals = JSON.parse(File.read(File.join(@dir, "usage", "backend-developer-bot.json")))
+
+  def test_token_usage_adds_up_per_worker
+    2.times { capture_io { runner("echo tokens=10").dispatch("go") } }
+    assert_equal({ "input_tokens" => 20, "output_tokens" => 2, "runs" => 2 }, usage_totals)
+  end
+
+  def test_a_run_without_usage_writes_nothing
+    capture_io { assert runner("echo plain").dispatch("go") }
+    refute File.exist?(File.join(@dir, "usage"))
+  end
+
+  def test_a_broken_usage_file_never_fails_the_run
+    FileUtils.mkdir_p(File.join(@dir, "usage"))
+    File.write(File.join(@dir, "usage", "backend-developer-bot.json"), "{broken")
+    capture_io { assert runner("echo tokens=10").dispatch("go") }
+  end
+
+  def test_handoff_note_drops_the_report_block
+    capture_io { runner(reply("state #{DONE}")).dispatch("go") }
+    assert_equal "state", session.handoff
+  end
+
   # Regression: any non-zero exit cleared the session and re-ran the agent,
   # losing context and doubling the cost.
   def test_other_failures_keep_the_session_and_do_not_retry
@@ -423,6 +579,7 @@ class MainTest < Minitest::Test
 
   FakePoller = Struct.new(:ids) do
     def unclaimed_task_ids = ids
+    def next_output = ids.join("\n")
   end
 
   # A message run already tells the agent to work through `coord next`, so a
@@ -435,6 +592,40 @@ class MainTest < Minitest::Test
     main.instance_variable_set(:@poller, FakePoller.new(["t1"]))
     capture_io { 2.times { main.cycle } }
     assert_equal 1, File.readlines(calls).size
+  end
+
+  FakeBoard = Struct.new(:text) do
+    def unclaimed_task_ids = []
+    def next_output = text
+  end
+
+  def prompt_of_one_run(board)
+    write_message("backend-developer", "1.md", "architect", "first")
+    calls = File.join(@dir, "calls")
+    main = Dispatcher::Main.new(config(command: "echo %{prompt} >> #{calls}", poll_tasks: false, timeout: 5))
+    main.instance_variable_set(:@poller, board)
+    _out, err = capture_io { main.cycle }
+    [File.read(calls), err]
+  end
+
+  def test_prompt_gets_the_board_and_the_git_log
+    prompt, = prompt_of_one_run(FakeBoard.new("abc\tfix login\n"))
+    assert_includes prompt, "$ ./coord next backend-developer\nabc\tfix login"
+    assert_includes prompt, "$ git log --oneline -10\n"
+  end
+
+  def test_prefetch_text_is_bounded
+    prompt, = prompt_of_one_run(FakeBoard.new("x" * 5000))
+    assert_includes prompt, "[cut at #{Dispatcher::Prefetch::LIMIT} characters]"
+    refute_includes prompt, "x" * (Dispatcher::Prefetch::LIMIT + 1)
+  end
+
+  def test_a_failed_prefetch_is_logged_and_the_run_goes_on
+    prompt, err = Dir.chdir(@dir) { prompt_of_one_run(FakeBoard.new(nil)) }
+    assert_includes err, "prefetch failed: ./coord next backend-developer"
+    assert_includes err, "prefetch failed: git log --oneline -10"
+    assert_includes prompt, "The dispatcher took these messages"
+    assert_equal 1, inbox("read").size
   end
 
   def test_failed_run_returns_messages_to_the_inbox
@@ -471,6 +662,21 @@ class OptionsTest < Minitest::Test
     assert config.once
   end
 
+  def test_timeout_split_flags
+    config = parse("reviewer", "--idle-timeout", "90", "--grace", "2", "--completion-signal", "OK!",
+                   "--abort-signal", "NO!")
+    assert_equal [90, 2, "OK!", "NO!"], Dispatcher::Limits.from(config).to_a
+    assert_equal 300, config.timeout
+  end
+
+  def test_idle_timeout_is_off_by_default
+    assert_equal [0, Dispatcher::Spawn::GRACE, nil, nil], Dispatcher::Limits.from(parse("reviewer")).to_a
+  end
+
+  def test_rejects_a_negative_idle_timeout
+    assert_raises(SystemExit) { capture_io { parse("reviewer", "--idle-timeout", "-1") } }
+  end
+
   def test_rejects_a_zero_interval
     assert_raises(SystemExit) { capture_io { parse("reviewer", "--interval", "0") } }
   end
@@ -492,6 +698,17 @@ class PromptTest < Minitest::Test
     assert_includes prompt, "--- message from pm ---\ndo y"
     assert_includes prompt, "AGENTS.md"
     assert_includes prompt, "Do not use --wait"
+  end
+
+  def test_dispatch_prompt_asks_for_the_report_block
+    session = Dispatcher::Session.new("/tmp/none", "w")
+    assert_includes Dispatcher::Prompt.with_handoff("go", session, nil), Dispatcher::ReportBlock::REPORT_FORMAT
+  end
+
+  def test_signals_are_only_in_the_prompt_when_set
+    config = Dispatcher::Config.new(completion_signal: "DONE-1")
+    assert_includes Dispatcher::Prompt.signals(config), "print DONE-1"
+    assert_equal "", Dispatcher::Prompt.signals(Dispatcher::Config.new)
   end
 
   def test_tasks_prompt_names_the_role
@@ -650,6 +867,31 @@ class AdapterTest < Minitest::Test
     assert harness("codex").stale_session?("thread/resume failed: no rollout found for thread id 0000")
   end
 
+  def test_claude_usage_comes_from_the_result_event
+    output = %({"result":"ok","session_id":"s","usage":{"input_tokens":12,"output_tokens":3,"cache_read_input_tokens":9}}\n)
+    assert_equal({ "input_tokens" => 12, "output_tokens" => 3 }, harness("claude").usage(output))
+  end
+
+  def test_codex_usage_adds_up_the_turns
+    output = <<~OUT
+      {"type":"turn.completed","usage":{"input_tokens":5,"cached_input_tokens":1,"output_tokens":2}}
+      {"type":"turn.completed","usage":{"input_tokens":7,"output_tokens":4}}
+    OUT
+    assert_equal({ "input_tokens" => 12, "output_tokens" => 6 }, harness("codex").usage(output))
+  end
+
+  def test_hermes_usage_comes_from_the_result_event
+    output = %({"type":"result","session_id":"s","usage":{"prompt_tokens":8,"completion_tokens":2}}\n)
+    assert_equal({ "input_tokens" => 8, "output_tokens" => 2 }, harness("hermes").usage(output))
+  end
+
+  def test_absent_usage_is_nil
+    assert_nil harness("claude").usage(%({"result":"ok"}\n))
+    assert_nil harness("codex").usage("")
+    assert_nil harness("opencode").usage("x")
+    assert_nil Dispatcher::Harness::Generic.usage("x")
+  end
+
   def test_opencode_command
     cmd = harness("opencode").build_command(config(model: "p/m"), "go", "ses_1")
     assert_equal %w[opencode run --format json --agent backend-developer], cmd.first(6)
@@ -711,5 +953,40 @@ class StopSignalTest < Minitest::Test
     assert_includes File.read(File.join(dir, "log")), "stopped (TERM)"
   ensure
     FileUtils.remove_entry(dir) if dir
+  end
+end
+
+class ReportBlockTest < Minitest::Test
+  def parse(text) = Dispatcher::ReportBlock.parse(text)
+
+  def test_absent_block_is_nil
+    assert_nil parse("all done")
+    assert_nil parse(nil)
+  end
+
+  def test_valid_block
+    data = parse(%(text\n<report>{"status":"done","tests":"pass","next":"merge"}</report>)).data
+    assert_equal "merge", data["next"]
+  end
+
+  def test_the_last_block_wins
+    assert_equal "blocked", parse('<report>{"status":"done"}</report> <report>{"status":"blocked"}</report>').data["status"]
+  end
+
+  def test_escaped_block_inside_raw_json_output
+    output = %({"type":"text","text":"x <report>{\\"status\\":\\"done\\"}</report>"})
+    assert_equal "done", parse(output).data["status"]
+  end
+
+  def test_errors
+    assert_match(/status must be one of/, parse('<report>{"status":"ok"}</report>').error)
+    assert_match(/tests must be pass or fail/, parse('<report>{"status":"done","tests":"x"}</report>').error)
+    assert_match(/needs tests pass/, parse('<report>{"status":"done","tests":"fail"}</report>').error)
+    assert_match(/not a JSON object/, parse("<report>nope</report>").error)
+  end
+
+  # The prompt shows the format with placeholders. An echoed prompt must not pass.
+  def test_the_format_example_is_invalid
+    refute_nil parse(Dispatcher::ReportBlock::REPORT_FORMAT).error
   end
 end

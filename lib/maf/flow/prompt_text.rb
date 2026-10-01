@@ -20,6 +20,15 @@ module Flow
     - Do not use subagents to verify your work.
   TEXT
 
+  # The dispatcher reads this block to decide if a dispatched run is done.
+  # NOTE: assets/dispatcher carries the same REPORT_FORMAT; both run standalone.
+  REPORT_FORMAT = '<report>{"status":"<done|blocked|needs_review>","tests":"<pass|fail>","next":"<next>"}</report>'
+  REPORT_RULE = <<~TEXT.strip
+    - If COORD_DISPATCHED is 1, end your final reply with one report block on its own line:
+      #{REPORT_FORMAT}
+      Use status done only when the work is complete. Use blocked or needs_review otherwise.
+  TEXT
+
   NO_TASK_STOP = "- If no task and no message is available, stop. The board watcher wakes you when work arrives."
   NO_TASK_WAIT = <<~TEXT.strip
     - If no task is available, run `./coord next --wait --timeout 540`. It returns
@@ -57,6 +66,7 @@ module Flow
     - Never write ad-hoc verification scripts. The test suite is the verification.
     #{STE_RULE}
     #{SUBAGENT_RULE}
+    #{REPORT_RULE}
   LOOP
 
   # Steps 2 to 9 are the same with and without a project manager.
@@ -105,6 +115,7 @@ module Flow
     - Take goals only from the project manager. Never take requests directly from the user.
     #{STE_RULE}
     #{SUBAGENT_RULE}
+    #{REPORT_RULE}
   LOOP
 
   ARCHITECT_LOOP_DIRECT = <<~LOOP
@@ -125,6 +136,7 @@ module Flow
     - Take requests from the user directly. This project has no project manager.
     #{STE_RULE}
     #{SUBAGENT_RULE}
+    #{REPORT_RULE}
   LOOP
 
   # The user can give the project manager a budget (`maf team set`) and let it
@@ -170,5 +182,6 @@ module Flow
     - If no report has arrived yet, tell the user and check again with `./coord inbox project-manager`.
     #{STE_RULE}
     #{SUBAGENT_RULE}
+    #{REPORT_RULE}
   LOOP
 end

@@ -50,6 +50,7 @@ module Dashboard
     def locks_dir    = File.join(coord_dir, "locks")
     def manifest     = ".agent-flow.json"
     def workers_path = File.join(coord_dir, "workers.json")
+    def usage_dir    = File.join(coord_dir, "usage")
     def lease_ttl
       v = Integer(ENV.fetch("COORD_LEASE_TTL", ""), exception: false)
       v&.positive? ? v : DEFAULT_LEASE
@@ -79,6 +80,22 @@ module Dashboard
     end
   end
 
+  # TokenReader reads the token usage that the dispatcher adds up per worker in
+  # coordination/usage/<worker>.json. A broken file counts as no usage.
+  class TokenReader
+    def initialize(dir)
+      @dir = dir
+    end
+
+    def read
+      Dir.glob(File.join(@dir, "*.json")).sort.to_h do |path|
+        [File.basename(path, ".json"), JSON.parse(File.read(path))]
+      rescue JSON::ParserError
+        [File.basename(path, ".json"), {}]
+      end
+    end
+  end
+
   class Collector
     def initialize(cfg)
       @cfg = cfg
@@ -93,6 +110,7 @@ module Dashboard
         lease_ttl:        @cfg.lease_ttl,
         declared_roles:   declared_roles,
         workers:          workers,
+        tokens:           TokenReader.new(@cfg.usage_dir).read,
         tasks:            task_summary(tasks),
         events:           recent_events,
         inboxes:          inbox_messages,
@@ -266,6 +284,7 @@ module Dashboard
       <div id="alerts" class="alerts"></div>
       <div id="stats" class="stats"></div>
       <div class="card" style="margin-bottom:10px"><h3>Workers</h3><div id="workers"></div></div>
+      <div class="card" style="margin-bottom:10px"><h3>Tokens</h3><div id="tokens"></div></div>
       <div id="roles" class="grid"></div>
       <div class="two">
         <div class="card"><h3>Recent Events</h3><div id="events"></div></div>
@@ -310,6 +329,9 @@ module Dashboard
             const cur=tasks.filter(t=>t.worker===w.id&&t.start);
             return`<div class="row">${cur.length?b('working','info'):b('idle','ok')} <strong>${esc(w.id)}</strong> ${esc(w.harness)}${w.dispatch?' (dispatch)':''}<div class="meta">${esc(w.role)}${w.last_event?' &middot; last event '+ago(w.last_event)+' ago':''}${cur.length?' &middot; '+esc(cur[0].description):''}</div></div>`
           }).join(''):'<div class="muted">no workers yet. Run maf prepare or maf start.</div>';
+
+          const tks=Object.entries(d.tokens||{});
+          document.getElementById('tokens').innerHTML=tks.length?tks.map(([w,u])=>`<div class="row"><strong>${esc(w)}</strong> <span class="meta">input ${u.input_tokens||0} &middot; output ${u.output_tokens||0} &middot; ${u.runs||0} runs</span></div>`).join(''):'<div class="muted">no token usage yet</div>';
 
           const roles=d.declared_roles||[];
           const byRole={};

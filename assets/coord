@@ -57,7 +57,8 @@ module Coord
       coord conflicts                      list pending tasks with overlapping scopes
       coord claim ID [--force]             claim for COORD_WORKER (atomic; refused for lead roles)
       coord unclaim ID                     release a claim without finishing it
-      coord done ID [--force]              complete (refused while the task branch lacks the goal head)
+      coord done ID [--force]              complete (refused while the task branch lacks the goal head,
+                                           or while the verify command fails)
       coord annotate ID TEXT...
       coord msg [--from A] TO TEXT...
       coord broadcast [--from A] [--to workers|leads|all] TEXT...
@@ -128,6 +129,7 @@ module Coord
     def log_path = File.join(coord_dir, "events.log")
     def hook_log(role) = File.join(message_hooks_dir, "#{role}.log")
     def presence_dir = File.join(coord_dir, "presence")
+    def usage_dir = File.join(coord_dir, "usage")
     def manifest_path = File.join(File.dirname(File.expand_path(coord_dir)), ".agent-flow.json")
   end
 
@@ -869,6 +871,8 @@ module Coord
 
     def agents = @data.fetch("agents", [])
     def base_branch = @data["base_branch"]
+    def verify = @data["verify"].to_s
+    def copy_to_worktree = Array(@data["copy_to_worktree"]).map(&:to_s)
     def harnesses = agents.map { |entry| entry["harness"] }.compact.uniq
 
     def harnesses_for(role) = agents.select { |entry| entry["role"] == role }.map { |entry| entry["harness"] }
@@ -889,6 +893,26 @@ module Coord
     end
   end
 
+  # TokenTotals reads the token usage that the dispatcher adds up per worker
+  # in coordination/usage/<worker>.json. A broken file is skipped.
+  class TokenTotals
+    def initialize(paths)
+      @paths = paths
+    end
+
+    def lines = Dir.glob(File.join(@paths.usage_dir, "*.json")).sort.filter_map { |path| line(path) }
+
+    private
+
+    def line(path)
+      data = JSON.parse(File.read(path))
+      "tokens #{File.basename(path, ".json")}: input=#{data["input_tokens"].to_i} " \
+        "output=#{data["output_tokens"].to_i} runs=#{data["runs"].to_i}"
+    rescue JSON::ParserError
+      nil
+    end
+  end
+
   # Board renders status summaries and the Obsidian kanban file.
   class Board
     SECTIONS = {
@@ -904,9 +928,8 @@ module Coord
 
     def status
       rows = grouped
-      return puts("no tasks") if rows.empty?
-
-      rows.each { |role, list| puts summary_line(role, list) }
+      rows.empty? ? puts("no tasks") : rows.each { |role, list| puts summary_line(role, list) }
+      TokenTotals.new(@paths).lines.each { |line| puts line }
     end
 
     def next_tasks(role, worker = nil)
@@ -1180,6 +1203,45 @@ module Coord
     end
   end
 
+  # FastForward moves a reused worker branch to origin/<base branch>, so a
+  # long-lived worktree does not drift. It acts only on a worker/ branch that
+  # is checked out in a clean worktree, and only for a fast-forward.
+  # Otherwise it skips and logs the reason. A project without origin is skipped
+  # without a log line.
+  class FastForward
+    def initialize(dir, branch, base)
+      @dir, @branch, @base = dir, branch, base
+    end
+
+    def run
+      return unless @branch.start_with?("worker/") && Git.run(@dir, "remote", "get-url", "origin")
+
+      reason = checks.find { |check, _| !check.call }&.last
+      reason ? warn("coord: no fast-forward of #{@branch}: #{reason}") : merge
+    end
+
+    private
+
+    def checks
+      [[-> { head == @branch }, "#{@branch} is not checked out"],
+       [-> { Git.clean?(@dir) }, "the worktree has uncommitted changes"],
+       [-> { Git.run(@dir, "fetch", "-q", "origin", @base) }, "git fetch origin #{@base} failed"],
+       [-> { Git.run(@dir, "merge-base", "--is-ancestor", "HEAD", target) },
+        "#{@branch} has commits that #{target} lacks"]]
+    end
+
+    def merge
+      return if rev("HEAD") == rev(target)
+
+      Git.run(@dir, "merge", "-q", "--ff-only", target) && puts("fast-forwarded #{@branch} to #{target}")
+    end
+
+    def target = "origin/#{@base}"
+    def head = git_out("branch", "--show-current")
+    def rev(name) = git_out("rev-parse", "-q", "--verify", name)
+    def git_out(*args) = IO.popen(["git", "-C", @dir, *args], err: File::NULL, &:read).strip
+  end
+
   # Worktree creates a per-worker git worktree and branch, so "one branch or
   # worktree per worker" (the contract's own rule) is a command, not a manual
   # step. The worktree shares the main project's coordination/ dir and task
@@ -1247,6 +1309,7 @@ module Coord
         abort "coord: #{dir} exists but is not a git worktree. Remove it or choose a different slug."
       end
 
+      FastForward.new(dir, branch, Git.base_branch(@root, Manifest.new(File.join(@root, ".agent-flow.json")))).run
       finish(dir, branch, "worktree #{dir} already exists, reusing (branch #{branch})")
     end
 
@@ -1267,9 +1330,19 @@ module Coord
     # own copy. If one is not committed yet, the checkout has none: ./coord
     # would not exist, and Claude Code would run without the board-watch hook.
     # Copy the main worktree's copy of each missing file. A reused worktree
-    # gets files that were added after it was created.
+    # gets files that were added after it was created. An existing file is
+    # never overwritten, so a change by the agent stays.
     def ensure_runtime_files(dir)
-      RUNTIME_FILES.each { |path| copy_missing(File.join(@root, path), File.join(dir, path)) }
+      (RUNTIME_FILES + copy_list).each { |path| copy_missing(File.join(@root, path), File.join(dir, path)) }
+    end
+
+    # copy_to_worktree in .agent-flow.json lists more host files for each
+    # worktree, for example .env. Only paths inside the project are copied.
+    def copy_list
+      list = Manifest.new(File.join(@root, ".agent-flow.json")).copy_to_worktree
+      outside = list.select { |path| path.start_with?("/") || path.split("/").include?("..") }
+      warn "coord: copy_to_worktree skips paths outside the project: #{outside.join(", ")}" unless outside.empty?
+      list - outside
     end
 
     def copy_missing(src, dest)
@@ -1446,6 +1519,11 @@ module Coord
       id = @args.require_arg("done", "ID")
       task = tasks.find(id)
       refuse_stale!(task) unless force
+      refuse_unverified!
+      finish_task(id, task)
+    end
+
+    def finish_task(id, task)
       tasks.done(id)
       event_log.append("done", @worker, id)
       report_done(task)
@@ -1703,6 +1781,19 @@ module Coord
     def refuse_stale!(task)
       goal, branch = TaskSync.new(@project_root).stale(task)
       abort format(STALE, task: branch, goal: goal) if goal
+    end
+
+    VERIFY_FAILED = "coord: the verify command failed: %<command>s\n%<tail>s\n" \
+                    "Fix the failures. Then run ./coord done again. --force does not skip this check."
+
+    # The verify command in .agent-flow.json is a mechanical gate for done.
+    # It runs in the current worktree. No key means no check.
+    def refuse_unverified!
+      command = manifest.verify
+      return if command.empty?
+
+      output = IO.popen(["sh", "-c", command], err: %i[child out], &:read)
+      abort format(VERIFY_FAILED, command: command, tail: output.lines.last(20).join.strip) unless $?.success?
     end
 
     def hook_files(role)

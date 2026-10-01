@@ -28,6 +28,16 @@ If a text needs a new term, add the term here first.
 | lock | A named mutex. A worker holds the lock. | `coord lock`, lock field `worker` |
 | message hook | A user script that runs when a message is delivered to a role: `coordination/message-hooks/<role>.sh`. | `coord hooks` |
 | harness hook | A script that a harness runs on its own events (for example Stop, SessionStart): `coordination/harness-hooks/`. | `next-task.rb`, `board-watch.rb`, `board-watch-opencode.js` |
+| report block | The typed result at the end of the final reply of a dispatched agent: `<report>{"status":"done","tests":"pass","next":"..."}</report>`. Status `done` is success. Status `blocked` and `needs_review` are no success. | `ReportBlock`, `REPORT_FORMAT` |
+| completion signal | A text that a dispatched agent prints when its work is complete. The run is a success. | `--completion-signal`, `Limits#complete` |
+| abort signal | A text that a dispatched agent prints when it gives up. The run is a failure. | `--abort-signal`, `Limits#abort` |
+| idle timeout | The seconds without agent output after which a dispatched run fails. 0 means off. | `--idle-timeout`, `Limits#idle` |
+| grace window | The seconds the dispatcher waits for an agent to exit after the completion signal, and for a child process that holds the output pipe. | `--grace`, `Limits#grace` |
+| verify command | A shell command that checks the work mechanically, for example the test suite. `coord done` and the dispatcher success path refuse a task while the command exits non-zero. | `.agent-flow.json` key `verify`, `Verify` |
+| token usage | The input and output tokens of the dispatched runs of one worker, added up. Claude Code, Hermes, and Codex report them. | `coordination/usage/<worker>.json`, `TokenUsage`, `coord status` |
+| copy list | Host files that `coord worktree` copies into each new or reused worktree, for example `.env`. Only existing files inside the project are copied. A file in the worktree is never overwritten. | `.agent-flow.json` key `copy_to_worktree` |
+| prefetch | Live context that the dispatcher adds to a dispatch prompt: the output of `coord next ROLE` and `git log --oneline -10`, each cut to 2000 characters. | `Prefetch` |
+| out-of-scope log | The list of requests that the project rejects on purpose, each with its reason. | `docs/out-of-scope.md` |
 
 ## Rules
 

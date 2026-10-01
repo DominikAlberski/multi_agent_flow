@@ -377,6 +377,34 @@ For any other harness, use `--command` with a template:
 ./dispatcher ROLE --command 'my-agent --role %{role} %{prompt}'
 ```
 
+### The report block
+
+The dispatcher asks each agent to end its final reply with a report block:
+
+```
+<report>{"status":"<done|blocked|needs_review>","tests":"<pass|fail>","next":"<next>"}</report>
+```
+
+- Status `done` is success. The dispatcher moves the messages to `read/`.
+- Status `blocked` or `needs_review` is no success. The dispatcher logs the
+  status and the `next` field. The session stays. The messages go back to the inbox.
+- If the block is missing or invalid, the dispatcher resumes the session one
+  time with the error. If the block is still invalid, the run is no success.
+- If the block is still missing, the exit status decides, as before. A
+  `--command` harness has no session, so the dispatcher does not resume it.
+
+### Run limits
+
+- `--timeout S` is the hard wall-clock limit of a run (default: 300 s).
+- `--idle-timeout S` fails a run that prints no output for S seconds. Default: 0 (off).
+  Claude Code prints its JSON only at the end. Keep this flag off for `--harness claude`.
+- `--completion-signal TEXT` tells the agent to print TEXT when the work is complete.
+  The run is a success. If the agent does not exit, the dispatcher stops it after the grace window.
+- `--abort-signal TEXT` tells the agent to print TEXT when it gives up. The run is a failure.
+- `--grace S` is the grace window (default: 5 s).
+
+Choose signal texts that the harness does not echo from the prompt.
+
 ---
 
 ## How the dispatcher saves tokens
@@ -403,6 +431,16 @@ last request. Claude Code uses a 1-hour cache.
   The log shows: `idle Nm, past the cache window; starting fresh with the handoff note`.
 - Each run ends with the handoff note in `coordination/sessions/<worker>.handoff.md`.
   The agent writes it while the cache is still warm.
+
+**Prefetch.** Each dispatch prompt holds the output of `./coord next ROLE` and
+`git log --oneline -10`, each cut to 2000 characters. The agent needs fewer tool
+calls to see the board. Lead roles get only the git log. If a command fails,
+the log shows `prefetch failed` and the prompt goes out without that part.
+
+**Token usage.** After each run, the dispatcher adds the token usage of the run
+to `coordination/usage/<worker>.json`. Claude Code, Hermes, and Codex report the
+usage. opencode and `--command` harnesses do not. `./coord status` and the
+dashboard show the totals. A run never fails because of missing usage data.
 
 Set `--cache-window` to your provider's cache time minus a margin. For a
 30-minute cache: `--cache-window 1500`. To never resume: `--cache-window 0`.
@@ -441,6 +479,24 @@ Check the goals at any time:
 Set the base branch in `.agent-flow.json` if it is not `main` or `origin/HEAD`:
 `"base_branch": "AI_development"`. Goals never start from another goal branch,
 so a defect in one goal does not block the others.
+
+Set a verify command in `.agent-flow.json` to check each task mechanically:
+`"verify": "bin/rails test"`. The command runs in the worktree of the worker.
+`./coord done` refuses the task while the command exits non-zero. `--force`
+does not skip this check. A dispatched run with a failing verify command is no
+success. Lead roles get no check. Without the key, nothing changes.
+
+Set a copy list in `.agent-flow.json` for host files that git does not track:
+`"copy_to_worktree": [".env", "config/master.key"]`. `coord worktree` and
+`maf start` copy each file that exists into the worktree. A file that is
+already in the worktree is never overwritten, so a change by the agent stays.
+Paths outside the project are skipped.
+
+A reused worker worktree follows the base branch on `origin`. `coord worktree`
+and `maf start` fast-forward the branch `worker/<worker>` to `origin/<base branch>`.
+They do this only when the worker branch is checked out, the worktree is clean,
+and the update is a fast-forward. Otherwise they skip the update and print the
+reason. A project without `origin` gets no update.
 
 If you did not set up a `project-manager` role, talk to the architect session
 directly.

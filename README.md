@@ -55,6 +55,7 @@ each value: harness, roles, models, and the agent to start.
 | **[GETTING_STARTED.md](GETTING_STARTED.md)** | First-time user | Concepts, prerequisites, manual install, basic workflow |
 | **[USER_MANUAL.md](USER_MANUAL.md)** | Setting up a real team | Full install (maf), all harnesses, dispatcher, monitoring |
 | **[install.md](install.md)** | An AI coding agent | Interactive wizard: asks the user for harnesses/roles, runs `maf add` |
+| **[docs/out-of-scope.md](docs/out-of-scope.md)** | Contributor | Requests that the project rejects on purpose, with the reason |
 | **[SKILL.md](SKILL.md)** | Agent skill loader | Self-contained portable skill (frontmatter + full API reference) |
 
 ---
@@ -207,5 +208,8 @@ those tools are absent. If wiring into CI, install both to get full coverage.
 - **The `project-manager` role** is the user's proxy: the user talks to it, it
   creates goals (`coord goal add`), sends them to the architect, and relays the report back. Without
   `project-manager`, the user talks to the architect directly.
+- **Rejected requests are logged.** When you reject a request on purpose, add
+  an entry to [docs/out-of-scope.md](docs/out-of-scope.md): the request, the
+  date, the source, and the reason. Read the log before you propose a feature.
 - **UI is deliberately deferred**: Obsidian (Kanban/Dataview) or
   `taskwarrior-tui` can read the same data without any agent changes.

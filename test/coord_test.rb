@@ -442,6 +442,35 @@ end
     assert_includes File.read(inbox("architect").first), "Task #{id} is done: finished work."
   end
 
+  def write_verify(command) = File.write(File.join(@dir, ".agent-flow.json"), JSON.generate(verify: command))
+
+  def test_status_shows_the_token_totals_per_worker
+    FileUtils.mkdir_p(File.join(@dir, "coordination", "usage"))
+    usage = { "input_tokens" => 120, "output_tokens" => 30, "runs" => 2 }
+    File.write(File.join(@dir, "coordination", "usage", "tester-bot.json"), JSON.generate(usage))
+    out, = capture_io { Coord::CLI.new(["status"], env: @env).run }
+
+    assert_includes out, "tokens tester-bot: input=120 output=30 runs=2"
+  end
+
+  # The verify command is a mechanical gate: a failing check refuses done.
+  def test_done_is_refused_while_the_verify_command_fails
+    write_verify("echo 2 failures; exit 1")
+    id = add("unverified work")
+    error = assert_raises(SystemExit) { capture_io { Coord::CLI.new(["done", "--force", id], env: @env).run } }
+
+    assert_includes error.message, "2 failures"
+    assert find(id), "the task must stay pending"
+  end
+
+  def test_done_passes_when_the_verify_command_passes
+    write_verify("true")
+    id = add("verified work")
+    out, = capture_io { Coord::CLI.new(["done", id], env: @env).run }
+
+    assert_includes out, "done #{id}"
+  end
+
   def lead_env = @env.merge("COORD_ROLE" => "architect", "COORD_WORKER" => "architect-1")
 
   # A lead role owns no task. A claim by a lead breaks the role split.
@@ -1131,6 +1160,104 @@ class GoalTest < Minitest::Test
     commit(File.join(@root, ".worktrees", "goal-#{short(uuid)}"), "sibling task merged")
 
     assert_includes coord("done", task, dir: worker_dir), "done #{task}"
+  end
+
+  # The test repo becomes a clone of a bare origin. A second clone pushes to it.
+  def with_origin
+    origin = File.join(@root, "..", "#{File.basename(@root)}-origin.git")
+    git(@root, "clone", "-q", "--bare", @root, origin)
+    git(@root, "remote", "add", "origin", origin)
+    git(@root, "fetch", "-q", "origin")
+    yield origin
+  ensure
+    FileUtils.rm_rf(origin)
+  end
+
+  def push_upstream_commit(origin)
+    other = Dir.mktmpdir("coord-ff-other")
+    git(other, "clone", "-q", origin, ".")
+    commit(other, "upstream change")
+    git(other, "push", "-q", "origin", "HEAD:main")
+    `git -C #{other} rev-parse HEAD`.strip
+  ensure
+    FileUtils.rm_rf(other)
+  end
+
+  def head(dir) = `git -C #{dir} rev-parse HEAD`.strip
+
+  def test_reuse_fast_forwards_the_worker_branch_from_origin
+    with_origin do |origin|
+      dir = worker_worktree
+      upstream = push_upstream_commit(origin)
+      out = coord("worktree", "tester", "1")
+
+      assert_equal upstream, head(dir)
+      assert_includes out, "fast-forwarded worker/tester-1 to origin/main"
+    end
+  end
+
+  def test_reuse_skips_the_fast_forward_in_a_dirty_worktree
+    with_origin do |origin|
+      dir = worker_worktree
+      before = head(dir)
+      File.write(File.join(dir, ".gitignore"), "changed\n")
+      push_upstream_commit(origin)
+      _out, err = capture_io { Dir.chdir(@root) { Coord::CLI.new(%w[worktree tester 1], env: @env).run } }
+
+      assert_equal before, head(dir)
+      assert_includes err, "the worktree has uncommitted changes"
+    end
+  end
+
+  def test_reuse_skips_a_branch_that_is_not_a_fast_forward
+    with_origin do |origin|
+      dir = worker_worktree
+      commit(dir, "local work")
+      local = head(dir)
+      push_upstream_commit(origin)
+      _out, err = capture_io { Dir.chdir(@root) { Coord::CLI.new(%w[worktree tester 1], env: @env).run } }
+
+      assert_equal local, head(dir)
+      assert_includes err, "has commits that origin/main lacks"
+    end
+  end
+
+  def write_copy_list(list)
+    File.write(File.join(@root, ".agent-flow.json"), JSON.generate(copy_to_worktree: list))
+  end
+
+  # Untracked host files like .env never reach a new worktree through git.
+  def test_worktree_copies_the_declared_host_files
+    FileUtils.mkdir_p(File.join(@root, "config"))
+    File.write(File.join(@root, ".env"), "KEY=1")
+    File.write(File.join(@root, "config", "master.key"), "secret")
+    write_copy_list([".env", "config/master.key", "missing.txt"])
+    dir = worker_worktree
+
+    assert_equal "KEY=1", File.read(File.join(dir, ".env"))
+    assert_equal "secret", File.read(File.join(dir, "config", "master.key"))
+    refute File.exist?(File.join(dir, "missing.txt"))
+  end
+
+  def test_a_reused_worktree_keeps_the_file_the_agent_changed
+    File.write(File.join(@root, ".env"), "KEY=1")
+    write_copy_list([".env"])
+    dir = worker_worktree
+    File.write(File.join(dir, ".env"), "KEY=agent")
+    worker_worktree
+
+    assert_equal "KEY=agent", File.read(File.join(dir, ".env"))
+  end
+
+  def test_copy_list_skips_paths_outside_the_project
+    File.write(File.join(File.dirname(@root), "outside-#{File.basename(@root)}"), "x")
+    write_copy_list(["../outside-#{File.basename(@root)}", "/etc/hosts"])
+    _out, err = capture_io { Dir.chdir(@root) { Coord::CLI.new(%w[worktree tester 1], env: @env).run } }
+
+    assert_includes err, "copy_to_worktree skips paths outside the project"
+    refute File.exist?(File.join(@root, ".worktrees", "outside-#{File.basename(@root)}"))
+  ensure
+    FileUtils.rm_f(File.join(File.dirname(@root), "outside-#{File.basename(@root)}"))
   end
 
   def test_worktree_warns_when_a_harness_has_no_file_for_the_role

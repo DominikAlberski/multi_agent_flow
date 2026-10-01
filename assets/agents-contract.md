@@ -21,7 +21,8 @@ This project uses a shared coordination layer for multiple coding agents
 ./coord claim ID [--force]                    # atomically claim for COORD_WORKER (refused for lead roles)
 ./coord start-task ID                         # in your worktree: check out task/<short-id> from the goal branch
 ./coord unclaim ID                            # release a claim without finishing it
-./coord done ID [--force]                     # complete (refused while the task branch lacks the goal head)
+./coord done ID [--force]                     # complete (refused while the task branch lacks the goal head,
+                                              # or while the verify command fails)
 ./coord annotate ID TEXT                      # task-scoped update
 ./coord status                                # per-role summary
 ./coord who                                   # each worker with its presence: live or gone

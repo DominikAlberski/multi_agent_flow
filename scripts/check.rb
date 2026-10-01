@@ -53,7 +53,9 @@ module Check
   SHARED_LITERALS = {
     "LEADS = %w[project-manager architect].freeze" => %w[assets/coord assets/dispatcher lib/maf/flow.rb],
     %(READ_ONLY_TOOLSETS = "terminal,web,skills,todo,memory,session_search,clarify") =>
-      %w[assets/dispatcher lib/maf/flow.rb]
+      %w[assets/dispatcher lib/maf/flow.rb],
+    ("REPORT_FORMAT = '<report>{\"status\":\"<done|blocked|needs_review>\"," \
+     "\"tests\":\"<pass|fail>\",\"next\":\"<next>\"}</report>'") => %w[assets/dispatcher lib/maf/flow/prompt_text.rb]
   }.freeze
 
   module_function
