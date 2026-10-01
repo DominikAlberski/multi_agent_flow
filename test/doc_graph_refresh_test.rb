@@ -1,13 +1,7 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# test/doc_graph_refresh_test.rb - tests for assets/doc-graph-refresh.
-#
 # Run: ruby test/doc_graph_refresh_test.rb
-#
-# The tests run the script as a subprocess against a disposable git repo. A
-# stub `graphify` on PATH records every call and writes a fake graph. Two tests
-# load the script in-process to drive the lock, the pending flag and the retry.
 require "minitest/autorun"
 require "tmpdir"
 require "fileutils"
@@ -103,8 +97,6 @@ class DocGraphRefreshTest < Minitest::Test
     assert_equal "NEW", File.read(graph)
   end
 
-  # The build reuses the current graph as its cache. Without the seed every
-  # markdown commit re-extracts the whole corpus.
   def test_the_build_is_seeded_with_the_current_graph
     FileUtils.mkdir_p(File.dirname(graph))
     File.write(graph, "OLD")
@@ -139,8 +131,6 @@ class DocGraphRefreshTest < Minitest::Test
     assert_includes calls, "extract"
   end
 
-  # Defect 1: a hook in a worktree extracts the worktree tree and writes the
-  # shared graph in the main checkout.
   def test_a_worktree_hook_writes_the_main_graph
     commit("doc", "doc.md", "hello")
     tree = File.join(@dir, "wt")
@@ -154,7 +144,6 @@ class DocGraphRefreshTest < Minitest::Test
     assert_equal "{}", File.read(graph)
   end
 
-  # Defect 3: the main cache is passed on to the extract in the temp out dir.
   def test_the_cache_dir_is_passed_to_extract
     seed = File.join(@dir, "graphify-out", "cache", "seeded.txt")
     FileUtils.mkdir_p(File.dirname(seed))
@@ -168,8 +157,6 @@ class DocGraphRefreshTest < Minitest::Test
     assert_equal "keep", File.read(seed)
   end
 
-  # A free-tier Gemini key allows 5 requests per minute. One chunk at a time
-  # keeps the request rate low, so the extract does not hit HTTP 429.
   def test_the_extract_runs_the_chunks_one_at_a_time
     commit("doc", "doc.md", "hello")
 
@@ -179,8 +166,6 @@ class DocGraphRefreshTest < Minitest::Test
     assert_includes calls, "--max-concurrency 1"
   end
 
-  # The retry is the fallback when the one-at-a-time extract still fails. The
-  # extract runs at most three times, with a wait between the tries.
   def test_a_failed_extract_retries_at_most_three_times
     load SCRIPT
     attempts = 0
@@ -194,8 +179,6 @@ class DocGraphRefreshTest < Minitest::Test
     assert_equal 3, attempts
   end
 
-  # Defect 2: a second run that finds the lock held writes its tree to the
-  # pending file. The holder drains that tree, so the change is not lost.
   def test_a_second_run_is_serialised_and_not_lost
     load SCRIPT
     dir = @dir
@@ -217,15 +200,14 @@ class DocGraphRefreshTest < Minitest::Test
     refute File.exist?(File.join(dir, "coordination", "doc-graph.lock"))
   end
 
-  # Defect 2: a mark that lands while the holder releases the lock is not lost.
-  # The holder takes the lock again and extracts the pending tree.
   def test_a_mark_written_during_release_is_not_lost
     load SCRIPT
     dir = @dir
     calls = []
     released = 0
     pending = File.join(dir, "coordination", "doc-graph.pending")
-    DocGraph.singleton_class.define_method(:ready?) { |_event| true }
+    DocGraph.singleton_class.define_method(:markdown?) { |_event| true }
+    ENV["GEMINI_API_KEY"] = "test"
     DocGraph.define_singleton_method(:toplevel) { "#{dir}/tree-1" }
     DocGraph.define_singleton_method(:main) { dir }
     FileUtils.mkdir_p(File.dirname(pending))
@@ -240,5 +222,118 @@ class DocGraphRefreshTest < Minitest::Test
 
     assert_equal ["#{dir}/tree-1", "#{dir}/late"], calls
     refute File.exist?(pending)
+  end
+
+  def lock_dir = File.join(@dir, "coordination", "doc-graph.lock")
+  def pending_file = File.join(@dir, "coordination", "doc-graph.pending")
+
+  def stub_main
+    load SCRIPT
+    dir = @dir
+    DocGraph.define_singleton_method(:main) { dir }
+    FileUtils.mkdir_p(File.join(dir, "coordination"))
+  end
+
+  def test_a_lock_of_a_dead_process_is_broken
+    stub_main
+    FileUtils.mkdir_p(lock_dir)
+    dead = Process.spawn("true").tap { |pid| Process.wait(pid) }
+    File.write(File.join(lock_dir, "pid"), dead.to_s)
+
+    assert DocGraph::Lock.acquire
+    assert_equal Process.pid.to_s, File.read(File.join(lock_dir, "pid"))
+  end
+
+  def test_a_lock_older_than_the_ttl_is_broken
+    stub_main
+    FileUtils.mkdir_p(lock_dir)
+    old = Time.now - DocGraph::Lock::TTL - 10
+    File.utime(old, old, lock_dir)
+
+    assert DocGraph::Lock.acquire
+  end
+
+  def test_a_lock_of_a_live_process_is_kept
+    stub_main
+    FileUtils.mkdir_p(lock_dir)
+    File.write(File.join(lock_dir, "pid"), Process.pid.to_s)
+
+    refute DocGraph::Lock.acquire
+    assert File.directory?(lock_dir)
+  end
+
+  def test_the_holder_drains_each_unique_pending_tree
+    stub_main
+    trees = []
+    DocGraph.define_singleton_method(:toplevel) { "one" }
+    DocGraph::Refresh.define_singleton_method(:run) { |tree| trees << tree }
+    File.write(pending_file, "two\nthree\ntwo\n")
+
+    DocGraph.drain(["one"])
+
+    assert_equal %w[one two three], trees
+    refute File.exist?(pending_file)
+  end
+
+  def test_two_marked_trees_both_stay_in_the_pending_file
+    stub_main
+    %w[a b].each do |tree|
+      DocGraph.define_singleton_method(:toplevel) { tree }
+      DocGraph::Lock.mark_pending
+    end
+
+    assert_equal %w[a b], File.readlines(pending_file, chomp: true)
+  end
+
+  def test_the_pending_trees_stay_when_the_recheck_cannot_acquire
+    stub_main
+    File.write(pending_file, "late\n")
+    DocGraph::Lock.define_singleton_method(:acquire) { false }
+
+    DocGraph.recheck
+
+    assert_equal "late\n", File.read(pending_file)
+  end
+
+  def test_a_merge_commit_triggers_a_refresh
+    git("checkout", "-q", "-b", "side")
+    commit("side doc", "side.md", "side")
+    git("checkout", "-q", "-")
+    commit("main file", "main.txt", "main")
+    system("git", "-C", @dir, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "--no-ff", "-q", "-m", "merge", "side",
+           out: File::NULL, err: File::NULL, exception: true)
+
+    out, status = run_script("post-commit")
+
+    assert_equal 0, status.exitstatus, out
+    assert_includes calls, "extract"
+  end
+
+  def test_the_first_commit_triggers_a_refresh
+    root = File.join(@dir, "root")
+    FileUtils.mkdir_p(root)
+    system("git", "-C", root, "init", "-q", exception: true)
+    commit("doc", "doc.md", "hello", root)
+
+    out, status = run_script("post-commit", {}, root)
+
+    assert_equal 0, status.exitstatus, out
+    assert_includes calls, "extract"
+  end
+
+  def test_the_vault_watcher_skips_update_while_the_refresh_lock_exists
+    load File.join(ROOT, "assets", "vault")
+    updates = []
+    Vault::Daemon.define_singleton_method(:system) { |*args| updates << args }
+    Vault::Daemon.define_singleton_method(:sleep) { |_seconds| }
+    Dir.chdir(@dir) do
+      FileUtils.mkdir_p("coordination/doc-graph.lock")
+      Vault::Daemon.tick(nil)
+      assert_empty updates
+      FileUtils.rmdir("coordination/doc-graph.lock")
+      Vault::Daemon.tick(nil)
+    end
+
+    assert_equal [%w[graphify update .]], updates
   end
 end

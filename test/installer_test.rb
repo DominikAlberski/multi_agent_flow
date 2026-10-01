@@ -875,6 +875,16 @@ class DocGraphHookTest < InstallerTestCase
     assert_operator content.index(">>> multi-agent-flow >>>"), :<, content.index("make lint")
   end
 
+  def test_skips_a_foreign_hook_with_a_non_sh_shebang
+    FileUtils.mkdir_p(File.dirname(hook("post-commit")))
+    File.write(hook("post-commit"), "#!/usr/bin/env ruby\nputs 1\n")
+
+    out, = bootstrap
+
+    assert_equal "#!/usr/bin/env ruby\nputs 1\n", File.read(hook("post-commit"))
+    assert_includes out, "non-sh shebang"
+  end
+
   def test_check_lists_the_new_hook
     out, = bootstrap("--check")
 

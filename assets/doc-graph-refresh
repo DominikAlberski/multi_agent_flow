@@ -2,17 +2,6 @@
 # frozen_string_literal: true
 
 # doc-graph-refresh - rebuild the knowledge graph after a markdown change.
-#
-# The git post-commit and post-merge hooks call this script with the event
-# name. The hook starts the script detached, so the commit returns at once.
-# The script exits 0 in every case: a failed refresh must never fail a commit.
-#
-# The script scans the checkout that runs the hook, then writes the shared
-# graph in the MAIN checkout, resolved from git-common-dir. A refresh started
-# in a worktree therefore writes the one shared graph. It seeds the build with
-# the current graph, runs the semantic chunks one at a time, and swaps on
-# success, so a failed extract keeps the old graph.
-#
 # Usage: coordination/doc-graph-refresh post-commit|post-merge
 
 require "fileutils"
@@ -21,7 +10,6 @@ require "time"
 
 abort "doc-graph-refresh: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
 
-# DocGraph refreshes graphify-out/graph.json after a markdown change.
 module DocGraph
   GRAPH = "graphify-out"
   LOG = "coordination/doc-graph.log"
@@ -30,48 +18,51 @@ module DocGraph
   EVENTS = %w[post-commit post-merge].freeze
   MARKDOWN = /\.md\z/i
 
-  # Runs one refresh for the event. Returns nil for an unknown event, for a
-  # change without a markdown file, and without a Gemini key.
+  # @param event [String] "post-commit" or "post-merge"
+  # @return [void]
   def self.run(event)
     return unless EVENTS.include?(event)
-    return skip(event) unless ready?(event)
 
-    refresh
+    reason = skip_reason(event)
+    reason ? Log.write("#{event}: #{reason}") : refresh
   end
 
-  def self.ready?(event)
-    return false unless markdown?(event)
+  def self.skip_reason(event)
+    return "no markdown change" unless markdown?(event)
 
-    !ENV["GEMINI_API_KEY"].to_s.empty?
-  end
-
-  def self.skip(event)
-    reason = markdown?(event) ? "GEMINI_API_KEY unset, skipped" : "no markdown change"
-    Log.write("#{event}: #{reason}")
+    "GEMINI_API_KEY unset, skipped" if ENV["GEMINI_API_KEY"].to_s.empty?
   end
 
   def self.markdown?(event)
     Git.changed(event).any? { |file| file.match?(MARKDOWN) }
   end
 
-  # A run that found the lock held marks its tree pending and returns. After
-  # release the holder drains the pending tree, so no change is lost.
   def self.refresh
     return Lock.mark_pending unless Lock.acquire
 
-    begin
-      drain_pending
-    ensure
-      Lock.release
-    end
-    refresh if Lock.pending?
+    run_locked([toplevel])
+    recheck
   end
 
-  def self.drain_pending
-    tree = Lock.pending_tree || toplevel
-    Lock.clear_pending
-    Refresh.run(tree)
-    drain_pending if Lock.pending?
+  def self.run_locked(own)
+    drain(own)
+  ensure
+    Lock.release
+  end
+
+  def self.recheck
+    return unless Lock.pending? && Lock.acquire
+
+    run_locked([])
+    recheck
+  end
+
+  def self.drain(own)
+    trees = (own + Lock.take_pending).uniq
+    return if trees.empty?
+
+    trees.each { |tree| Refresh.run(tree) }
+    drain([])
   end
 
   def self.toplevel
@@ -86,7 +77,6 @@ module DocGraph
 
   def self.graph_path = File.join(main, GRAPH)
 
-  # Git lists the files a hook covers.
   module Git
     def self.changed(event)
       args = event == "post-merge" ? ["diff", "--name-only", "ORIG_HEAD", "HEAD"] : changed_commit
@@ -94,7 +84,7 @@ module DocGraph
     end
 
     def self.changed_commit
-      ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"]
+      ["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "-m", "HEAD"]
     end
 
     def self.read(*args)
@@ -104,59 +94,91 @@ module DocGraph
     end
   end
 
-  # Lock serialises refreshes with a lock dir and a pending flag. The flag
-  # holds the toplevel path of the newest requester, so the next holder
-  # extracts that tree.
   module Lock
+    TTL = 3600
+
     def self.acquire
       FileUtils.mkdir_p(File.dirname(path(LOCK)))
+      take || (break_stale && take)
+    end
+
+    def self.take
       Dir.mkdir(path(LOCK))
+      File.write(pid_file, Process.pid.to_s)
       true
     rescue SystemCallError
       false
     end
 
-    def self.release
-      Dir.rmdir(path(LOCK))
+    def self.break_stale
+      return false unless stale?
+
+      FileUtils.rm_rf(path(LOCK))
+      true
+    end
+
+    def self.stale?
+      holder = holder_pid
+      return holder_dead?(holder) if holder
+
+      Time.now - File.mtime(path(LOCK)) > TTL
     rescue SystemCallError
+      false
+    end
+
+    def self.holder_dead?(pid)
+      Process.kill(0, pid)
+      Time.now - File.mtime(path(LOCK)) > TTL
+    rescue Errno::ESRCH
+      true
+    rescue SystemCallError
+      false
+    end
+
+    def self.holder_pid
+      Integer(File.read(pid_file).strip)
+    rescue SystemCallError, ArgumentError
       nil
+    end
+
+    def self.release
+      FileUtils.rm_rf(path(LOCK))
     end
 
     def self.mark_pending
       FileUtils.mkdir_p(File.dirname(path(PENDING)))
-      File.write(path(PENDING), "#{DocGraph.toplevel}\n")
+      File.open(path(PENDING), "a") { |io| io.puts(DocGraph.toplevel) }
       Log.write("refresh already running; marked pending")
     end
 
-    def self.pending_tree
-      tree = File.read(path(PENDING)).strip
-      tree.empty? ? nil : tree
-    rescue SystemCallError
-      nil
+    def self.take_pending
+      taken = "#{path(PENDING)}.#{Process.pid}"
+      File.rename(path(PENDING), taken)
+      File.readlines(taken, chomp: true).reject(&:empty?)
+    rescue Errno::ENOENT
+      []
+    ensure
+      FileUtils.rm_f(taken) if taken
     end
 
-    def self.clear_pending = FileUtils.rm_f(path(PENDING))
     def self.pending? = File.exist?(path(PENDING))
+    def self.pid_file = File.join(path(LOCK), "pid")
     def self.path(name) = File.join(DocGraph.main, name)
   end
 
-  # Refresh builds the graph in a temp dir, swaps it in, then re-exports.
   module Refresh
     ATTEMPTS = 3
     RETRY_WAIT = 30
 
     def self.run(tree)
-      tmp = Dir.mktmpdir("doc-graph-refresh")
-      seed(tmp)
-      refresh(tmp, tree)
+      Dir.mktmpdir("doc-graph-refresh") do |tmp|
+        seed(tmp)
+        refresh(tmp, tree)
+      end
     rescue StandardError => e
       Log.write("refresh failed: #{e.message}")
-    ensure
-      FileUtils.remove_entry(tmp) if tmp
     end
 
-    # Seed the build with the current graph, so the extract reuses the cache
-    # and processes only the files that changed.
     def self.seed(tmp)
       graph = DocGraph.graph_path
       FileUtils.cp_r(graph, File.join(tmp, GRAPH)) if File.exist?(graph)
@@ -169,8 +191,6 @@ module DocGraph
       Export.run
     end
 
-    # Retry the whole extract on a rate limit. One chunk at a time keeps the
-    # request rate low; the retry covers a burst that still exceeds the quota.
     def self.build(tmp, tree, attempt = 1)
       return true if extract_ok?(tmp, tree)
       return false if attempt >= ATTEMPTS
@@ -188,28 +208,29 @@ module DocGraph
     end
   end
 
-  # Swap replaces the graph dir and restores the old one on failure.
   module Swap
     def self.move(fresh, dest)
       old = "#{dest}.old"
       FileUtils.rm_rf(old)
       FileUtils.mv(dest, old) if File.exist?(dest)
+      install(fresh, dest, old)
+    end
+
+    def self.install(fresh, dest, old)
       FileUtils.mv(fresh, dest)
       FileUtils.rm_rf(old)
-    rescue StandardError
+    rescue SystemCallError
       FileUtils.mv(old, dest) if File.exist?(old)
       raise
     end
   end
 
-  # Export regenerates the Obsidian notes from the shared graph.
   module Export
     def self.run
       Dir.chdir(DocGraph.main) { system("graphify", "export", "obsidian", "--dir", "obsidian") }
     end
   end
 
-  # Log appends one line to coordination/doc-graph.log in the main checkout.
   module Log
     def self.write(message)
       File.open(path, "a") { |io| io.puts("#{Time.now.utc.iso8601} #{message}") }
