@@ -158,8 +158,15 @@ end
         all:       tasks,
         stale:     tasks.select { |t| stale?(t) },
         orphaned:  orphaned(tasks),
-        conflicts: scope_conflicts(tasks)
+        conflicts: scope_conflicts(tasks),
+        escalated: tasks.select { |t| escalated?(t) }
       }
+    end
+
+    # `coord escalate --task` annotates the task. A done task leaves the
+    # pending list, so only an open escalation shows.
+    def escalated?(task)
+      (task["annotations"] || []).any? { |note| note["description"].to_s.start_with?("ESCALATED:") }
     end
 
     def stale?(task)
@@ -330,6 +337,8 @@ end
           const alerts=[];
           if(stale.length) alerts.push({l:'danger',m:stale.length+' claimed task(s) with expired lease — likely crashed worker'});
           if(orphaned.length) alerts.push({l:'danger',m:orphaned.length+' task(s) assigned to roles nobody is running'});
+          const escalated=d.tasks.escalated||[];
+          if(escalated.length) alerts.push({l:'danger',m:escalated.length+' task(s) escalated to the project manager — waiting for a decision'});
           if(conflicts.length) alerts.push({l:'warn',m:conflicts.length+' scope conflict(s) between pending tasks'});
           Object.entries(d.inboxes||{}).forEach(([role,msgs])=>{if(msgs.length)alerts.push({l:'warn',m:role+' inbox: '+msgs.length+' unread message(s)'})});
           (d.locks||[]).filter(l=>l.stale).forEach(l=>alerts.push({l:'danger',m:'Stale lock: '+esc(l.name)+' held by '+(l.worker||'?')+', expired'}));
@@ -396,6 +405,27 @@ end
     </html>
   HTML
 
+  # BoardCheck finds out if the coordination folder exists. The default folder
+  # is relative, so a wrong working directory gives an empty page without it.
+  class BoardCheck
+    def initialize(cfg)
+      @cfg = cfg
+    end
+
+    # Returns an error text, or nil if the task board exists.
+    def problem
+      return nil if File.exist?(@cfg.taskrc)
+      "no task board at #{File.expand_path(@cfg.coord_dir)}.\n" \
+        "Run dashboard from the project root, or pass --coord DIR.#{old_layout_hint}"
+    end
+
+    private
+
+    def old_layout_hint
+      File.exist?("coordination/taskrc") ? "\nThis project uses the old layout. Run: maf migrate" : ""
+    end
+  end
+
   class Server
     def initialize(cfg)
       @cfg       = cfg
@@ -403,6 +433,8 @@ end
     end
 
     def run
+      problem = BoardCheck.new(@cfg).problem
+      abort "dashboard: #{problem}" if problem
       server = build_server
       server.mount_proc("/")     { |_, res| html(res) }
       server.mount_proc("/data") { |_, res| json(res) }
