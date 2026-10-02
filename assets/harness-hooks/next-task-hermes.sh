@@ -1,39 +1,48 @@
-#!/bin/sh
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
 # next-task-hermes.sh - on_session_end hook for Hermes Agent.
-#
-# Fires when a supervised session ends. If unclaimed tasks exist for the
-# agent's role, resumes the session in one-shot mode with a task prompt.
-#
-# Install in ~/.hermes/config.yaml:
-#   hooks:
-#     on_session_end:
-#       - command: "~/.hermes/agent-hooks/next-task.sh"
-#         timeout: 30
-#
-# Required env: COORD_ROLE (set by maf start). COORD_DIR and TASKRC optional.
+# Only a registered MAF session can resume the work loop.
+require "json"
+require "rbconfig"
+require_relative "session-guard"
 
-PAYLOAD=$(cat 2>/dev/null)
+module HermesNextTask
+  def self.run(input)
+    return unless input.is_a?(Hash)
 
-[ -n "$COORD_ROLE" ] || exit 0
-[ "$COORD_ROLE" != "unknown" ] || exit 0
+    guard = MafSession::Guard.new(ENV, input.merge("hook_event_name" => "SessionStart"))
+    resume(guard, input) if !ENV["COORD_DISPATCHED"] && guard.authorized? && work?(guard)
+  end
 
-COORD_DIR="${COORD_DIR:-.maf/coordination}"
-TASKRC="${TASKRC:-${COORD_DIR}/taskrc}"
+  def self.work?(guard)
+    output = IO.popen(ENV.to_h, [RbConfig.ruby, guard.coord, "next", ENV.fetch("COORD_ROLE")],
+                      err: File::NULL, &:read)
+    output.match?(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)
+  end
 
-# Find coord in bin/, next to COORD_DIR inside .maf/.
-COORD="$(dirname "$COORD_DIR")/bin/coord"
-[ -x "$COORD" ] || exit 0
+  def self.resume(guard, input)
+    Process.detach(fork { start(guard, input) })
+  end
 
-OUTPUT=$(TASKRC="$TASKRC" COORD_DIR="$COORD_DIR" COORD_ROLE="$COORD_ROLE" \
-  ruby "$COORD" next "$COORD_ROLE" 2>/dev/null)
-echo "$OUTPUT" | grep -qE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' || exit 0
+  def self.start(guard, input)
+    Process.setsid
+    MafSession.register(File.dirname(File.dirname(guard.coord_dir)), "hermes")
+    exec({ "HERMES_ACCEPT_HOOKS" => "1" }, *command(input), in: File::NULL, out: File::NULL, err: File::NULL)
+  end
 
-SESSION_ID=$(printf '%s' "$PAYLOAD" | ruby -rjson -e \
-  'puts JSON.parse(STDIN.read)["session_id"].to_s rescue ""' 2>/dev/null)
+  def self.command(input)
+    ["hermes", "chat", "--oneshot", "--yolo", "--accept-hooks", "--resume", input.fetch("session_id"), "-q", prompt]
+  end
 
-PROMPT="Unclaimed tasks exist for role ${COORD_ROLE}. Run coord inbox, then coord next. Claim and complete the next task. When no tasks remain, stop."
+  def self.prompt
+    "Unclaimed tasks exist for role #{ENV.fetch('COORD_ROLE')}. Run coord inbox, then coord next. " \
+      "Claim and complete the next task. When no tasks remain, stop."
+  end
+end
 
-# Run detached: let the ending session exit cleanly, then resume in one-shot mode.
-HERMES_ACCEPT_HOOKS=1 nohup hermes chat --oneshot --yolo --accept-hooks \
-  ${SESSION_ID:+--resume "$SESSION_ID"} \
-  -q "$PROMPT" >/dev/null 2>&1 &
+begin
+  HermesNextTask.run(JSON.parse($stdin.read))
+rescue JSON::ParserError
+  exit 0
+end

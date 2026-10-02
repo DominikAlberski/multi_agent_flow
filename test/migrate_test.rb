@@ -113,6 +113,14 @@ class MigrateMovesTest < MigrateTestCase
     refute File.exist?(path(".maf", "worktrees", "tester-1", "coord-env.sh"))
   end
 
+  # Regression: an untracked .maf/env.sh made the worktree dirty, so maf uninstall kept it.
+  def test_keeps_the_env_file_of_the_worktree_out_of_git_status
+    out, status = migrate("--yes")
+
+    assert_equal 0, status, out
+    assert_empty `git -C #{path(".maf", "worktrees", "tester-1")} status --porcelain`
+  end
+
   def test_moves_a_role_file_and_links_the_harness_folder
     out, status = migrate("--yes")
 
@@ -197,6 +205,14 @@ class MigrateHintTest < MigrateTestCase
 
     refute_equal 0, status
     assert_includes out, "maf migrate"
+  end
+
+  def test_uninstall_check_previews_the_migration_on_an_old_layout
+    out, status = maf("uninstall", "--check")
+
+    assert_equal 0, status, out
+    assert_includes out, "move   coord -> .maf/bin/coord"
+    assert File.exist?(path("coord"))
   end
 
   def test_help_works_on_an_old_layout

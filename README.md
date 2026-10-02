@@ -85,6 +85,14 @@ their tool reads them:
 `.claude/agents/`, `.opencode/agents/`, and `.codex/prompts/` are relative
 symlinks into `.maf/agents/<harness>/`. Git tracks the symlinks.
 
+MAF installs Codex hooks in the project `.codex/hooks.json` file.
+Hooks act only on sessions that `maf start` registers.
+Each hook checks the launch token, process, worktree, role, worker, board, and harness session ID.
+An independent session does not activate hooks, even with inherited coordination variables.
+`maf update` disables the legacy global Codex hook and removes only its registration.
+Other global hooks stay.
+Restart workers with `maf start` after the update.
+
 A project with the old layout runs `maf migrate` once. See the migration
 section of [USER_MANUAL.md](USER_MANUAL.md).
 
@@ -230,6 +238,8 @@ ruby test/mcp_test.rb        # covers the MCP server wiring
 ruby test/maf_test.rb        # covers the maf command
 ruby test/dashboard_test.rb  # covers the dashboard data
 ruby test/doc_graph_refresh_test.rb  # covers the doc-graph refresh
+ruby test/hook_session_test.rb       # covers session isolation
+ruby test/hook_config_test.rb        # covers project hooks and legacy hook removal
 ```
 
 Minitest, stdlib only. Tests that require `task` or `git` skip (exit 0) when

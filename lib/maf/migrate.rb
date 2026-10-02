@@ -18,6 +18,7 @@ require "json"
 require "optparse"
 require_relative "bootstrap"
 require_relative "flow"
+require_relative "env_exclude"
 
 module Migrate
   # Step is one change. --check prints the label and runs nothing.

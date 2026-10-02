@@ -10,32 +10,25 @@
 #
 # Claude Code (.claude/settings.json):
 #   {"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ruby .maf/coordination/harness-hooks/next-task.rb"}]}]}}
-# Codex (~/.codex/hooks.json):
-#   {"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ruby ~/.codex/hooks/next-task.rb"}]}]}}
+# Codex uses the project .codex/hooks.json file.
 #
-# Required env: COORD_ROLE (set by maf start). COORD_DIR and TASKRC optional.
+# Only a registered maf start session can read the board.
 require "json"
 require "rbconfig"
+require_relative "session-guard"
 
-role = ENV["COORD_ROLE"].to_s
-exit 0 if role.empty? || role == "unknown"
+input = begin
+  JSON.parse($stdin.read)
+rescue JSON::ParserError
+  {}
+end
+exit 0 unless input.is_a?(Hash)
+guard = MafSession::Guard.new(ENV, input)
+exit 0 unless guard.authorized?
+exit 0 if input["hook_event_name"] == "SessionStart" || ENV["COORD_DISPATCHED"]
 
-coord_dir = ENV.fetch("COORD_DIR", ".maf/coordination")
-taskrc    = ENV.fetch("TASKRC", File.join(coord_dir, "taskrc"))
-
-coord = [
-  File.join(Dir.pwd, ".maf", "bin", "coord"),
-  File.join(File.expand_path("..", coord_dir), "bin", "coord")
-].find { |p| File.executable?(p) }
-exit 0 unless coord
-
-env = ENV.to_h.merge(
-  "TASKRC"       => taskrc,
-  "COORD_DIR"    => coord_dir,
-  "COORD_ROLE"   => role,
-  "COORD_WORKER" => ENV.fetch("COORD_WORKER", role)
-)
-output = IO.popen(env, [RbConfig.ruby, coord, "next", role], err: File::NULL, &:read).to_s
+role = ENV.fetch("COORD_ROLE")
+output = IO.popen(ENV.to_h, [RbConfig.ruby, guard.coord, "next", role], err: File::NULL, &:read).to_s
 exit 0 unless output.match?(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)
 
 $stdout.print JSON.generate(

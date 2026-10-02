@@ -4,8 +4,9 @@ module Flow
   # HookInstaller installs the harness hooks that pick up tasks when a
   # session ends. Claude Code and opencode get theirs from bootstrap.
   class HookInstaller
-    def initialize(agents)
+    def initialize(agents, project)
       @harnesses = agents.map { |a| a[:harness] }.uniq
+      @project = project
     end
 
     # Returns true when the Hermes hook needs steps from the user.
@@ -17,19 +18,14 @@ module Flow
     private
 
     def install_codex
-      dest = File.join(Dir.home, ".codex", "hooks", "next-task.rb")
-      HookFiles.copy(File.join(ASSETS, "harness-hooks", "next-task.rb"), dest)
-      merge_stop_hook(File.join(Dir.home, ".codex", "hooks.json"), dest)
+      %w[next-task.rb session-guard.rb].each { |name| copy_hook(name) }
+      CodexHooks.new(@project).install
+      LegacyCodexHook.new.remove
     end
 
-    def merge_stop_hook(hooks_json, script_path)
-      data = File.exist?(hooks_json) ? (JSON.parse(File.read(hooks_json)) rescue {}) : {}
-      stop = (data["hooks"] ||= {})["Stop"] ||= []
-      return if stop.any? { |e| e.dig("hooks", 0, "command").to_s.include?("next-task.rb") }
-
-      stop << { "matcher" => "", "hooks" => [{ "type" => "command", "command" => "ruby #{script_path}" }] }
-      File.write(hooks_json, JSON.pretty_generate(data))
-      puts "  hook merge:   #{hooks_json} (Stop hook added)"
+    def copy_hook(name)
+      HookFiles.copy(File.join(ASSETS, "harness-hooks", name),
+                     File.join(@project, ".maf", "coordination", "harness-hooks", name))
     end
   end
 end

@@ -168,28 +168,42 @@ class MainTest < Minitest::Test
       File.write(File.join(dir, ".maf", "bin", "coord"), "puts #{TASK_ID.inspect}\n")
       FileUtils.chmod("+x", File.join(dir, ".maf", "bin", "coord"))
       env = { "COORD_ROLE" => "tester", "COORD_DIR" => File.join(dir, ".maf/coordination"), "BOARD_WATCH_INTERVAL" => "0" }
-      Dir.chdir(dir) { yield env }
+      Dir.chdir(dir) { yield *registered(env, dir) }
     end
   end
 
+  def registered(env, dir)
+    env.merge!("COORD_WORKER" => "tester-1", "TASKRC" => File.join(env.fetch("COORD_DIR"), "taskrc"))
+    FileUtils.mkdir_p(env.fetch("COORD_DIR"))
+    File.write(env.fetch("TASKRC"), "")
+    MafSession.register(dir, "claude", env)
+    session_input(env, dir)
+  end
+
+  def session_input(env, dir)
+    input = { "cwd" => dir, "session_id" => "test-session", "hook_event_name" => "SessionStart" }
+    assert MafSession::Guard.new(env, input).authorized?
+    [env, input.merge("hook_event_name" => "Stop")]
+  end
+
   def test_pokes_the_role_from_coord_role
-    with_fake_coord do |env|
-      assert_output(nil, /role tester/) { assert_equal 2, BoardWatch::Main.new(env, {}).run }
+    with_fake_coord do |env, input|
+      assert_output(nil, /role tester/) { assert_equal 2, BoardWatch::Main.new(env, input).run }
     end
   end
 
   def test_once_prints_the_poke_to_stdout
-    with_fake_coord do |env|
-      assert_output(/role tester/, "") { assert_equal 2, BoardWatch::Main.new(env, {}).run_once }
+    with_fake_coord do |env, input|
+      assert_output(/role tester/, "") { assert_equal 2, BoardWatch::Main.new(env, input).run_once }
     end
   end
 
   def test_once_does_not_repeat_an_unchanged_poke
-    with_fake_coord do |env|
+    with_fake_coord do |env, input|
       env = env.merge("BOARD_WATCH_INTERVAL" => "60")
-      assert_output(/role tester/) { BoardWatch::Main.new(env, {}).run_once }
+      assert_output(/role tester/) { BoardWatch::Main.new(env, input).run_once }
 
-      assert_equal 0, BoardWatch::Main.new(env, {}).run_once
+      assert_equal 0, BoardWatch::Main.new(env, input).run_once
     end
   end
 

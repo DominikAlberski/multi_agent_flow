@@ -35,6 +35,7 @@ require "digest"
 require "fileutils"
 require "json"
 require "rbconfig"
+require_relative "session-guard"
 
 module BoardWatch
   UUID = /\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/
@@ -217,6 +218,7 @@ module BoardWatch
 
     def run_once
       return 0 unless active?
+      return 0 if @input["hook_event_name"] == "SessionStart"
 
       work = Board.new(coord, board_env).work
       work.any? && backoff.due?(work) ? poke(work, $stdout) : 0
@@ -224,18 +226,18 @@ module BoardWatch
 
     private
 
-    def active? = !role.empty? && role != "unknown" && !@env["COORD_DISPATCHED"] && coord
+    def active? = !@env["COORD_DISPATCHED"] && guard.authorized?
     def role = @env["COORD_ROLE"].to_s
     def worker = @env.fetch("COORD_WORKER", role)
-    def coord_dir = File.expand_path(@env.fetch("COORD_DIR", ".maf/coordination"))
+    def coord_dir = guard.coord_dir
+    def guard = @guard ||= MafSession::Guard.new(@env, @input)
     def lock = @lock ||= Lock.new(File.join(coord_dir, "locks", "board-watch-#{worker}.d"))
     def backoff = @backoff ||= Backoff.new(File.join(coord_dir, "sessions", "#{worker}.watch.json"), interval)
     def interval = seconds("BOARD_WATCH_INTERVAL", 60)
     def seconds(name, default) = Integer(@env.fetch(name, default.to_s), exception: false) || default
 
     def coord
-      @coord ||= [File.join(Dir.pwd, ".maf", "bin", "coord"), File.join(File.dirname(coord_dir), "bin", "coord")]
-                 .find { |path| File.executable?(path) }
+      guard.coord
     end
 
     def watcher
@@ -260,7 +262,7 @@ end
 if __FILE__ == $PROGRAM_NAME
   once = ARGV.include?("--once")
   input = begin
-    once ? {} : JSON.parse($stdin.read.to_s)
+    JSON.parse($stdin.read.to_s)
   rescue JSON::ParserError
     {}
   end

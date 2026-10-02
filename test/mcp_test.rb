@@ -28,7 +28,8 @@ class McpTestCase < Minitest::Test
   end
 
   def maf(*args)
-    env = { "VAULT_SKIP" => "1", "TASKRC" => nil, "COORD_DIR" => nil, "COORD_ROLE" => nil, "COORD_WORKER" => nil }
+    env = { "VAULT_SKIP" => "1", "HOME" => File.join(@dir, "home"), "TASKRC" => nil,
+            "COORD_DIR" => nil, "COORD_ROLE" => nil, "COORD_WORKER" => nil }
     out = IO.popen(env, [RbConfig.ruby, MAF, *args], chdir: @dir, err: [:child, :out], &:read)
     [out, $?.exitstatus]
   end

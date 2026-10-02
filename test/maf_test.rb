@@ -29,7 +29,7 @@ class MafTest < Minitest::Test
   # The agent session that runs the suite exports TASKRC and COORD_DIR for the
   # shared board. Point the child at the disposable board instead.
   def maf_env
-    { "VAULT_SKIP" => "1", "TASKRC" => File.join(@dir, ".maf/coordination", "taskrc"),
+    { "VAULT_SKIP" => "1", "HOME" => File.join(@dir, "home"), "TASKRC" => File.join(@dir, ".maf/coordination", "taskrc"),
       "COORD_DIR" => File.join(@dir, ".maf/coordination"), "COORD_ROLE" => nil, "COORD_WORKER" => nil }
   end
 
@@ -251,7 +251,9 @@ end
 module MafProject
   MOCK = <<~MOCK
     #!%<ruby>s
+    require "json"
     File.write(ENV.fetch("MOCK_LOG"), [Dir.pwd, ENV["COORD_ROLE"], ENV["COORD_WORKER"], *ARGV].join("\\n"))
+    File.write(ENV.fetch("MOCK_LOG") + ".session", JSON.generate(token: ENV["MAF_SESSION_TOKEN"], pid: Process.pid))
   MOCK
 
   def setup
@@ -333,6 +335,33 @@ class MafStartTest < Minitest::Test
 
     assert_equal 0, status, out
     assert_started("architect-1")
+  end
+
+  def launched_session
+    out, status = maf("start", "opencode", "architect")
+    assert_equal 0, status, out
+    JSON.parse(File.read(@log + ".session"))
+  end
+
+  def registration_for(session)
+    path = File.join(@project, ".maf/coordination/sessions", "#{session.fetch('token')}.maf.json")
+    JSON.parse(File.read(path))
+  end
+
+  def test_start_registers_the_harness_process_and_worktree
+    session = launched_session
+    record = registration_for(session)
+    assert_equal session.fetch("pid"), record.fetch("pid")
+    assert_equal File.join(@project, ".maf/worktrees/architect-1"), record.fetch("dir")
+    assert_equal ["architect", "architect-1"], record.values_at("role", "worker")
+  end
+
+  def test_start_replaces_an_old_owned_hook_in_an_existing_worktree
+    launched_session
+    hook = File.join(@project, ".maf/worktrees/architect-1/.maf/coordination/harness-hooks/next-task.rb")
+    File.write(hook, "# next-task.rb - Stop hook for Claude Code and Codex.\nputs 'old global behavior'\n")
+    launched_session
+    assert_includes File.read(hook), "guard.authorized?"
   end
 end
 

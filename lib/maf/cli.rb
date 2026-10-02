@@ -65,8 +65,11 @@ module Maf
     private
 
     # Every command except these needs the new layout.
+    # maf uninstall --check previews the migration on an old layout.
     def old_layout?
-      !%w[migrate roles menu].include?(@command) && Migrate.old_layout?(Dir.pwd)
+      return false if %w[migrate roles menu].include?(@command) || (@command == "uninstall" && @args.include?("--check"))
+
+      Migrate.old_layout?(Dir.pwd)
     end
 
     def help

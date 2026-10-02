@@ -65,23 +65,31 @@ module SetupAgent
   end
 
   def self.enter_worktree(args)
-    worktree = Worktree.ensure(args.role, args.worker_id, args.harness)
-    RoleFile.copy(Dir.pwd, worktree.dir, args.harness, args.role)
+    worktree = prepare_worktree(args)
     Dir.chdir(worktree.dir)
     worktree.export_env!
     worktree
   end
 
+  def self.prepare_worktree(args)
+    worktree = Worktree.ensure(args.role, args.worker_id, args.harness)
+    RoleFile.copy(Dir.pwd, worktree.dir, args.harness, args.role)
+    RuntimeHooks.install(worktree.dir, args.harness)
+    worktree
+  end
+
   def self.launch(args, manifest, _worktree)
-    ENV["COORD_ROLE"] = args.role
-    ENV["COORD_WORKER"] = args.worker
+    identify(args)
     model = args.model || manifest.model_for(args.harness, args.role)
     return Dispatch.launch(args, model) if args.dispatch
 
-    # exec keeps this pid, so it is the harness pid. coord records it as the
-    # worker's presence (.maf/coordination/presence/<worker>.json).
-    ENV["COORD_SESSION_PID"] = Process.pid.to_s
+    MafSession.register(Project.root, args.harness)
     Launcher.for(args.harness).launch(args.role, args.worker, model)
+  end
+
+  def self.identify(args)
+    ENV["COORD_ROLE"] = args.role
+    ENV["COORD_WORKER"] = args.worker
   end
 end
 
@@ -94,3 +102,5 @@ require_relative "setup_agent/launcher"
 require_relative "setup_agent/hermes_launcher"
 require_relative "setup_agent/project"
 require_relative "setup_agent/hermes_skill"
+require_relative "setup_agent/runtime_hooks"
+require_relative "../../assets/harness-hooks/session-guard"

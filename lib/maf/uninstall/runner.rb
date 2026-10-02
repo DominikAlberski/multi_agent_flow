@@ -11,6 +11,8 @@ module Uninstall
     end
 
     def run
+      return old_layout if Migrate.old_layout?(project)
+
       steps = plan
       return finish("nothing to remove in #{project}") if steps.empty?
 
@@ -25,11 +27,19 @@ module Uninstall
       @project ||= File.realpath(@opts[:project])
     end
 
+    # The uninstaller knows only the new layout. --check shows the migration plan instead.
+    def old_layout
+      abort "uninstall: #{Migrate::HINT}" unless @opts[:check]
+      say("this project uses the old layout. Run maf migrate before maf uninstall. maf migrate plans:")
+      Migrate::Runner.new(["--project", project, "--check"]).run
+      say("after maf migrate, run maf uninstall --check again to see what the uninstaller removes")
+    end
+
     def plan
       manifest = Manifest.new(project)
       [VaultWatcher.new(project), Worktrees.new(project, @opts[:force]), Scripts.new(project), CommitGuard.new(project),
        DocGraphHooks.new(project), RoleFiles.new(project, manifest), ClaudeSettings.new(project),
-       McpEntries.new(project),
+       CodexHooks.new(project), McpEntries.new(project),
        MarkedFiles.new(project), Coordination.new(project), manifest].flat_map(&:steps)
     end
 

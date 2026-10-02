@@ -301,8 +301,8 @@ Run the full suite with system tests under one lock:
 An idle Claude Code session does not poll the board by itself. `maf add`
 adds two hooks to `.claude/settings.json`:
 
-- `next-task.rb` (sync `Stop` hook): if unclaimed tasks exist when the agent
-  stops, the hook continues the session at once.
+- `next-task.rb` registers the harness session ID on `SessionStart`.
+  Its synchronous `Stop` hook continues a registered session when unclaimed tasks exist.
 - `board-watch.rb` (`asyncRewake` hook on `SessionStart` and `Stop`): the hook
   runs in the background and checks the board every 60 seconds.
 
@@ -317,15 +317,24 @@ adds two hooks to `.claude/settings.json`:
    as long, up to 1 hour.
 
 One watcher runs per worker. The lock is `.maf/coordination/locks/board-watch-<worker>.d`.
-The watcher stops when its Claude Code process stops. The watcher does nothing
-for the user's own sessions (no `COORD_ROLE`) and for dispatched agents
-(`COORD_DISPATCHED=1`). To change the timing, set `BOARD_WATCH_INTERVAL` and
+The watcher stops when its Claude Code process stops.
+The watcher checks the launch token, process, worktree, worker, board, and registered harness session ID.
+Inherited `COORD_ROLE` and `COORD_DIR` values do not activate an independent session.
+The watcher does nothing for dispatched agents (`COORD_DISPATCHED=1`).
+To change the timing, set `BOARD_WATCH_INTERVAL` and
 `BOARD_WATCH_IDLE` (seconds) before you run `maf start`.
 
 Codex and opencode role files tell the agent to block in
 `coord next --wait --timeout 540` when it has no work. The command returns
-when a task or a message arrives. Codex has no wake hook. Use `--dispatch` to
-run Codex agents unattended.
+when a task or a message arrives.
+Codex uses project hooks in `.codex/hooks.json` for `SessionStart` and `Stop`.
+The stop hook can continue a registered session but cannot wake an idle session when new work arrives.
+Use `--dispatch` to run Codex agents unattended.
+
+`maf update` disables the legacy global Codex hook and removes its registration from `~/.codex/hooks.json`.
+Other global hooks stay.
+Restart workers with `maf start` after the update.
+Review the new project hook definitions when Codex requests hook trust.
 
 ### Keep interactive opencode agents awake
 
@@ -340,14 +349,16 @@ agents. The plugin uses these rules:
 3. If the board has work, the plugin sends the work prompt to the session.
 4. When the session is busy again, the checks stop.
 
-The plugin does nothing without `COORD_ROLE` and for dispatched agents
-(`COORD_DISPATCHED=1`). Subagent sessions do not start checks.
+The plugin requires a registered `maf start` session.
+The plugin does nothing for dispatched agents (`COORD_DISPATCHED=1`).
+Subagent sessions do not start checks.
 
 ### Wake a Hermes agent at session end
 
 Hermes runs `~/.hermes/agent-hooks/next-task.sh` when a session ends. The hook
 resumes the session when the role has unclaimed tasks. `maf add` installs the
-script. Two steps turn the hook on, because the flow never edits the Hermes
+script and its session guard. The guard rejects independent sessions and mismatched projects.
+Two steps turn the hook on, because the flow never edits the Hermes
 config:
 
 ```sh
@@ -808,6 +819,11 @@ The generator skips unchanged files and updates changed files in place. Then com
 
 ## Uninstall
 
+The uninstaller knows only the `.maf/` layout. If the project uses the old
+layout, run `maf migrate` first (see "Move an old install into `.maf/`").
+On an old layout, `maf uninstall` stops with the migrate hint, and
+`maf uninstall --check` prints the plan of `maf migrate`.
+
 Stop the team first (see above). Then preview what the uninstaller removes:
 
 ```sh
@@ -828,7 +844,7 @@ The uninstaller removes:
 - Clean worktrees in `.maf/worktrees/`.
 - Generated role files in `.maf/agents/`, the symlinks `.claude/agents`,
   `.opencode/agents`, and `.codex/prompts`, and the project's Hermes skills.
-- The flow hooks in `.claude/settings.json`.
+- The flow hooks in `.claude/settings.json` and `.codex/hooks.json`.
 - The flow blocks in the `post-commit` and `post-merge` git hooks.
 - The marked blocks in `AGENTS.md` and `.gitignore`.
 - `.maf/config.json`.
@@ -842,7 +858,7 @@ The uninstaller keeps:
   marked blocks.
 - `worker/*` branches. Merge or delete them with `git branch -D`.
 - Worktrees with uncommitted changes. Add `--force` to remove them.
-- The global Codex and Hermes hooks. Other projects can use them.
+- The guarded global Hermes hook. Other projects can use the hook.
 
 Commit the result.
 
@@ -938,7 +954,8 @@ Do these steps in the project:
   if it carries the flow marker.
 - Moves each git worktree with `git worktree move`. The link between the
   worktree and the repository stays intact. The command writes `.maf/env.sh` in
-  the worktree and removes `coord-env.sh`.
+  the worktree and removes `coord-env.sh`. Git excludes `.maf/env.sh`, so the
+  worktree stays clean and `maf uninstall` can remove it.
 - Changes the absolute paths in `.maf/coordination/taskrc`,
   `.maf/coordination/workers.json`, and `.claude/settings.json`.
 - Regenerates the files of the current agents, as `maf update` does. This step

@@ -40,7 +40,7 @@ class InstallerTestCase < Minitest::Test
   def run_ruby(script, *args)
     # VAULT_SKIP: bootstrap's vault auto-start spawns a detached daemon. In a
     # test that daemon would outlive the disposable dir, so keep it off.
-    output = IO.popen({ "VAULT_SKIP" => "1" }, [RbConfig.ruby, script, *args],
+    output = IO.popen({ "VAULT_SKIP" => "1", "HOME" => File.join(@dir, "home") }, [RbConfig.ruby, script, *args],
                       err: [:child, :out], &:read)
     [output, $?.exitstatus]
   end
@@ -213,8 +213,9 @@ class BootstrapTest < InstallerTestCase
 
     hooks = JSON.parse(File.read(settings_path))["hooks"]
     watch = hooks["SessionStart"].map { |entry| entry["hooks"][0] }
-    assert_equal [true], watch.map { |hook| hook["asyncRewake"] }
-    assert_equal ["ruby .maf/coordination/harness-hooks/board-watch.rb"], watch.map { |hook| hook["command"] }
+    async = watch.select { |hook| hook["asyncRewake"] }
+    assert_equal [true], async.map { |hook| hook["asyncRewake"] }
+    assert_equal ["ruby .maf/coordination/harness-hooks/board-watch.rb"], async.map { |hook| hook["command"] }
     assert_equal 2, hooks["Stop"].size
     assert File.exist?(File.join(@dir, ".maf/coordination", "harness-hooks", "board-watch.rb"))
     assert Dir.exist?(File.join(@dir, ".maf/coordination", "message-hooks"))
@@ -486,9 +487,17 @@ class FlowTest < InstallerTestCase
     refute_includes content, "next-task hook will re-prompt"
   end
 
-  # Codex hooks install into HOME, so keep HOME inside the test directory.
+  def test_codex_hooks_stay_in_the_project
+    out, status = flow_with_home("--agent", "codex:backend-developer")
+    assert_equal 0, status, out
+    assert File.exist?(File.join(@dir, ".codex/hooks.json"))
+    refute File.exist?(File.join(@dir, "home/.codex/hooks.json"))
+    assert File.exist?(File.join(@dir, ".maf/coordination/harness-hooks/session-guard.rb"))
+  end
+
+  # Keep harness settings in a separate test home.
   def flow_with_home(*args)
-    env = { "VAULT_SKIP" => "1", "HOME" => @dir }
+    env = { "VAULT_SKIP" => "1", "HOME" => File.join(@dir, "home") }
     output = IO.popen(env, [RbConfig.ruby, *FLOW, "--project", @dir, "--no-bootstrap", *args],
                       err: [:child, :out], &:read)
     [output, $?.exitstatus]

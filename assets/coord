@@ -1306,7 +1306,8 @@ end
     ENV_FILE = WorktreeEnv::FILE
     WORKTREES_DIR = ".maf/worktrees"
     RUNTIME_FILES = %w[.maf/bin/coord .claude/settings.json .maf/coordination/harness-hooks/next-task.rb
-                       .maf/coordination/harness-hooks/board-watch.rb .opencode/plugins/board-watch.js].freeze
+                       .maf/coordination/harness-hooks/board-watch.rb .maf/coordination/harness-hooks/session-guard.rb
+                       .codex/hooks.json .opencode/plugins/board-watch.js].freeze
 
     def self.dir_for(root, slug)
       File.join(root, WORKTREES_DIR, slug)

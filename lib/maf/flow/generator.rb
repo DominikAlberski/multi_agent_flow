@@ -30,7 +30,7 @@ module Flow
       results = RoleFiles.new(@options, @roles).generate
       link_agents
       McpInstaller.new(@options).install
-      pending = @options.check? ? false : HookInstaller.new(@options.agents).install
+      pending = @options.check? ? false : HookInstaller.new(@options.agents, @options.project).install
       manifest.write
       Report.new(@options.project, @roles, pending).print(results)
     end

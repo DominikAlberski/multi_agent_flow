@@ -18,7 +18,7 @@ const WAKE = 2
 
 const server = async ({ client, directory }) => {
   const role = process.env.COORD_ROLE || ""
-  if (!role || role === "unknown" || process.env.COORD_DISPATCHED) return {}
+  if (!role || role === "unknown" || !process.env.MAF_SESSION_TOKEN || process.env.COORD_DISPATCHED) return {}
 
   const script = path.join(directory, ".maf", "coordination", "harness-hooks", "board-watch.rb")
   // Same rule as board-watch.rb: a whole number of seconds, else 60.
@@ -31,12 +31,14 @@ const server = async ({ client, directory }) => {
 
   // Returns the poke prompt, or null when the board has no work that is due.
   // If ruby or the script fails, the plugin logs the error.
-  const check = () =>
+  const check = (id, event = "Stop") =>
     new Promise((resolve) => {
-      execFile("ruby", [script, "--once"], { cwd: directory }, (error, stdout, stderr) => {
+      const child = execFile("ruby", [script, "--once"], { cwd: directory }, (error, stdout, stderr) => {
         if (error && error.code !== WAKE) log(`${script} --once failed: ${stderr.trim() || error.message}`)
         resolve(error?.code === WAKE ? stdout.trim() : null)
       })
+      child.stdin.on("error", () => {})
+      child.stdin.end(JSON.stringify({ session_id: id, hook_event_name: event, cwd: directory }))
     })
 
   const stop = () => {
@@ -52,7 +54,7 @@ const server = async ({ client, directory }) => {
   // Each watch gets a new entry. A check that ends after stop() or after a
   // new watch sees a different entry and does nothing.
   const tick = async (entry) => {
-    const prompt = await check()
+    const prompt = await check(entry.id)
     if (watched !== entry) return
     if (!prompt) {
       entry.timer = setTimeout(() => tick(entry), interval)
@@ -67,6 +69,7 @@ const server = async ({ client, directory }) => {
   const watch = async (id) => {
     const session = await client.session.get({ path: { id } }).catch(() => null)
     if (!session?.data || session.data.parentID) return
+    await check(id, "SessionStart")
     stop()
     watched = { id, timer: null }
     tick(watched)

@@ -4,6 +4,7 @@ module Migrate
   # Worktrees moves each git worktree of .worktrees/ into .maf/worktrees/.
   # git worktree move keeps the link between the worktree and the repository.
   # The env file of a worktree moves to .maf/env.sh with the new paths.
+  # Git excludes .maf/env.sh, so the worktree stays clean.
   class Worktrees
     ENV_BIN = "export MAF_BIN=%<bin>s\n" \
               "case \":$PATH:\" in *\":$MAF_BIN:\"*) ;; *) export PATH=\"$MAF_BIN:$PATH\" ;; esac\n"
@@ -43,6 +44,7 @@ module Migrate
 
       FileUtils.mkdir_p(File.join(dir, ".maf"))
       File.write(File.join(dir, ".maf", "env.sh"), converted(File.read(old)))
+      EnvExclude.add(dir)
       FileUtils.rm(old)
     end
 

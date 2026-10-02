@@ -9,7 +9,8 @@ module Bootstrap
     HOOKS = [
       ["harness-hooks/next-task.rb", NEXT_TASK_HOOK_SIGNATURE],
       ["harness-hooks/next-task-hermes.sh", NEXT_TASK_HERMES_SIGNATURE],
-      ["harness-hooks/board-watch.rb", BOARD_WATCH_SIGNATURE]
+      ["harness-hooks/board-watch.rb", BOARD_WATCH_SIGNATURE],
+      ["harness-hooks/session-guard.rb", SESSION_GUARD_SIGNATURE]
     ].freeze
     # Hook event name -> the asset source symbol that holds the block.
     DOC_GRAPH_HOOKS = { "post-commit" => :post_commit, "post-merge" => :post_merge }.freeze

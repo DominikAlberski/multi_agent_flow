@@ -41,7 +41,8 @@ class UninstallerTestCase < Minitest::Test
   end
 
   def run_ruby(script, *args, stdin: "")
-    out, status = Open3.capture2e({ "VAULT_SKIP" => "1" }, RbConfig.ruby, script, *args, stdin_data: stdin)
+    env = { "VAULT_SKIP" => "1", "HOME" => File.join(@dir, "home") }
+    out, status = Open3.capture2e(env, RbConfig.ruby, script, *args, stdin_data: stdin)
     [out, status.exitstatus]
   end
 
@@ -192,6 +193,15 @@ class UninstallWorktreeTest < UninstallerTestCase
     assert system("git", "-C", @dir, "rev-parse", "--verify", "-q", "worker/tester-1", out: File::NULL)
   end
 
+  # Regression: an older maf migrate wrote .maf/env.sh without a git exclude.
+  def test_removes_a_worktree_with_an_env_file_that_git_does_not_exclude
+    write(".maf/worktrees/tester-1/.maf/env.sh", "export COORD_SLOT=1\n")
+
+    uninstall("--yes")
+
+    refute Dir.exist?(path(".maf/worktrees"))
+  end
+
   def test_keeps_a_dirty_worktree_without_force
     write(".maf/worktrees/tester-1/work.txt", "unsaved")
 
@@ -266,5 +276,28 @@ class UninstallDocGraphHookTest < UninstallerTestCase
     uninstall("--yes")
 
     assert_equal "#!/bin/sh\nmake lint\n", File.read(hook("post-commit"))
+  end
+end
+
+class UninstallOldLayoutTest < UninstallerTestCase
+  def setup
+    super
+    write(".agent-flow.json", "{}")
+  end
+
+  def test_check_prints_the_migration_plan
+    out, status = uninstall("--check")
+
+    assert_equal 0, status, out
+    assert_includes out, "Run maf migrate before maf uninstall"
+    assert_includes out, "check only; nothing moved"
+  end
+
+  def test_stops_without_check
+    out, status = uninstall("--yes")
+
+    assert_equal 1, status, out
+    assert_includes out, "Run: maf migrate"
+    assert File.exist?(path(".agent-flow.json"))
   end
 end

@@ -10,12 +10,15 @@
 # so the user deletes them by hand.
 # Removes .maf/ if nothing is left in it.
 # Keeps worker/* branches. Keeps dirty worktrees unless --force is given.
-# Keeps the global Codex and Hermes hooks. Other projects can use them.
+# Keeps the guarded global Hermes hook. Other projects can use the hook.
+# Stops on an old layout. --check then prints the plan of maf migrate.
 require "fileutils"
 require "json"
 require "optparse"
 require_relative "bootstrap"
 require_relative "flow"
+require_relative "env_exclude"
+require_relative "migrate"
 
 module Uninstall
   KEPT_DIRS = %w[.maf/graphify-out .maf/obsidian].freeze
@@ -25,8 +28,7 @@ module Uninstall
                 %w[.codex prompts], %w[.codex], %w[.maf bin], %w[.maf agents claude], %w[.maf agents opencode],
                 %w[.maf agents codex], %w[.maf agents], %w[.maf worktrees], %w[.maf]].freeze
 
-  GLOBAL_HOOKS = [File.join(Dir.home, ".codex", "hooks", "next-task.rb"),
-                  File.join(Dir.home, ".hermes", "agent-hooks", "next-task.sh")].freeze
+  GLOBAL_HOOKS = [File.join(Dir.home, ".hermes", "agent-hooks", "next-task.sh")].freeze
 
   # Step is one removal. --check prints the label and runs nothing.
   Step = Struct.new(:label, :work) do
@@ -44,6 +46,7 @@ require_relative "uninstall/doc_graph_hooks"
 require_relative "uninstall/manifest"
 require_relative "uninstall/role_files"
 require_relative "uninstall/claude_settings"
+require_relative "uninstall/codex_hooks"
 require_relative "uninstall/mcp_entries"
 require_relative "uninstall/marked_files"
 require_relative "uninstall/coordination"

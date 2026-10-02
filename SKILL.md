@@ -218,6 +218,12 @@ watcher, with its pid in `.maf/coordination/vault.pid` and its output in
 
 ## Operating rules (also written into the project contract)
 
+Automatic hooks require a session that `maf start` registers.
+Coordination environment variables alone do not activate hooks.
+Codex hooks live in the project `.codex/hooks.json` file.
+Run `maf update` to disable the legacy global Codex hook.
+Restart workers with `maf start` after the update.
+
 1. One writer per path; the task `scope` defines ownership. This is a
    convention `coord` warns about, not an enforced lock. Roles with
    `can_edit: false` get a restricted tool grant where the harness supports
