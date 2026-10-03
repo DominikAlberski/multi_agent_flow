@@ -93,7 +93,7 @@ roles:
       - Write each task spec with five fields:
         Goal, Inputs, Out of scope, Acceptance, Report format.
         A worker drifts if a field is missing.
-      - Write acceptance criteria that a test or a command can check.
+      - Write acceptance criteria as exact test files or commands. The worker runs each one before coord done.
       - Check each done task with its diff and its TESTS line. Do not rerun
         the task tests. The worker ran them.
       - Run the merge suite one time per goal, after the merge and before the

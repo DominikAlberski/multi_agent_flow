@@ -23,6 +23,17 @@ module Flow
       File.join("..", MAF_DIR, "agents", harness)
     end
 
+    # A harness folder with the user's own files stays. Each role file gets a
+    # relative symlink in it instead, so the harness still finds the role.
+    # A user file with the same name stays, and its name is returned.
+    def link_files(harness)
+      dir = File.join(@project, HARNESS_DIRS.fetch(harness))
+      prune(dir, harness)
+      role_files(harness).reject { |source| link_file(dir, source) }.map { |source| File.basename(source) }
+    end
+
+    def self.file_target(harness, name) = File.join("..", "..", MAF_DIR, "agents", harness, name)
+
     private
 
     def linked?(path, harness)
@@ -33,6 +44,25 @@ module Flow
       return true unless File.exist?(path) || File.symlink?(path)
 
       File.directory?(path) && !File.symlink?(path) && Dir.empty?(path)
+    end
+
+    def role_files(harness) = Dir.glob(File.join(@project, MAF_DIR, "agents", harness, "*.md")).sort
+
+    def link_file(dir, source)
+      path = File.join(dir, File.basename(source))
+      target = self.class.file_target(File.basename(File.dirname(source)), File.basename(source))
+      return File.readlink(path) == target if File.symlink?(path)
+      return false if File.exist?(path)
+
+      File.symlink(target, path)
+    end
+
+    # A link of a removed role points nowhere. Remove it.
+    def prune(dir, harness)
+      prefix = File.join("..", "..", MAF_DIR, "agents", harness, "")
+      Dir.glob(File.join(dir, "*.md")).each do |path|
+        File.delete(path) if File.symlink?(path) && File.readlink(path).start_with?(prefix) && !File.exist?(path)
+      end
     end
 
     def make(path, harness)

@@ -22,11 +22,24 @@ module Uninstall
       DIRS.flat_map { |parts| Dir.glob(File.join(@project, *parts, "*.md")) }.select { |path| Owned.marked?(path) }
     end
 
-    def links
+    def links = folder_links + file_links
+
+    def folder_links
       Flow::HARNESS_DIRS.filter_map do |harness, dir|
         path = File.join(@project, dir)
         path if File.symlink?(path) && File.readlink(path) == Flow::AgentLinks.target(harness)
       end
+    end
+
+    # The links of single role files in a harness folder with the user's own files.
+    def file_links
+      Flow::HARNESS_DIRS.flat_map do |harness, dir|
+        Dir.glob(File.join(@project, dir, "*.md")).select { |path| file_link?(path, harness) }
+      end
+    end
+
+    def file_link?(path, harness)
+      File.symlink?(path) && File.readlink(path) == Flow::AgentLinks.file_target(harness, File.basename(path))
     end
 
     def hermes_step(path)

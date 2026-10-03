@@ -369,16 +369,39 @@ class FlowTest < InstallerTestCase
     assert File.exist?(stored_agent_file)
   end
 
-  def test_a_harness_folder_with_foreign_files_stays_and_the_run_warns
+  # Regression: TastingCompanion keeps its own agents in .claude/agents. The
+  # harness then found no role file, and the startup prompt named a missing file.
+  def test_a_harness_folder_with_foreign_files_gets_a_link_for_each_role_file
     FileUtils.mkdir_p(File.join(@dir, ".opencode", "agents"))
     File.write(File.join(@dir, ".opencode", "agents", "mine.md"), "mine\n")
 
     out, status = flow("--agent", "opencode:backend-developer")
 
     assert_equal 0, status, out
-    refute File.symlink?(File.join(@dir, ".opencode", "agents"))
-    assert_includes out, "maf migrate"
-    assert File.exist?(File.join(@dir, ".opencode", "agents", "mine.md"))
+    link = File.join(@dir, ".opencode", "agents", "backend-developer.md")
+    assert_equal "../../.maf/agents/opencode/backend-developer.md", File.readlink(link)
+    assert_equal File.read(stored_agent_file), File.read(link)
+    assert_equal "mine\n", File.read(File.join(@dir, ".opencode", "agents", "mine.md"))
+  end
+
+  def test_an_own_file_with_the_role_name_stays_and_the_run_warns
+    FileUtils.mkdir_p(File.join(@dir, ".opencode", "agents"))
+    File.write(File.join(@dir, ".opencode", "agents", "backend-developer.md"), "mine\n")
+
+    out, = flow("--agent", "opencode:backend-developer")
+
+    assert_includes out, "own files named backend-developer.md"
+    assert_equal "mine\n", File.read(File.join(@dir, ".opencode", "agents", "backend-developer.md"))
+  end
+
+  def test_the_link_of_a_removed_role_is_pruned
+    FileUtils.mkdir_p(File.join(@dir, ".opencode", "agents"))
+    File.write(File.join(@dir, ".opencode", "agents", "mine.md"), "mine\n")
+    File.symlink("../../.maf/agents/opencode/gone.md", File.join(@dir, ".opencode", "agents", "gone.md"))
+
+    flow("--agent", "opencode:backend-developer")
+
+    refute File.symlink?(File.join(@dir, ".opencode", "agents", "gone.md"))
   end
 
   def test_the_symlink_is_not_rewritten_on_a_rerun

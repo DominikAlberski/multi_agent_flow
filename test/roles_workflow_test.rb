@@ -169,6 +169,14 @@ class HandoffRulesTest < RolesWorkflowTestCase
     assert_includes role_file("architect"), "Do not create the task of the next stage"
   end
 
+  # Regression: the lead prompts said "record decisions", but the commit guard refuses a lead commit (ADR 0004).
+  def test_the_lead_prompts_hand_decision_records_to_a_worker
+    maf("add", "opencode:architect", "opencode:project-manager", "--no-bootstrap")
+
+    assert_includes role_file("architect"), "Create a task for a worker that can edit files. Put the decision text"
+    assert_includes role_file("project-manager"), "$COORD_DIR/artifacts/<goal>/decision-<name>.md"
+  end
+
   def test_the_contract_holds_the_artifact_rules
     contract = File.read(File.expand_path("../assets/agents-contract.md", __dir__))
 

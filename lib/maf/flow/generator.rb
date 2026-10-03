@@ -43,12 +43,21 @@ module Flow
 
       links = AgentLinks.new(@options.project)
       @options.agents.map { |a| a[:harness] }.uniq.select { |h| HARNESS_DIRS.key?(h) }.each do |harness|
-        warn_not_linked(harness) if links.link(harness) == :refuse
+        link_role_files(links, harness) if links.link(harness) == :refuse
       end
     end
 
+    def link_role_files(links, harness)
+      return warn_not_linked(harness) if File.symlink?(File.join(@options.project, HARNESS_DIRS.fetch(harness)))
+
+      kept = links.link_files(harness)
+      return if kept.empty?
+
+      warn "flow: #{HARNESS_DIRS.fetch(harness)} has own files named #{kept.join(", ")}. Those roles are not linked."
+    end
+
     def warn_not_linked(harness)
-      warn "flow: #{HARNESS_DIRS.fetch(harness)} holds files that the flow does not own. " \
+      warn "flow: #{HARNESS_DIRS.fetch(harness)} points to another folder. " \
            "The #{harness} harness cannot read the role files. Run: maf migrate"
     end
 

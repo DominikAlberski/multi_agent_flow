@@ -65,6 +65,18 @@ class UninstallRemovesTest < UninstallerTestCase
     refute Dir.exist?(File.join(@hermes, "#{File.basename(@dir)}-reviewer"))
   end
 
+  def test_removes_the_role_file_links_and_keeps_own_agents
+    write(".claude/agents/mine.md", "mine\n")
+    install
+    assert File.symlink?(path(".claude", "agents", "architect.md"))
+
+    out, status = uninstall("--yes")
+
+    assert_equal 0, status, out
+    refute File.symlink?(path(".claude", "agents", "architect.md"))
+    assert_equal "mine\n", File.read(path(".claude", "agents", "mine.md"))
+  end
+
   def test_removes_the_opencode_plugin
     install
     assert File.exist?(path(".opencode", "plugins", "board-watch.js"))

@@ -37,6 +37,13 @@ module Flow
 
   DECISIONS = "the decisions folder: `.agent/decisions/` if it exists, else `docs/decisions/`"
 
+  # Lead roles cannot commit (ADR 0004). A worker commits their decision records.
+  ARCHITECT_DECISIONS = "Record decisions in #{DECISIONS}. You cannot commit. " \
+                        "Create a task for a worker that can edit files. Put the decision text in the task. " \
+                        "That worker commits it on the goal branch."
+  PM_DECISIONS = "Write each decision to `$COORD_DIR/artifacts/<goal>/decision-<name>.md`. You cannot commit. " \
+                 "Send the path to the architect. The architect has a worker commit it in #{DECISIONS}."
+
   WORKER_LOOP = <<~LOOP
     Work loop:
     1. Read messages: `coord inbox`.
@@ -47,7 +54,8 @@ module Flow
     5. Do the work. Stay inside the task scope.
     6. Before any local model generation: `coord with-lock ollama -- <command>`.
     7. If the task has a goal, merge the goal branch into the task branch: `git merge goal/<goal-short-id>`.
-       Then run the task tests. Do not run the merge suite. Check the task's acceptance criteria.
+       Then run the task tests. Do not run the merge suite.
+       Run each test file and command of the Acceptance field. Put each result in the TESTS line.
        `coord done` refuses a task branch that lacks the goal branch head.
     8. Commit the work on the task branch. The architect lands the task branch as one squash commit.
     9. Report. If the task spec has a Report format, use it. Otherwise use:
@@ -78,9 +86,12 @@ module Flow
   # Steps 2 to 9 are the same with and without a project manager.
   ARCHITECT_GOAL_STEPS = <<~TEXT.strip
     2. Decompose the goal into tasks. Keep scopes disjoint (one writer per path).
+       Compare the plan with the other open goals: `coord goal list`. List the shared schema and the shared files.
+       If two goals need the same change (for example one migration), move it into a small foundation goal.
+       The foundation goal merges first. The other goals start after it.
     3. Create each task with the goal id, then add its spec:
          coord add --role <role> --scope "<paths>" --goal <goal-id> --title "<title>"
-         coord annotate <id> "Goal: <goal>. Inputs: <files or context>. Out of scope: <paths or work>. Acceptance: <done condition>. Report format: <what to annotate>."
+         coord annotate <id> "Goal: <goal>. Inputs: <files or context>. Out of scope: <paths or work>. Acceptance: <exact test files or commands that must pass>. Report format: <what to annotate>."
     4. Watch progress: `coord goal show <goal-id>`, `coord conflicts`, `coord inbox architect`.
        Each done task sends you a message. A task for a role without a worker alerts the project manager.
     5. Answer worker questions. Resolve conflicts.
@@ -123,7 +134,7 @@ module Flow
     1. Read goals from the project manager: `coord inbox architect`. Each goal message names a goal id.
     #{ARCHITECT_GOAL_STEPS}
     10. Report back: `coord msg --from architect project-manager "<summary>"`.
-    11. Record decisions in #{DECISIONS}.
+    11. #{ARCHITECT_DECISIONS}
     12. Use `coord broadcast --from architect "<text>"` for notices to workers.
         Add `--to all` only for a change that the project manager must know. Use `coord log` to see what happened.
 
@@ -144,7 +155,7 @@ module Flow
        `coord goal add --title "<outcome>"`. The command prints the goal id.
     #{ARCHITECT_GOAL_STEPS}
     10. Report the outcome to the user in this session.
-    11. Record decisions in #{DECISIONS}.
+    11. #{ARCHITECT_DECISIONS}
     12. Use `coord broadcast --from architect "<text>"` for notices to workers.
         Use `coord log` to see what happened.
 
@@ -186,7 +197,7 @@ module Flow
     4. Check status with `coord goal list` and `coord goal show <goal-id>`.
        Wait for reports with `coord inbox project-manager --wait`.
     5. Summarize the report for the user.
-    6. Record decisions in #{DECISIONS}.
+    6. #{PM_DECISIONS}
 
     Rules:
     - Never edit source files. Never create tasks; only the architect creates tasks.

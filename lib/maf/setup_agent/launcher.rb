@@ -24,7 +24,7 @@ module SetupAgent
 
     module Claude
       def self.launch(role, _worker, model)
-        prompt = "Read .claude/agents/#{role}.md and follow it exactly. Start your work loop now."
+        prompt = "Read .maf/agents/claude/#{role}.md and follow it exactly. Start your work loop now."
         cmd = ["claude"]
         cmd += ["--model", model] if model
         Launcher.exec_or_die(cmd + [prompt])
