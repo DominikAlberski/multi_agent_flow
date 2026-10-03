@@ -61,6 +61,8 @@ module Flow
     - If a problem is outside your task and you cannot fix it, escalate: `coord escalate --task <id> "<text>"`.
       Examples: a missing tool, no access, a refused guard, rules that contradict.
       The project manager asks the user and answers you. Then stop. Do not retry.
+    - Before you continue a claimed task after a pause, run `coord show <id>`. If the status is not pending,
+      or the worker is not you, stop work on that task. `coord reap` releases the claims of stalled workers.
     - Finish the whole task. Report done only when each acceptance criterion passes.
     - If you cannot finish, do the parts you can. Keep the claim. Annotate the
       blocker and the missing parts. Message the architect. Stop. Do not retry

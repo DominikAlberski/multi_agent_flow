@@ -202,6 +202,56 @@ class TaskwarriorTest < Minitest::Test
     assert_equal "backend-1", holder.worker
   end
 
+  def run_cli(*argv, env: @env) = capture_io { Coord::CLI.new(argv, env: env).run }.first
+
+  # Taskwarrior sets `modified` at the claim, so only a limit of 0 minutes finds the claim stale here.
+  def test_reap_releases_a_stale_claim_and_tells_the_architect
+    id = add("stalled")
+    tasks.claim(id, "backend-1")
+
+    assert_includes run_cli("reap", "--minutes", "90"), "no stale claims"
+    capture_io { run_cli("reap", "--minutes", "0") }
+    assert_empty find(id)["worker"].to_s
+    inbox = run_cli("inbox", "architect", env: @env.merge("COORD_ROLE" => "architect"))
+    assert_includes inbox, "backend-1 was not seen"
+  end
+
+  # Regression: a stalled run woke up and closed a task that another worker held.
+  def test_done_is_refused_for_a_task_of_another_worker
+    id = add("taken over")
+    tasks.claim(id, "backend-2")
+
+    error = assert_raises(SystemExit) { run_cli("done", id) }
+    assert_includes error.message, "belongs to backend-2"
+  end
+
+  def test_done_is_refused_for_a_closed_task
+    id = add("closed")
+    capture_io { run_cli("done", id) }
+
+    error = assert_raises(SystemExit) { run_cli("done", id) }
+    assert_includes error.message, "already completed"
+  end
+
+  # Regression: two waiters on one inbox split the messages between two agents.
+  def test_a_second_inbox_waiter_for_a_role_is_refused
+    other = Process.spawn("sleep 30")
+    locks = File.join(@env["COORD_DIR"], "locks")
+    FileUtils.mkdir_p(locks)
+    File.write(File.join(locks, "inbox-wait-architect.pid"), other.to_s)
+
+    error = assert_raises(SystemExit) { run_cli("inbox", "architect", "--wait", "--timeout", "1") }
+    assert_includes error.message, "another coord inbox --wait for architect"
+  ensure
+    Process.kill("KILL", other) && Process.wait(other) if other
+  end
+
+  def test_an_inbox_waiter_frees_its_slot_after_the_wait
+    run_cli("msg", "--from", "tester", "architect", "hello")
+    assert_includes run_cli("inbox", "architect", "--wait", "--timeout", "1"), "hello"
+    refute File.exist?(File.join(@env["COORD_DIR"], "locks", "inbox-wait-architect.pid"))
+  end
+
   # Regression: the steal notice went to the prior holder's worker-id inbox
   # (e.g. inbox/backend-developer-1/), which no agent polls. It must land in
   # the role inbox the prior holder reads with `coord inbox`.
@@ -1117,6 +1167,14 @@ class WorktreeFirstRunTest < Minitest::Test
     assert File.exist?(File.join(@worktree_dir, ".maf", "bin", "coord"))
     status = `git -C #{@worktree_dir} status --porcelain`
     refute_includes status, ".maf/env.sh"
+  end
+
+  # Regression: dispatch mode failed in each new worktree, because only coord was copied.
+  def test_worktree_copies_every_uncommitted_script_of_the_bin_folder
+    %w[dispatcher vault].each { |name| File.write(File.join(@root, ".maf", "bin", name), "#!/usr/bin/env ruby\n") }
+    Coord::Worktree.new(@root).create("tester", nil)
+
+    %w[coord dispatcher vault].each { |name| assert File.exist?(File.join(@worktree_dir, ".maf", "bin", name)), name }
   end
 
   HOOK_FILES = %w[.claude/settings.json .maf/coordination/harness-hooks/board-watch.rb

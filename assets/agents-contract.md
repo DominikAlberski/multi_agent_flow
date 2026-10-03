@@ -137,7 +137,11 @@ coord unlock ollama
    `coord annotate ID "STATUS: done or blocked. FILES: <paths>.
    TESTS: <one-line result>. NOTES: <assumptions or risks>"`. Ask other
    agents with `coord msg`.
-5. Finish the whole task. Report done only when each acceptance criterion
+5. Before you continue a claimed task after a pause, run `coord show ID`.
+   If the status is not pending, or the worker is not you, stop work on that task.
+   `coord reap` releases the claim of a worker that was not seen for 90 minutes.
+   `coord done` refuses a closed task and a task that another worker holds.
+   Finish the whole task. Report done only when each acceptance criterion
    passes. If you cannot finish a task, do the parts you can. Keep the claim.
    Annotate the blocker and the missing parts. Message the architect. Stop. Do not retry a failing approach. Do not
    `unclaim` a blocked task — that returns it to the pool for another worker

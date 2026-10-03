@@ -578,8 +578,9 @@ class MainTest < Minitest::Test
     assert_equal 2, inbox("read").size
   end
 
-  FakePoller = Struct.new(:ids) do
+  FakePoller = Struct.new(:ids, :claimed) do
     def unclaimed_task_ids = ids
+    def claimed_task_ids = claimed || []
     def next_output = ids.join("\n")
   end
 
@@ -595,8 +596,21 @@ class MainTest < Minitest::Test
     assert_equal 1, File.readlines(calls).size
   end
 
+  # Regression: a dead run kept its claim for an hour, and no run resumed the task.
+  def test_a_claimed_task_gets_a_resume_run_before_new_tasks
+    calls = File.join(@dir, "calls")
+    main = Dispatcher::Main.new(config(command: "echo %{prompt} >> #{calls}", timeout: 5))
+    main.instance_variable_set(:@poller, FakePoller.new(["t2"], ["t1"]))
+    capture_io { main.cycle }
+
+    prompt = File.read(calls)
+    assert_includes prompt, "You hold claimed tasks that a previous run did not finish: t1."
+    refute_includes prompt, "Unclaimed tasks exist"
+  end
+
   FakeBoard = Struct.new(:text) do
     def unclaimed_task_ids = []
+    def claimed_task_ids = []
     def next_output = text
   end
 
@@ -667,7 +681,7 @@ class OptionsTest < Minitest::Test
     config = parse("reviewer", "--idle-timeout", "90", "--grace", "2", "--completion-signal", "OK!",
                    "--abort-signal", "NO!")
     assert_equal [90, 2, "OK!", "NO!"], Dispatcher::Limits.from(config).to_a
-    assert_equal 300, config.timeout
+    assert_equal 1500, config.timeout
   end
 
   def test_idle_timeout_is_off_by_default
@@ -934,6 +948,14 @@ class PollerTest < Minitest::Test
     assert_equal [id], poller.unclaimed_task_ids
   end
 
+  def test_lists_the_claimed_task_ids_of_this_worker
+    id = capture_io do
+      Coord::CLI.new(["add", "--role", "backend-developer", "--scope", "t/**", "--title", "Fix"], env: @env).run
+    end.first.strip
+    capture_io { Coord::CLI.new(["claim", id], env: @env).run }
+    assert_equal [id], poller.claimed_task_ids
+  end
+
   def test_no_tasks_gives_no_ids
     assert_empty poller.unclaimed_task_ids
   end
@@ -1081,9 +1103,9 @@ class GraphQueryTest < Minitest::Test
   end
 end
 
-# ReviewPoll asks coord for new pull request reviews. Only the architect
-# dispatcher of a project with a github section does this.
-class ReviewPollTest < Minitest::Test
+# LeadChores runs coord reap, and coord review-watch with a github section.
+# Only the architect dispatcher does this.
+class LeadChoresTest < Minitest::Test
   FakeCoord = Struct.new(:calls) do
     def coord(*args)
       calls << args
@@ -1102,20 +1124,71 @@ class ReviewPollTest < Minitest::Test
   def calls(role, settings)
     File.write(File.join(@dir, ".maf/config.json"), JSON.generate(settings))
     poller = FakeCoord.new([])
-    poll = Dispatcher::ReviewPoll.new(poller, role)
+    poll = Dispatcher::LeadChores.new(poller, role)
     Dir.chdir(@dir) { 2.times { poll.run } }
     poller.calls
   end
 
-  def test_the_architect_polls_reviews_once_per_period
-    assert_equal [%w[review-watch --once]], calls("architect", github: { bot_user: "maf-bot" })
+  def test_the_architect_runs_the_chores_once_per_period
+    assert_equal [%w[reap], %w[review-watch --once]], calls("architect", github: { bot_user: "maf-bot" })
   end
 
-  def test_no_poll_without_github_settings
-    assert_empty calls("architect", {})
+  def test_no_review_poll_without_github_settings
+    assert_equal [%w[reap]], calls("architect", {})
   end
 
   def test_no_poll_for_other_roles
     assert_empty calls("tester", github: { bot_user: "maf-bot" })
+  end
+end
+
+# The run limit comes from --timeout, else from team.timeouts in
+# .maf/config.json, else from the default.
+class TimeoutTest < Minitest::Test
+  def setup
+    @dir = File.realpath(Dir.mktmpdir("dispatcher-timeout-test"))
+    system("git", "-C", @dir, "init", "-q")
+    FileUtils.mkdir_p(File.join(@dir, ".maf"))
+  end
+
+  def teardown = FileUtils.remove_entry(@dir)
+
+  def timeout(*argv, team: nil)
+    File.write(File.join(@dir, ".maf/config.json"), JSON.generate(team ? { team: team } : {}))
+    Dir.chdir(@dir) { Dispatcher::Options.parse(argv + ["--no-skill"], { "COORD_DIR" => @dir }).timeout }
+  end
+
+  def test_the_default_timeout_is_1500_seconds
+    assert_equal 1500, timeout("reviewer")
+  end
+
+  def test_the_team_section_sets_a_timeout_for_each_role
+    assert_equal 2400, timeout("reviewer", team: { timeouts: { reviewer: 2400 } })
+    assert_equal 1500, timeout("tester", team: { timeouts: { reviewer: 2400 } })
+  end
+
+  def test_the_flag_wins_over_the_team_section
+    assert_equal 60, timeout("reviewer", "--timeout", "60", team: { timeouts: { reviewer: 2400 } })
+  end
+
+  # A timed-out run tells the architect, because the task waits without a sign.
+  def test_a_timeout_sends_a_message_to_the_architect
+    calls = []
+    runner = Dispatcher::Runner.new(Dispatcher::Config.new(role: "reviewer", worker: "reviewer-2", timeout: 1,
+                                                           command: "sleep 5", coord_dir: @dir, cache_window: 0),
+                                    Dispatcher::Harness.for(Dispatcher::Config.new(command: "sleep 5")), {})
+    with_coord_calls(calls) { capture_io { runner.dispatch("work") } }
+
+    assert_equal "architect", calls.first[3]
+    assert_includes calls.first.last, "reviewer-2 timed out after 1s"
+  end
+
+  # Replaces CoordCall.run for the block and records each call.
+  def with_coord_calls(calls)
+    original = Dispatcher::CoordCall.method(:run)
+    Dispatcher::CoordCall.define_singleton_method(:run) { |_env, *args| calls << args }
+    yield
+  ensure
+    Dispatcher::CoordCall.define_singleton_method(:run, original)
   end
 end

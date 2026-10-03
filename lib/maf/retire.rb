@@ -103,8 +103,8 @@ module Maf
       false
     end
 
-    # A dispatcher run can take up to its --timeout (default 300 seconds).
-    def self.wait_for_exit(pid, timeout: Integer(ENV.fetch("MAF_STOP_TIMEOUT", "600")))
+    # A dispatcher run can take up to its --timeout (default 1500 seconds).
+    def self.wait_for_exit(pid, timeout: Integer(ENV.fetch("MAF_STOP_TIMEOUT", "1800")))
       deadline = Time.now + timeout
       sleep 0.5 while alive?(pid) && Time.now < deadline
       !alive?(pid)

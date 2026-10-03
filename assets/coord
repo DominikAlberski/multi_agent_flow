@@ -64,6 +64,7 @@ module Coord
                                            send new reviews of goal pull requests to the architect;
                                            close a goal and run gc --yes after its pull request merges
       coord land ID [--subject TEXT]       squash a done task branch into its goal branch, then delete the task branch
+      coord reap [--minutes N]             release the claims of workers not seen for N minutes (default 90)
       coord gc [--yes]                     list (or with --yes delete) merged flow branches and finished goal worktrees
       coord show ID                        show one task: its fields and its annotations
       coord start-task ID                  check out branch task/<id> from its goal branch
@@ -101,7 +102,7 @@ module Coord
     "log" => :cmd_log, "hooks" => :cmd_hooks,
     "lock" => :cmd_lock, "unlock" => :cmd_unlock, "with-lock" => :cmd_with_lock,
     "worktree" => :cmd_worktree, "goal" => :cmd_goal, "start-task" => :cmd_start_task,
-    "land" => :cmd_land, "gc" => :cmd_gc, "review-watch" => :cmd_review_watch,
+    "land" => :cmd_land, "gc" => :cmd_gc, "reap" => :cmd_reap, "review-watch" => :cmd_review_watch,
     "show" => :cmd_show, "escalate" => :cmd_escalate,
     "status" => :cmd_status, "board" => :cmd_board, "export" => :cmd_export,
     "who" => :cmd_who, "help" => :cmd_help
@@ -1404,6 +1405,73 @@ end
     end
   end
 
+  # InboxWaiter allows one `coord inbox --wait` for each role. Two waiters on
+  # one inbox split the messages between two agents. The pid file of a waiter
+  # that exited without cleanup counts as free.
+  class InboxWaiter
+    def initialize(paths, role)
+      @role = role
+      @path = File.join(paths.locks_dir, "inbox-wait-#{role}.pid")
+    end
+
+    def hold
+      refuse_other!
+      FileUtils.mkdir_p(File.dirname(@path))
+      File.write(@path, Process.pid.to_s)
+      yield
+    ensure
+      File.delete(@path) if File.exist?(@path) && File.read(@path).to_i == Process.pid
+    end
+
+    private
+
+    def refuse_other!
+      pid = File.exist?(@path) ? File.read(@path).to_i : 0
+      return unless pid.positive? && pid != Process.pid && Presence.alive?(pid)
+
+      raise Error, "another coord inbox --wait for #{@role} runs (pid #{pid}). Read the messages in that session."
+    end
+  end
+
+  # Reaper finds claims of workers that were not seen for a while. A worker
+  # counts as seen at its claim, at each change of the task, at each event
+  # it logs, and at each coord call of its session (presence).
+  # A dispatched run writes no presence, so the limit must stay above the
+  # longest dispatcher --timeout.
+  class Reaper
+    DEFAULT_MINUTES = 90
+
+    def initialize(tasks, paths, minutes)
+      @tasks, @paths, @limit = tasks, paths, minutes * 60
+    end
+
+    def stale = @tasks.pending.select { |task| claimed?(task) && Time.now - last_seen(task) >= @limit }
+
+    def last_seen(task)
+      times = [task["start"], task["modified"], presence(task["worker"]), last_event(task["worker"])]
+      times.filter_map { |value| parse(value) }.max || Time.now
+    end
+
+    private
+
+    def claimed?(task) = task["start"] && !task["worker"].to_s.empty?
+
+    def parse(value)
+      value && Time.parse(value.to_s)
+    rescue ArgumentError
+      nil
+    end
+
+    def presence(worker)
+      JSON.parse(File.read(File.join(@paths.presence_dir, "#{worker}.json")))["seen_at"]
+    rescue Errno::ENOENT, JSON::ParserError
+      nil
+    end
+
+    def last_event(worker) = events.reverse.find { |line| line.split("\t")[2] == worker }&.split("\t")&.first
+    def events = @events ||= File.exist?(@paths.log_path) ? File.readlines(@paths.log_path).last(2000) : []
+  end
+
   # GitHub runs `gh` as the bot account of the github section in
   # .maf/config.json. The bot opens the pull request, so the reviewer can
   # approve it or request changes. Your own `gh` login stays active.
@@ -1763,7 +1831,16 @@ end
     # gets files that were added after it was created. An existing file is
     # never overwritten, so a change by the agent stays.
     def ensure_runtime_files(dir)
-      (RUNTIME_FILES + copy_list).each { |path| copy_missing(File.join(@root, path), File.join(dir, path)) }
+      paths = (RUNTIME_FILES + bin_files + copy_list).uniq
+      paths.each { |path| copy_missing(File.join(@root, path), File.join(dir, path)) }
+    end
+
+    # Every script of .maf/bin, not only coord: dispatch mode needs the dispatcher.
+    def bin_files
+      bin = File.join(@root, MAF_DIR, "bin")
+      return [] unless Dir.exist?(bin)
+
+      Dir.children(bin).select { |name| File.file?(File.join(bin, name)) }.map { |name| "#{MAF_DIR}/bin/#{name}" }
     end
 
     # copy_to_worktree in .maf/config.json lists more host files for each
@@ -1949,6 +2026,7 @@ end
       force = @args.flag?("--force")
       id = @args.require_arg("done", "ID")
       task = tasks.find(id)
+      refuse_foreign!(task, force)
       refuse_stale!(task) unless force
       refuse_unverified!
       finish_task(id, task)
@@ -2026,8 +2104,10 @@ end
       role = require_role!(@args.shift || @role, "inbox ROLE, or export COORD_ROLE")
       return messages.inbox(role, peek: peek, all: all) unless wait
 
-      wait_for(interval, timeout, -> { messages.files(role, all: all) }) do
-        messages.inbox(role, peek: peek, all: all)
+      InboxWaiter.new(paths, role).hold do
+        wait_for(interval, timeout, -> { messages.files(role, all: all) }) do
+          messages.inbox(role, peek: peek, all: all)
+        end
       end
     end
 
@@ -2118,6 +2198,24 @@ end
     end
 
     def cmd_gc = sweep(@args.flag?("--yes"))
+
+    REAPED = "Released the claim of task %<id>s. Worker %<worker>s was not seen for %<minutes>s minutes. " \
+             "Check the task branch before the next worker continues."
+
+    def cmd_reap
+      minutes = Integer(@args.value_of("--minutes") || Reaper::DEFAULT_MINUTES)
+      stale = Reaper.new(tasks, paths, minutes).stale
+      return puts("no stale claims") if stale.empty?
+
+      stale.each { |task| reap(task, format(REAPED, id: task["uuid"], worker: task["worker"], minutes: minutes)) }
+    end
+
+    def reap(task, text)
+      tasks.unclaim(task["uuid"])
+      tasks.annotate(task["uuid"], "RELEASED: #{text}")
+      event_log.append("reap", @worker, "#{task["uuid"]} #{task["worker"]}")
+      deliver("architect", "coord", text)
+    end
 
     def sweep(apply)
       items = Sweep.new(main_root, tasks, Git.base_branch(main_root, manifest)).items
@@ -2404,6 +2502,18 @@ end
       return unless Git.branch?(main_root, branch) && sync.behind?
 
       abort format(UNSYNCED, branch: branch, ref: sync.ref, id: goal["uuid"])
+    end
+
+    # A stalled run can wake up after its claim was released. It must not close
+    # a task that is closed or that another worker holds now.
+    def refuse_foreign!(task, force)
+      status = task["status"]
+      raise Error, "task #{task["uuid"]} is already #{status}. Stop work on it." if status && status != "pending"
+
+      holder = task["worker"].to_s
+      return if force || holder.empty? || holder == @worker
+
+      raise Error, "task #{task["uuid"]} belongs to #{holder} now. Stop work on it (use --force to close it anyway)."
     end
 
     def refuse_stale!(task)

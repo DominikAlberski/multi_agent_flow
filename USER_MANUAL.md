@@ -449,7 +449,12 @@ The dispatcher asks each agent to end its final reply with a report block:
 
 ### Run limits
 
-- `--timeout S` is the hard wall-clock limit of a run (default: 300 s).
+- `--timeout S` is the hard wall-clock limit of a run. Without the flag, the dispatcher
+  reads `team.timeouts.<role>` in `.maf/config.json`, else it uses 1500 s:
+  `"team": { "timeouts": { "reviewer": 2400 } }`.
+  After a timeout, the dispatcher sends a message to the architect. The claims stay.
+- In the next cycle, the dispatcher starts a resume run for the claimed tasks of its worker.
+  It resumes claimed tasks before it takes new tasks.
 - `--idle-timeout S` fails a run that prints no output for S seconds. Default: 0 (off).
   Claude Code prints its JSON only at the end. Keep this flag off for `--harness claude`.
 - `--completion-signal TEXT` tells the agent to print TEXT when the work is complete.
@@ -1036,6 +1041,7 @@ nothing to move.
 | `coord land ID [--subject TEXT]` | Squash a done task branch into its goal branch as one commit with trailers. Deletes the task branch. |
 | `coord goal pr ID` | Push the goal branch as the bot. Open the pull request, or comment the new commits and ask for a new review. |
 | `coord review-watch [--once]` | Send new reviews of goal pull requests to the architect. Close a merged goal and run `coord gc --yes`. |
+| `coord reap [--minutes N]` | Release the claims of workers not seen for N minutes (default 90). Tell the architect. The architect dispatcher runs it every 5 minutes. |
 | `coord gc [--yes]` | List merged task, goal, and worker branches and finished goal worktrees. `--yes` deletes them. |
 | `coord add --role ROLE --scope S --title T [--goal ID]` | Create a task for a role. Prints the ID. |
 | `coord next [ROLE]` | List unclaimed tasks for a role (defaults to `$COORD_ROLE`). |
@@ -1049,7 +1055,7 @@ nothing to move.
 | `coord annotate ID TEXT` | Add a note to a task (permanent). |
 | `coord msg --from A TO TEXT` | Send a message to a role. |
 | `coord broadcast --from A [--to workers\|leads\|all] TEXT` | Send a message to a group of roles. Default: workers. |
-| `coord inbox [ROLE]` | Read messages (marks them read; `--peek` keeps them; `--wait` blocks). |
+| `coord inbox [ROLE]` | Read messages (marks them read; `--peek` keeps them; `--wait` blocks; a second `--wait` for the same role is refused). |
 | `coord log [N]` | Show the last N coordination events. |
 | `coord lock NAME --ttl S` | Take an advisory lock. |
 | `coord unlock NAME` | Release a lock. |

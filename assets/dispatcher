@@ -37,7 +37,8 @@
 #   --no-skill         Do not preload a skill.
 #   --interval S       Poll interval in seconds (default: 60).
 #   --max-turns N      Hermes max tool-calling turns per run (default: 50).
-#   --timeout S        Max wall-clock seconds per run (default: 300). The
+#   --timeout S        Max wall-clock seconds per run. Default: team.timeouts.<role>
+#                      in .maf/config.json, else 1500. The
 #                      dispatcher kills the agent's process group after it.
 #   --idle-timeout S   Fail a run that prints no output for S seconds
 #                      (default: 0, off). Claude Code prints its JSON only at
@@ -369,36 +370,48 @@ module Dispatcher
 
     def unclaimed_task_ids = next_output.to_s.scan(/^([0-9a-f-]{36})\b/).flatten
 
-    # Runs one coord command. Returns true when it succeeds.
-    def coord(*args)
-      system(@env, *coord_command, *args, out: File::NULL, err: File::NULL)
+    # The tasks that this worker claimed and did not finish.
+    def claimed_task_ids
+      output = IO.popen(@env, CoordCall.command + ["next", @role, "--mine"], err: File::NULL, &:read)
+      $?.success? ? output.scan(/^([0-9a-f-]{36})\b/).flatten : []
     rescue Errno::ENOENT
-      false
+      []
     end
+
+    def coord(*args) = CoordCall.run(@env, *args)
 
     # The output of `coord next ROLE`, or nil when the command fails.
     def next_output
-      output = IO.popen(@env, coord_command + ["next", @role], err: File::NULL, &:read)
+      output = IO.popen(@env, CoordCall.command + ["next", @role], err: File::NULL, &:read)
       $?.success? ? output : nil
     rescue Errno::ENOENT
       nil
     end
 
-    private
+  end
 
-    # Run coord with this Ruby, so an old system Ruby on the shebang path
-    # never parses it.
-    def coord_command
+  # CoordCall runs coord with this Ruby, so an old system Ruby on the
+  # shebang path never parses it.
+  module CoordCall
+    def self.command
       local = File.expand_path(COORD_BIN)
       [RbConfig.ruby, File.executable?(local) ? local : File.join(Project.root, COORD_BIN)]
     end
+
+    # Returns true when the command succeeds.
+    def self.run(env, *args)
+      system(env, *command, *args, out: File::NULL, err: File::NULL)
+    rescue Errno::ENOENT
+      false
+    end
   end
 
-  # ReviewPoll runs `coord review-watch --once` in the architect dispatcher,
-  # at most one time in EVERY seconds. coord sends each new review to the
-  # architect inbox, so the next cycle starts an architect run for it.
-  # Without a github section in .maf/config.json, ReviewPoll does nothing.
-  class ReviewPoll
+  # LeadChores runs the periodic coord checks in the architect dispatcher, at
+  # most one time in EVERY seconds. `coord reap` releases the claims of
+  # stalled workers. `coord review-watch --once` reads new pull request
+  # reviews, only with a github section in .maf/config.json. Both commands
+  # write to the architect inbox, so the next cycle starts an architect run.
+  class LeadChores
     EVERY = 300
 
     def initialize(poller, role)
@@ -409,12 +422,13 @@ module Dispatcher
       return unless due?
 
       @last = Time.now
-      @poller.coord("review-watch", "--once") || Log.line("coord review-watch failed")
+      commands.each { |args| @poller.coord(*args) || Log.line("coord #{args.first} failed") }
     end
 
     private
 
-    def due? = @role == "architect" && github? && (@last.nil? || Time.now - @last >= EVERY)
+    def commands = [["reap"], (%w[review-watch --once] if github?)].compact
+    def due? = @role == "architect" && (@last.nil? || Time.now - @last >= EVERY)
     def github? = !Project.manifest.dig("github", "bot_user").to_s.empty?
   end
 
@@ -907,7 +921,19 @@ module Dispatcher
 
     def failed(result)
       Log.line("agent #{failure_label(result.reason)}: #{result.output.lines.last(5).join.strip}")
+      report_timeout if result.reason == :timeout
       false
+    end
+
+    TIMEOUT_NOTICE = "Dispatcher run of %<worker>s timed out after %<seconds>ss. The claims stay. " \
+                     "If the task needs more time, raise team.timeouts.%<role>s in .maf/config.json."
+
+    # The architect cannot see a dispatcher log. Without this notice, a task waits without a sign.
+    def report_timeout
+      return if @config.role == "architect"
+
+      text = format(TIMEOUT_NOTICE, worker: @config.worker, seconds: @config.timeout, role: @config.role)
+      CoordCall.run(@env, "msg", "--from", @config.role, "architect", text)
     end
 
     def failure_label(reason)
@@ -939,6 +965,14 @@ module Dispatcher
     end
 
     def self.tasks(role) = "Unclaimed tasks exist for your role.\n\n#{format(ONE_SHOT, role: role)}"
+
+    RESUME = <<~TEXT
+      You hold claimed tasks that a previous run did not finish: %<ids>s.
+      For each task, run coord show <id> first. If the status is not pending, or the worker is not you, skip the task.
+      Otherwise continue the task on its task branch. Finish it with coord done.
+    TEXT
+
+    def self.resume(role, ids) = "#{format(RESUME, ids: ids.join(", "))}\n#{format(ONE_SHOT, role: role)}"
 
     HANDOFF = <<~TEXT
       Before you stop, overwrite %<path>s with a handoff note for your next session.
@@ -1004,7 +1038,8 @@ module Dispatcher
       @mailbox = Mailbox.new(config.coord_dir, config.role)
       @poller = Poller.new(Main.run_env(config), config.role)
       @watch = TaskWatch.new(config.interval)
-      @reviews = ReviewPoll.new(@poller, config.role)
+      @chores = LeadChores.new(@poller, config.role)
+      @resume = TaskWatch.new(config.interval)
     end
 
     def self.run_env(config)
@@ -1028,8 +1063,8 @@ module Dispatcher
     # agent to work through `coord next`.
     def cycle
       Presence.write(@config)
-      @reviews.run
-      worked = dispatch_messages || (@config.poll_tasks && dispatch_tasks)
+      @chores.run
+      worked = dispatch_messages || (@config.poll_tasks && (dispatch_claimed || dispatch_tasks))
       Log.line("no work this cycle") if @config.verbose && !worked
     end
 
@@ -1059,6 +1094,16 @@ module Dispatcher
       true
     end
 
+    # A run that timed out or crashed leaves its claims. Finish them before new work.
+    def dispatch_claimed
+      ids = @poller.claimed_task_ids
+      return false unless @resume.due?(ids)
+
+      @runner.dispatch(Prompt.resume(@config.role, ids) + context)
+      @resume.dispatched(ids)
+      true
+    end
+
     def dispatch_tasks
       ids = @poller.unclaimed_task_ids
       return false unless @watch.due?(ids)
@@ -1080,15 +1125,24 @@ module Dispatcher
                "--abort-signal TEXT" => [:abort_signal, String] }.freeze
     SWITCHES = { "--no-skill" => [:no_skill, true], "--no-poll-tasks" => [:poll_tasks, false],
                  "--once" => [:once, true], "--verbose" => [:verbose, true] }.freeze
-    DEFAULTS = { harness: "hermes", interval: 60, max_turns: 50, timeout: 300, idle_timeout: 0, grace: Spawn::GRACE,
+    DEFAULTS = { harness: "hermes", interval: 60, max_turns: 50, idle_timeout: 0, grace: Spawn::GRACE,
                  cache_window: 3300, poll_tasks: true,
                  no_skill: false, once: false, verbose: false }.freeze
+
+    DEFAULT_TIMEOUT = 1500
 
     def self.parse(argv, env = ENV)
       config = Config.new(**DEFAULTS)
       parser(config).parse!(argv)
       config.role = argv.shift || abort("dispatcher: role is required (usage: dispatcher ROLE)")
-      finish(validate(config), env)
+      validate(finish(config, env))
+    end
+
+    # Reviews and data tasks need more time than code tasks. The team section
+    # of .maf/config.json sets a limit for each role: "team": { "timeouts": { "reviewer": 2400 } }.
+    def self.role_timeout(role)
+      value = Project.manifest.dig("team", "timeouts", role)
+      value && Integer(value, exception: false)
     end
 
     def self.validate(config)
@@ -1116,6 +1170,7 @@ module Dispatcher
     def self.finish(config, env)
       config.coord_dir = File.expand_path(env.fetch("COORD_DIR", ".maf/coordination"))
       config.worker = env.fetch("COORD_WORKER", "#{config.role}-bot")
+      config.timeout ||= role_timeout(config.role) || DEFAULT_TIMEOUT
       config.poll_tasks = false if LEADS.include?(config.role)
       config.skill = nil if config.no_skill
       config.skill ||= HermesSkill.name(config.role) if !config.no_skill && HermesSkill.installed?(config.role)
