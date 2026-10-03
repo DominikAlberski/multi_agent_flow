@@ -64,7 +64,8 @@ module Coord
                                            send new reviews of goal pull requests to the architect;
                                            close a goal and run gc --yes after its pull request merges
       coord land ID [--subject TEXT]       squash a done task branch into its goal branch, then delete the task branch
-      coord reap [--minutes N]             release the claims of workers not seen for N minutes (default 90)
+      coord reap [--minutes N]             release the claims of workers not seen for N minutes
+                                           (default: team.reap_minutes, else 90; a live dispatcher is never released)
       coord gc [--yes]                     list (or with --yes delete) merged flow branches and finished goal worktrees
       coord show ID                        show one task: its fields and its annotations
       coord start-task ID                  check out branch task/<id> from its goal branch
@@ -908,6 +909,7 @@ module Coord
     def verify = @data["verify"].to_s
     def copy_to_worktree = Array(@data["copy_to_worktree"]).map(&:to_s)
     def github = @data.fetch("github", {})
+    def reap_minutes = Integer(@data.dig("team", "reap_minutes").to_s, exception: false) || Reaper::DEFAULT_MINUTES
 
     # The bot account authors the squash commits. Without it, git uses its own config.
     def author
@@ -1436,8 +1438,8 @@ end
   # Reaper finds claims of workers that were not seen for a while. A worker
   # counts as seen at its claim, at each change of the task, at each event
   # it logs, and at each coord call of its session (presence).
-  # A dispatched run writes no presence, so the limit must stay above the
-  # longest dispatcher --timeout.
+  # A live dispatcher is never stale: a run can take hours on a local model,
+  # and the dispatcher resumes the claims of its worker by itself.
   class Reaper
     DEFAULT_MINUTES = 90
 
@@ -1445,7 +1447,8 @@ end
       @tasks, @paths, @limit = tasks, paths, minutes * 60
     end
 
-    def stale = @tasks.pending.select { |task| claimed?(task) && Time.now - last_seen(task) >= @limit }
+    def stale = @tasks.pending.select { |task| claimed?(task) && !dispatched?(task) && quiet?(task) }
+    def quiet?(task) = Time.now - last_seen(task) >= @limit
 
     def last_seen(task)
       times = [task["start"], task["modified"], presence(task["worker"]), last_event(task["worker"])]
@@ -1462,10 +1465,17 @@ end
       nil
     end
 
-    def presence(worker)
-      JSON.parse(File.read(File.join(@paths.presence_dir, "#{worker}.json")))["seen_at"]
+    def dispatched?(task)
+      entry = entry(task["worker"])
+      entry["mode"] == "dispatch" && Presence.live_entry?(entry)
+    end
+
+    def presence(worker) = entry(worker)["seen_at"]
+
+    def entry(worker)
+      JSON.parse(File.read(File.join(@paths.presence_dir, "#{worker}.json")))
     rescue Errno::ENOENT, JSON::ParserError
-      nil
+      {}
     end
 
     def last_event(worker) = events.reverse.find { |line| line.split("\t")[2] == worker }&.split("\t")&.first
@@ -2203,7 +2213,7 @@ end
              "Check the task branch before the next worker continues."
 
     def cmd_reap
-      minutes = Integer(@args.value_of("--minutes") || Reaper::DEFAULT_MINUTES)
+      minutes = Integer(@args.value_of("--minutes") || manifest.reap_minutes)
       stale = Reaper.new(tasks, paths, minutes).stale
       return puts("no stale claims") if stale.empty?
 

@@ -139,7 +139,8 @@ coord unlock ollama
    agents with `coord msg`.
 5. Before you continue a claimed task after a pause, run `coord show ID`.
    If the status is not pending, or the worker is not you, stop work on that task.
-   `coord reap` releases the claim of a worker that was not seen for 90 minutes.
+   `coord reap` releases the claim of a stalled session (default: not seen for 90 minutes).
+   `coord reap` never releases the claim of a live dispatcher.
    `coord done` refuses a closed task and a task that another worker holds.
    Finish the whole task. Report done only when each acceptance criterion
    passes. If you cannot finish a task, do the parts you can. Keep the claim.

@@ -216,6 +216,29 @@ class TaskwarriorTest < Minitest::Test
     assert_includes inbox, "backend-1 was not seen"
   end
 
+  # A run on a local model can take hours. The live dispatcher resumes its claims itself.
+  def test_reap_keeps_the_claim_of_a_live_dispatcher
+    id = add("long local run")
+    tasks.claim(id, "backend-1")
+    presence = File.join(@env["COORD_DIR"], "presence")
+    FileUtils.mkdir_p(presence)
+    record = { worker: "backend-1", mode: "dispatch", pid: Process.pid,
+               started: Coord::Presence.started_at(Process.pid) }
+    File.write(File.join(presence, "backend-1.json"), JSON.generate(record))
+
+    capture_io { run_cli("reap", "--minutes", "0") }
+    assert_equal "backend-1", find(id)["worker"]
+  end
+
+  def test_reap_reads_its_limit_from_the_team_section
+    File.write(File.join(File.dirname(@env["COORD_DIR"]), "config.json"), JSON.generate(team: { reap_minutes: 0 }))
+    id = add("stalled")
+    tasks.claim(id, "backend-1")
+
+    capture_io { run_cli("reap") }
+    assert_empty find(id)["worker"].to_s
+  end
+
   # Regression: a stalled run woke up and closed a task that another worker held.
   def test_done_is_refused_for_a_task_of_another_worker
     id = add("taken over")
