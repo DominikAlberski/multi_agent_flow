@@ -569,3 +569,126 @@ class MafTeamTest < Minitest::Test
     assert_includes coord("next", "architect"), id
   end
 end
+
+module MafArchiveProject
+  include MafProject
+
+  WORKER = "architect-2"
+  USAGE = JSON.generate("input_tokens" => 12, "output_tokens" => 3, "runs" => 1)
+
+  def setup
+    super
+    assert_maf("prepare", "opencode", "architect_2")
+  end
+
+  def state_path(*parts) = File.join(@project, ".maf", "coordination", *parts)
+  def archives = Dir.glob(state_path("archive", "workers", "#{WORKER}-*")).sort
+
+  def write_state(path, text)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, text)
+  end
+
+  def seed_state(worker = WORKER, text = "mail")
+    write_state(state_path("inbox", worker, "unread.md"), text)
+    write_state(state_path("inbox", worker, "read", "old.md"), "#{text} read")
+    write_state(state_path("usage", "#{worker}.json"), USAGE)
+  end
+
+  def assert_maf(*args)
+    output, status = maf(*args)
+    assert_equal 0, status, output
+  end
+
+  def assert_archived(directory, text = "mail")
+    assert_equal text, File.read(File.join(directory, "inbox", "unread.md"))
+    assert_equal "#{text} read", File.read(File.join(directory, "inbox", "read", "old.md"))
+    assert_equal USAGE, File.read(File.join(directory, "usage.json"))
+  end
+
+  def assert_active(worker = WORKER)
+    assert_equal "mail", File.read(state_path("inbox", worker, "unread.md"))
+    assert_equal USAGE, File.read(state_path("usage", "#{worker}.json"))
+  end
+
+  def assert_removed
+    refute_path_exists state_path("inbox", WORKER)
+    refute_path_exists state_path("usage", "#{WORKER}.json")
+  end
+
+  def retire_with_state(text)
+    seed_state(WORKER, text)
+    assert_maf("retire", "architect_2")
+  end
+end
+
+class MafRetireArchiveTest < Minitest::Test
+  include MafArchiveProject
+
+  def test_retire_archives_unread_mail_read_mail_and_usage
+    retire_with_state("mail")
+    assert_equal 1, archives.size
+    assert_archived(archives.first)
+    assert_removed
+  end
+
+  def test_retire_preserves_other_worker_and_role_files
+    seed_state("tester-2")
+    seed_state("architect")
+    retire_with_state("mail")
+    assert_active("tester-2")
+    assert_active("architect")
+  end
+
+  def test_retire_archives_usage_without_an_inbox
+    write_state(state_path("usage", "#{WORKER}.json"), USAGE)
+    assert_maf("retire", "architect_2")
+    assert_equal USAGE, File.read(File.join(archives.fetch(0), "usage.json"))
+    refute_path_exists File.join(archives.first, "inbox")
+    assert_removed
+  end
+
+  def test_retire_archives_an_inbox_without_usage
+    write_state(state_path("inbox", WORKER, "unread.md"), "mail")
+    assert_maf("retire", "architect_2")
+    assert_equal "mail", File.read(File.join(archives.fetch(0), "inbox", "unread.md"))
+    refute_path_exists File.join(archives.first, "usage.json")
+    assert_removed
+  end
+
+  def test_retire_without_worker_files_creates_no_archive
+    assert_maf("retire", "architect_2")
+    refute_path_exists state_path("archive", "workers")
+  end
+
+  def test_retire_refuses_dirty_work_without_archiving_files
+    seed_state
+    File.write(File.join(@project, ".maf", "worktrees", WORKER, "work.rb"), "x = 1\n")
+    refute_equal 0, maf("retire", "architect_2").last
+    assert_active
+    assert_empty archives
+  end
+
+  def test_retire_keeps_separate_archives_when_the_worker_id_is_reused
+    retire_with_state("first")
+    assert_maf("prepare", "opencode", "architect_2")
+    retire_with_state("second")
+    assert_equal 2, archives.size
+    assert_equal %w[first second], archives.map { |dir| File.read(File.join(dir, "inbox", "unread.md")) }.sort
+  end
+
+  def test_prepare_with_replacement_archives_the_retired_worker
+    seed_state
+    assert_maf("prepare", "opencode", "tester_2", "--replace", "architect_2")
+    assert_equal 1, archives.size
+    assert_archived(archives.first)
+    assert_removed
+  end
+
+  def test_prepare_with_the_same_worker_id_keeps_active_files
+    seed_state
+    assert_maf("prepare", "opencode", "architect_2", "--replace", "architect_2")
+    assert_active
+    assert_empty archives
+  end
+end

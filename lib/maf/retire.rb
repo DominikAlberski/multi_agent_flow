@@ -1,13 +1,10 @@
 # frozen_string_literal: true
 
-# retire.rb - remove a worker and stop its background dispatcher.
 require_relative "setup_agent"
 require_relative "workers"
+require_relative "worker_archive"
 
 module Maf
-  # Retire removes a worker: it returns the worker's claimed tasks to the
-  # pool, removes the worktree, and deletes the registry entry. The task
-  # branches stay, so the next worker continues from the committed work.
   class Retire
     RUNTIME_PREFIXES = %w[.maf/ .claude/ .opencode/ .codex/].freeze
 
@@ -17,8 +14,6 @@ module Maf
       @dir = SetupAgent::Worktree.dir_for(root, @worker)
     end
 
-    # Stops a background dispatcher first. Refuses a worker that still runs
-    # in a terminal, and a worktree with uncommitted work.
     def check!
       abort "maf: no worker #{@worker}" unless Workers.at(@root).find(@worker) || Dir.exist?(@dir)
       stop_dispatcher
@@ -30,9 +25,7 @@ module Maf
     def run
       check!
       released = release_tasks
-      remove_worktree
-      remove_presence
-      Workers.at(@root).remove(@worker)
+      remove_worker
       Team.notify(@root, "Team change: worker #{@worker} left. #{released} task(s) returned to the pool.")
       puts "Worker #{@worker} retired. #{released} task(s) returned to the pool."
     end
@@ -41,7 +34,6 @@ module Maf
 
     def role = Workers.at(@root).find(@worker)&.fetch("role") || @worker.sub(/-[^-]+\z/, "")
 
-    # TERM lets a running agent finish its run. The dispatcher then exits.
     def stop_dispatcher
       pid = Workers.at(@root).find(@worker)&.fetch("pid", nil)
       return unless pid && RunningProcesses.alive?(pid)
@@ -68,6 +60,13 @@ module Maf
       FileUtils.rm_f(File.join(coord_dir, "presence", "#{@worker}.json"))
     end
 
+    def remove_worker
+      remove_worktree
+      WorkerArchive.new(@root, @worker).run
+      remove_presence
+      Workers.at(@root).remove(@worker)
+    end
+
     def dirty?
       return false unless Dir.exist?(@dir)
 
@@ -75,8 +74,6 @@ module Maf
       lines.map { |line| line[3..].strip }.any? { |path| RUNTIME_PREFIXES.none? { |prefix| path.start_with?(prefix) } }
     end
 
-    # --force removes the untracked runtime copies. dirty? has already
-    # refused any other change.
     def remove_worktree
       return unless Dir.exist?(@dir)
 
