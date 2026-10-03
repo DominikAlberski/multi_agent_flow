@@ -150,6 +150,7 @@ coord unlock ollama
    report before trusting it. The architect does not rerun the task tests.
    A bad result gets a new fix task, not a silent re-close.
 7. Query the shared knowledge graph before you plan and before you implement.
+   Never run `graphify export`. `vault` owns the Obsidian vault `.maf/obsidian/`.
    Run `vault age` first. Query it via MCP, or with
    `graphify query "..." --graph "$COORD_DIR/../graphify-out/graph.json"`.
    If the graph is missing or stale, say so in your report.

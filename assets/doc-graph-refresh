@@ -228,9 +228,13 @@ module DocGraph
     end
   end
 
+  # Export writes the only Obsidian vault, .maf/obsidian. graphify export
+  # without --dir writes a second, incomplete vault into the graph folder.
+  # The graphify skill tells agents to run that, so remove the copy.
   module Export
     def self.run
       graph_path = DocGraph.graph_path
+      FileUtils.rm_rf(File.join(graph_path, "obsidian"))
       Dir.chdir(DocGraph.main) { system({ "GRAPHIFY_OUT" => graph_path }, "graphify", "export", "obsidian", "--dir", OBSIDIAN) }
     end
   end

@@ -117,9 +117,12 @@ module Vault
       spawn_detached
     end
 
+    # graphify export without --dir writes a second, incomplete vault into
+    # the graph folder. The graphify skill tells agents to run that, so remove the copy.
     def self.export
       return puts("vault: #{GRAPH} missing. Run `vault` to build it first.") unless File.exist?(GRAPH)
 
+      FileUtils.rm_rf(File.join(GRAPH_DIR, "obsidian"))
       system(*EXPORT_CMD) || warn("vault: obsidian export failed; see #{LOG_FILE}")
     end
 

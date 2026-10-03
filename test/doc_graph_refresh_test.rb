@@ -97,6 +97,16 @@ class DocGraphRefreshTest < Minitest::Test
     assert_equal "NEW", File.read(graph)
   end
 
+  def test_the_export_removes_the_stray_vault_in_the_graph_folder
+    stray = File.join(File.dirname(graph), "obsidian")
+    FileUtils.mkdir_p(stray)
+    commit("doc", "doc.md", "hello")
+
+    run_script("post-commit", "STUB_GRAPH" => "NEW")
+
+    refute Dir.exist?(stray)
+  end
+
   def test_the_build_is_seeded_with_the_current_graph
     FileUtils.mkdir_p(File.dirname(graph))
     File.write(graph, "OLD")
