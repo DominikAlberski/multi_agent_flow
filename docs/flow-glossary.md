@@ -24,7 +24,11 @@ The names of the terms in code and in the CLI are in [flow-cli-names.md](flow-cl
 
 **Goal branch**: The branch `goal/<short-id>` of one goal. The goal worktree `.maf/worktrees/goal-<short-id>` holds it. The pull request starts from it.
 
-**Task branch**: The branch `task/<short-id>` of one task. It starts from the goal branch.
+**Task branch**: The branch `task/<short-id>` of one task. It starts from the goal branch. `coord land` deletes it.
+
+**Land**: Squash a done task branch into its goal branch as one commit. The commit message has the trailers `Task`, `Goal`, `Worker`, and `Tests`.
+
+**Goal sync**: Merge the base branch into a goal branch before the merge suite and the pull request.
 
 **Short id**: The first 8 characters of a task or goal uuid.
 

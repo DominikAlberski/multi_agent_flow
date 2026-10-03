@@ -56,7 +56,10 @@ module Coord
       coord goal add --title T [--ref R] [--base BRANCH]   create a goal, its branch and its worktree
       coord goal list                      list open goals
       coord goal show ID                   show a goal and its tasks
-      coord goal done ID                   close a goal (refused while a task is open)
+      coord goal sync ID                   merge the base branch into the goal branch
+      coord goal done ID                   close a goal (refused while a task is open or the goal lacks the base head)
+      coord land ID [--subject TEXT]       squash a done task branch into its goal branch, then delete the task branch
+      coord gc [--yes]                     list (or with --yes delete) merged flow branches and finished goal worktrees
       coord show ID                        show one task: its fields and its annotations
       coord start-task ID                  check out branch task/<id> from its goal branch
       coord next [ROLE] [--mine] [--wait [--interval S] [--timeout S]]
@@ -93,6 +96,7 @@ module Coord
     "log" => :cmd_log, "hooks" => :cmd_hooks,
     "lock" => :cmd_lock, "unlock" => :cmd_unlock, "with-lock" => :cmd_with_lock,
     "worktree" => :cmd_worktree, "goal" => :cmd_goal, "start-task" => :cmd_start_task,
+    "land" => :cmd_land, "gc" => :cmd_gc,
     "show" => :cmd_show, "escalate" => :cmd_escalate,
     "status" => :cmd_status, "board" => :cmd_board, "export" => :cmd_export,
     "who" => :cmd_who, "help" => :cmd_help
@@ -496,6 +500,8 @@ module Coord
     end
 
     def find(id) = @cli.task(id)
+    # A short id of digits only would read as a task number. The filter avoids that.
+    def find_short(short) = @cli.task("uuid.startswith:#{short}")
     def for_goal(uuid) = pending.select { |task| task["goalid"] == uuid }
     def done(id) = @cli.done(id)
     def annotate(id, text) = @cli.annotate(id, text)
@@ -895,6 +901,13 @@ module Coord
     def base_branch = @data["base_branch"]
     def verify = @data["verify"].to_s
     def copy_to_worktree = Array(@data["copy_to_worktree"]).map(&:to_s)
+    def github = @data.fetch("github", {})
+
+    # The bot account authors the squash commits. Without it, git uses its own config.
+    def author
+      name, email = github.values_at("bot_user", "bot_email")
+      { name: name, email: email } unless name.to_s.empty? || email.to_s.empty?
+    end
     def harnesses = agents.map { |entry| entry["harness"] }.compact.uniq
 
     def harnesses_for(role) = agents.select { |entry| entry["role"] == role }.map { |entry| entry["harness"] }
@@ -1045,6 +1058,25 @@ end
     def self.run(dir, *args) = system("git", "-C", dir, *args, out: File::NULL, err: File::NULL)
     def self.branch?(dir, name) = run(dir, "show-ref", "--verify", "--quiet", "refs/heads/#{name}")
     def self.clean?(dir) = `git -C #{Shellwords.escape(dir)} status --porcelain --untracked-files=no`.strip.empty?
+    def self.out(dir, *args) = IO.popen(["git", "-C", dir, *args], err: File::NULL, &:read).strip
+    def self.ancestor?(dir, older, newer) = run(dir, "merge-base", "--is-ancestor", older, newer)
+    def self.own_commits?(dir, base, branch) = out(dir, "rev-list", "--count", "#{base}..#{branch}").to_i.positive?
+    def self.branches(dir, pattern)
+      out(dir, "branch", "--list", pattern, "--format=%(refname:short)").lines(chomp: true)
+    end
+
+    # With an origin, the remote base branch is the truth: a merged pull
+    # request lands there first. Without an origin, the local branch counts.
+    def self.base_ref(dir, base) = run(dir, "fetch", "-q", "origin", base) ? "origin/#{base}" : base
+
+    # Maps each checked-out branch to the worktree that holds it.
+    def self.checked_out(dir)
+      blocks = out(dir, "worktree", "list", "--porcelain").split("\n\n")
+      blocks.filter_map do |block|
+        branch = block[%r{^branch refs/heads/(.+)$}, 1]
+        [branch, block[/^worktree (.+)$/, 1]] if branch
+      end.to_h
+    end
 
     # The base branch is where each goal starts: the manifest's base_branch,
     # else the branch that origin/HEAD names, else main.
@@ -1163,6 +1195,204 @@ end
     def behind?(goal, branch)
       own = `git -C #{Shellwords.escape(@dir)} rev-list --count #{goal}..#{branch} 2>/dev/null`.to_i
       own.positive? && !Git.run(@dir, "merge-base", "--is-ancestor", goal, branch)
+    end
+  end
+
+  # SquashMessage builds the commit message of one landed task. The trailers
+  # keep the trace to the task after the squash.
+  module SquashMessage
+    SUBJECT_LIMIT = 72
+
+    def self.for(task, subject)
+      head = (subject || task["description"]).to_s.strip.slice(0, SUBJECT_LIMIT)
+      trailers = { "Task" => task["uuid"], "Goal" => task["goalid"], "Worker" => task["worker"],
+                   "Tests" => tests(task) }
+      "#{head}\n\n#{trailers.filter_map { |key, value| "#{key}: #{value}" unless value.to_s.empty? }.join("\n")}\n"
+    end
+
+    # The worker report holds "TESTS: <result>. NOTES: ...". The last report counts.
+    def self.tests(task)
+      notes = (task["annotations"] || []).map { |note| note["description"].to_s }
+      notes.reverse.find { |text| text.include?("TESTS:") }.to_s[/TESTS:\s*(.+?)(?:\s+NOTES:|\z)/m, 1]
+    end
+  end
+
+  # Land squashes the branch of one done task into its goal branch as one
+  # commit. The task branch is then deleted. A worker worktree that still has
+  # the task branch checked out moves back to its worker branch first.
+  class Land
+    def initialize(root, task, author: nil)
+      @root, @task, @author = root, task, author
+    end
+
+    def run(subject)
+      check!
+      commit = squash(subject)
+      release_branch
+      commit
+    end
+
+    def goal_branch = Goals.branch(@task["goalid"])
+    def branch = "task/#{Goals.short(@task["uuid"])}"
+
+    private
+
+    def goal_dir = Worktree.dir_for(@root, Goals.slug(@task["goalid"]))
+
+    def check!
+      raise Error, "task #{@task["uuid"]} has no goal. coord land needs a goal branch." if @task["goalid"].to_s.empty?
+      raise Error, "task #{@task["uuid"]} is not done. Run coord done first." unless @task["status"] == "completed"
+      raise Error, "branch #{branch} does not exist" unless Git.branch?(@root, branch)
+      raise Error, "uncommitted changes in #{goal_dir}. Commit or stash them first." unless Git.clean?(goal_dir)
+    end
+
+    # A branch without own commits (a review task) lands nothing.
+    def squash(subject)
+      return nil unless Git.own_commits?(@root, goal_branch, branch)
+      raise Error, STALE % { branch: branch, goal: goal_branch } unless Git.ancestor?(@root, goal_branch, branch)
+
+      merge_squash
+      commit(SquashMessage.for(@task, subject))
+    end
+
+    STALE = "branch %<branch>s lacks the head of %<goal>s. Open a fix task: merge %<goal>s into %<branch>s."
+
+    def merge_squash
+      return if Git.run(goal_dir, "merge", "--squash", "-q", branch)
+
+      Git.run(goal_dir, "reset", "-q", "--merge")
+      raise Error, "the squash of #{branch} into #{goal_branch} conflicts. Open a fix task."
+    end
+
+    # coord makes this commit, not the role, so the commit guard does not apply.
+    def commit(message)
+      return nil if Git.run(goal_dir, "diff", "--cached", "--quiet")
+
+      args = ["git", "-C", goal_dir, *author_args, "commit", "-q", "--no-verify", "-F", "-"]
+      IO.popen(args, "w") { |io| io.write(message) }
+      raise Error, "git commit on #{goal_branch} failed" unless $?.success?
+
+      Git.out(goal_dir, "rev-parse", "--short", "HEAD")
+    end
+
+    def author_args = @author ? ["-c", "user.name=#{@author[:name]}", "-c", "user.email=#{@author[:email]}"] : []
+
+    def release_branch
+      holder = Git.checked_out(@root)[branch]
+      return warn("coord: kept #{branch}. #{holder} has uncommitted changes.") if holder && !leave(holder)
+
+      Git.run(@root, "branch", "-D", branch)
+    end
+
+    # A worker worktree goes back to worker/<slug>. Without that branch, it detaches at the goal head.
+    def leave(dir)
+      return false unless Git.clean?(dir)
+
+      worker = "worker/#{File.basename(dir)}"
+      target = Git.branch?(@root, worker) ? [worker] : ["--detach", goal_branch]
+      Git.run(dir, "switch", "-q", *target)
+    end
+  end
+
+  # GoalSync merges the base branch into a goal branch, so the pull request
+  # of the goal has no conflict and the merge suite tests the merged result.
+  class GoalSync
+    def initialize(root, goal_uuid, base)
+      @root, @base = root, base
+      @branch = Goals.branch(goal_uuid)
+      @dir = Worktree.dir_for(root, Goals.slug(goal_uuid))
+    end
+
+    # A missing base ref has no head to lack.
+    def behind? = Git.run(@root, "rev-parse", "-q", "--verify", ref) && !Git.ancestor?(@root, ref, @branch)
+    def ref = @ref ||= Git.base_ref(@root, @base)
+
+    def run
+      return puts("#{@branch} already contains #{ref}") unless behind?
+      raise Error, "uncommitted changes in #{@dir}. Commit or stash them first." unless Git.clean?(@dir)
+
+      merge
+      puts "merged #{ref} into #{@branch}"
+    end
+
+    private
+
+    def merge
+      return if Git.run(@dir, "merge", "-q", "--no-edit", ref)
+
+      Git.run(@dir, "merge", "--abort")
+      raise Error, "the merge of #{ref} into #{@branch} conflicts. Open a fix task to merge #{ref} into #{@branch}."
+    end
+  end
+
+  # Sweep finds flow branches and worktrees that finished their work. It
+  # deletes only what git or the task board proves is merged or landed.
+  # Everything else stays and gets a reason.
+  class Sweep
+    Item = Struct.new(:label, :action, :reason)
+
+    def initialize(root, tasks, base)
+      @root, @tasks, @base = root, tasks, base
+    end
+
+    def items = task_items + goal_items + worker_items
+
+    private
+
+    def ref = @ref ||= Git.base_ref(@root, @base)
+    def held = @held ||= Git.checked_out(@root)
+
+    def task_items
+      Git.branches(@root, "task/*").map { |name| item("branch #{name}", task_reason(name)) { delete(name) } }
+    end
+
+    def goal_items
+      Git.branches(@root, "goal/*").map do |name|
+        item("goal #{name} and its worktree", goal_reason(name)) { drop_goal(name) }
+      end
+    end
+
+    def worker_items
+      Git.branches(@root, "worker/*").map { |name| item("branch #{name}", worker_reason(name)) { delete(name) } }
+    end
+
+    # A nil reason means: safe to delete.
+    def item(label, reason, &action) = Item.new(label, reason ? nil : action, reason)
+
+    def task_reason(name)
+      return "checked out in #{held[name]}" if held[name]
+      return nil if Git.ancestor?(@root, name, ref)
+
+      task = @tasks.find_short(name.delete_prefix("task/"))
+      return "task is not done" unless task["status"] == "completed"
+
+      landed?(task) ? nil : "task is done but not landed (coord land)"
+    end
+
+    def landed?(task) = (task["annotations"] || []).any? { |note| note["description"].to_s.start_with?("LANDED:") }
+
+    def goal_reason(name)
+      goal = @tasks.find_short(name.delete_prefix("goal/"))
+      return "goal is not done" unless goal["status"] == "completed"
+
+      Git.ancestor?(@root, name, ref) ? nil : "not merged into #{ref}"
+    end
+
+    def worker_reason(name)
+      return "checked out in #{held[name]}" if held[name]
+
+      Git.ancestor?(@root, name, ref) ? nil : "has commits that #{ref} lacks"
+    end
+
+    def delete(name) = Git.run(@root, "branch", "-D", name)
+
+    # Untracked runtime copies would block `worktree remove`. Git.clean? has
+    # already checked the tracked files, so --force removes only those copies.
+    def drop_goal(name)
+      dir = held[name]
+      return false if dir && !(Git.clean?(dir) && Git.run(@root, "worktree", "remove", "--force", dir))
+
+      delete(name)
     end
   end
 
@@ -1718,13 +1948,46 @@ end
       Worktree.new(@project_root).create(role, worker)
     end
 
-    GOAL_COMMANDS = { "add" => :goal_add, "list" => :goal_list, "show" => :goal_show, "done" => :goal_done }.freeze
+    GOAL_COMMANDS = { "add" => :goal_add, "list" => :goal_list, "show" => :goal_show, "done" => :goal_done,
+                      "sync" => :goal_sync }.freeze
 
     def cmd_goal
       sub = @args.shift
-      abort "usage: coord goal add|list|show|done" unless GOAL_COMMANDS.key?(sub)
+      abort "usage: coord goal add|list|show|sync|done" unless GOAL_COMMANDS.key?(sub)
 
       send(GOAL_COMMANDS[sub])
+    end
+
+    # Only the architect lands, one squash at a time for each goal.
+    def cmd_land
+      subject = @args.value_of("--subject")
+      task = find_task!(@args.require_arg("land", "ID"))
+      land = Land.new(main_root, task, author: manifest.author)
+      commit = locks.with_mutex("land-#{Goals.short(task["goalid"])}", worker: @worker) { land.run(subject) }
+      record_landing(task, commit, land)
+    end
+
+    def record_landing(task, commit, land)
+      where = commit ? "#{commit} on #{land.goal_branch}" : "no changes"
+      tasks.annotate(task["uuid"], "LANDED: #{where}")
+      event_log.append("land", @worker, "#{task["uuid"]} #{where}")
+      puts "landed #{land.branch}: #{where}"
+    end
+
+    def cmd_gc
+      apply = @args.flag?("--yes")
+      items = Sweep.new(main_root, tasks, Git.base_branch(main_root, manifest)).items
+      return puts("nothing to clean") if items.empty?
+
+      items.each { |item| puts sweep_line(item, apply) }
+      apply ? Git.run(main_root, "worktree", "prune") : puts("Dry run. Run coord gc --yes to delete.")
+    end
+
+    def sweep_line(item, apply)
+      return "keep    #{item.label}: #{item.reason}" if item.reason
+      return "delete  #{item.label}" unless apply
+
+      item.action.call ? "deleted #{item.label}" : "failed  #{item.label}"
     end
 
     def cmd_show
@@ -1804,8 +2067,17 @@ end
     end
     def goal_show = goals.show(@args.require_arg("goal show", "ID"))
 
+    def goal_sync
+      goal = goals.find!(@args.require_arg("goal sync", "ID"))
+      goal_sync_for(goal).run
+      event_log.append("goal-sync", @worker, goal["description"])
+    end
+
+    def goal_sync_for(goal) = GoalSync.new(main_root, goal["uuid"], Git.base_branch(main_root, manifest))
+
     def goal_done
       id = @args.require_arg("goal done", "ID")
+      refuse_unsynced!(goals.find!(id))
       goal = goals.done(id)
       event_log.append("goal-done", @worker, goal["description"])
       puts "goal #{id} done. The goal branch is #{Goals.branch(goal["uuid"])}."
@@ -1880,6 +2152,18 @@ end
 
     STALE = "coord: branch %<task>s lacks the head of %<goal>s. In your worktree, run `git merge %<goal>s`. " \
             "Run the task tests again. Then run coord done again. Use --force only if the merge is not wanted."
+
+    UNSYNCED = "coord: %<branch>s lacks the head of %<ref>s. Run coord goal sync %<id>s. " \
+               "Run the merge suite again. Then run coord goal done again."
+
+    # A goal without its branch (an old goal) has nothing to check.
+    def refuse_unsynced!(goal)
+      sync = goal_sync_for(goal)
+      branch = Goals.branch(goal["uuid"])
+      return unless Git.branch?(main_root, branch) && sync.behind?
+
+      abort format(UNSYNCED, branch: branch, ref: sync.ref, id: goal["uuid"])
+    end
 
     def refuse_stale!(task)
       goal, branch = TaskSync.new(@project_root).stale(task)

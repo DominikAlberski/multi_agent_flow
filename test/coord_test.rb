@@ -1171,6 +1171,9 @@ class GoalTest < Minitest::Test
 
   def init_repo
     git(@root, "init", "-q", "-b", "main")
+    # coord land and coord goal sync commit with the git identity of the repo.
+    git(@root, "config", "user.email", "t@t")
+    git(@root, "config", "user.name", "t")
     File.write(File.join(@root, ".gitignore"), ".maf/coordination/\n.maf/worktrees/\n")
     commit(@root, "init")
   end
@@ -1297,6 +1300,115 @@ class GoalTest < Minitest::Test
     commit(File.join(@root, ".maf/worktrees", "goal-#{short(uuid)}"), "sibling task merged")
 
     assert_includes coord("done", task, dir: worker_dir), "done #{task}"
+  end
+
+  def goal_dir(uuid) = File.join(@root, ".maf/worktrees", "goal-#{short(uuid)}")
+  def branch?(name) = system("git", "-C", @root, "show-ref", "--quiet", "refs/heads/#{name}")
+
+  # A done task with two commits and a worker report.
+  def done_task_with_work
+    uuid = add_goal
+    task = coord("add", "--role", "tester", "--scope", "test/**", "--goal", uuid, "--title", "Add price test").strip
+    worker_dir = worker_worktree
+    coord("start-task", task, dir: worker_dir)
+    File.write(File.join(worker_dir, "price_test.rb"), "# test\n")
+    commit(worker_dir, "wip 1")
+    commit(worker_dir, "wip 2")
+    coord("annotate", task, "STATUS: done. FILES: price_test.rb. TESTS: 3 runs, 0 failures. NOTES: none")
+    coord("done", task, dir: worker_dir)
+    [uuid, task, worker_dir]
+  end
+
+  def test_land_squashes_the_task_into_one_goal_commit_with_trailers
+    uuid, task, = done_task_with_work
+
+    assert_includes coord("land", task, "--subject", "test(prices): add price test"), "landed task/#{short(task)}"
+    message = `git -C #{goal_dir(uuid)} log -1 --format=%B`
+    ["test(prices): add price test", "Task: #{task}", "Goal: #{uuid}", "Tests: 3 runs, 0 failures."].each do |line|
+      assert_includes message, line
+    end
+    assert_equal 1, `git -C #{goal_dir(uuid)} rev-list --count main..HEAD`.to_i
+    assert File.exist?(File.join(goal_dir(uuid), "price_test.rb"))
+  end
+
+  def test_land_deletes_the_task_branch_and_returns_the_worker_to_its_branch
+    _uuid, task, worker_dir = done_task_with_work
+    coord("land", task)
+
+    refute branch?("task/#{short(task)}")
+    assert_equal "worker/tester-1", `git -C #{worker_dir} branch --show-current`.strip
+    assert_includes coord("show", task), "LANDED:"
+  end
+
+  def test_land_refuses_a_task_that_is_not_done
+    uuid = add_goal
+    task = coord("add", "--role", "tester", "--scope", "test/**", "--goal", uuid, "--title", "t").strip
+    coord("start-task", task, dir: worker_worktree)
+
+    error = assert_raises(SystemExit) { coord("land", task) }
+    assert_includes error.message, "is not done"
+  end
+
+  # A review task commits nothing, so it lands nothing.
+  def test_land_of_a_task_without_own_commits_records_no_changes
+    uuid = add_goal
+    task = coord("add", "--role", "tester", "--scope", "test/**", "--goal", uuid, "--title", "t").strip
+    worker_dir = worker_worktree
+    coord("start-task", task, dir: worker_dir)
+    coord("done", task, dir: worker_dir)
+
+    assert_includes coord("land", task), "no changes"
+    refute branch?("task/#{short(task)}")
+  end
+
+  def test_land_refuses_a_task_branch_that_lacks_the_goal_head
+    _uuid, task, worker_dir = started_task_behind_goal
+    coord("done", "--force", task, dir: worker_dir)
+
+    error = assert_raises(SystemExit) { coord("land", task) }
+    assert_includes error.message, "lacks the head"
+  end
+
+  def test_goal_done_is_refused_until_the_goal_contains_the_base_head
+    uuid = add_goal
+    commit(@root, "base moved")
+
+    error = assert_raises(SystemExit) { coord("goal", "done", uuid) }
+    assert_includes error.message, "coord goal sync"
+    assert_includes coord("goal", "sync", uuid), "merged main into goal/#{short(uuid)}"
+    assert_includes coord("goal", "done", uuid), "goal/#{short(uuid)}"
+  end
+
+  def test_gc_is_a_dry_run_without_yes
+    uuid, task, = done_task_with_work
+    coord("land", task)
+    coord("goal", "done", uuid)
+    git(@root, "merge", "-q", "--no-ff", "--no-edit", "goal/#{short(uuid)}")
+
+    assert_includes coord("gc"), "delete  goal goal/#{short(uuid)}"
+    assert branch?("goal/#{short(uuid)}")
+  end
+
+  def test_gc_deletes_a_merged_goal_and_its_worktree
+    uuid, task, = done_task_with_work
+    coord("land", task)
+    coord("goal", "done", uuid)
+    git(@root, "merge", "-q", "--no-ff", "--no-edit", "goal/#{short(uuid)}")
+
+    out = coord("gc", "--yes")
+    assert_includes out, "deleted goal goal/#{short(uuid)}"
+    assert_includes out, "keep    branch worker/tester-1: checked out in"
+    refute branch?("goal/#{short(uuid)}")
+    refute Dir.exist?(goal_dir(uuid))
+  end
+
+  def test_gc_keeps_open_goals_and_unlanded_task_branches
+    uuid, task, worker_dir = done_task_with_work
+    git(worker_dir, "switch", "-q", "worker/tester-1")
+
+    out = coord("gc", "--yes")
+    assert_includes out, "keep    goal goal/#{short(uuid)} and its worktree: goal is not done"
+    assert_includes out, "keep    branch task/#{short(task)}: task is done but not landed"
   end
 
   # The test repo becomes a clone of a bare origin. A second clone pushes to it.

@@ -526,8 +526,11 @@ Expected sequence:
 5. Each worker runs `coord start-task <id>`, writes code on branch
    `task/<short-id>`, runs the task tests, and commits.
 6. Each worker reports with `coord annotate` and `coord done`.
-7. The reviewer checks the diff. The architect merges each task branch into the goal branch.
-8. The architect runs the full suite one time in the goal worktree and closes the goal.
+7. The reviewer checks the diff. The architect lands each task with `coord land <id>`:
+   one squash commit on the goal branch. The task branch is then deleted.
+8. The architect runs `coord goal sync <id>` to merge the base branch into the goal,
+   runs the full suite one time in the goal worktree, and closes the goal.
+   The pull request goes from the goal branch into the base branch, with a merge commit.
 9. The architect reports to the project manager. The project manager reports to you.
 
 Check the goals at any time:
@@ -987,7 +990,10 @@ nothing to move.
 | `coord init` | Create the `.maf/coordination/` folders. |
 | `coord goal add --title T [--base B]` | Create a goal, its branch `goal/<short-id>`, and its worktree. Prints the ID. |
 | `coord goal list` / `goal show ID` | List open goals, or show one goal and its tasks. |
-| `coord goal done ID` | Close a goal. Refused while a task of the goal is open. |
+| `coord goal sync ID` | Merge the base branch into the goal branch. A conflict aborts the merge. |
+| `coord goal done ID` | Close a goal. Refused while a task of the goal is open or the goal lacks the base head. |
+| `coord land ID [--subject TEXT]` | Squash a done task branch into its goal branch as one commit with trailers. Deletes the task branch. |
+| `coord gc [--yes]` | List merged task, goal, and worker branches and finished goal worktrees. `--yes` deletes them. |
 | `coord add --role ROLE --scope S --title T [--goal ID]` | Create a task for a role. Prints the ID. |
 | `coord next [ROLE]` | List unclaimed tasks for a role (defaults to `$COORD_ROLE`). |
 | `coord next --wait` | Block (polls every 60s) until a task or an unread message appears. Refused for lead roles. |

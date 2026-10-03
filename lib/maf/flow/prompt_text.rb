@@ -49,7 +49,7 @@ module Flow
     7. If the task has a goal, merge the goal branch into the task branch: `git merge goal/<goal-short-id>`.
        Then run the task tests. Do not run the merge suite. Check the task's acceptance criteria.
        `coord done` refuses a task branch that lacks the goal branch head.
-    8. Commit the work on the task branch. The architect merges the task branch.
+    8. Commit the work on the task branch. The architect lands the task branch as one squash commit.
     9. Report. If the task spec has a Report format, use it. Otherwise use:
          coord annotate <id> "STATUS: done or blocked. FILES: <paths>. TESTS: <one-line result>. NOTES: <assumptions or risks>"
     10. Finish: `coord done <id>`. The command sends a message to the architect.
@@ -85,17 +85,21 @@ module Flow
     6. Before you trust a done task, inspect its diff and its TESTS line:
        `git diff goal/<goal-short-id>...task/<task-short-id>`. Do not rerun the task tests.
        If something is wrong, open a new task for the fix. Name the old task branch in Inputs.
-    7. Merge each accepted task branch into the goal worktree:
-       `git -C .maf/worktrees/goal-<goal-short-id> merge task/<task-short-id>`.
-       If the merge conflicts, run `git merge --abort` and open a fix task.
-    8. When every task of the goal is merged, check the graph with `vault age`. Put its state in your report.
+    7. Land each accepted task: `coord land <task-id> --subject "<type>(<area>): <summary>"`.
+       The command squashes the task branch into the goal branch as one commit and deletes the task branch.
+       Use a Conventional Commits subject. If the command reports a conflict, open a fix task.
+    8. When every task of the goal is landed, run `coord goal sync <goal-id>`. It merges the base branch into the goal.
+       If the sync conflicts, open a fix task. Then check the graph with `vault age`. Put its state in your report.
        Then run the merge suite one time in the goal worktree:
        `coord with-lock system-test -- <merge suite command>`. Source its `.maf/env.sh` first.
-    9. Close the goal: `coord goal done <goal-id>`. The pull request starts from branch goal/<goal-short-id>.
+    9. Close the goal: `coord goal done <goal-id>`.
+       The pull request goes from goal/<goal-short-id> into the base branch.
+       The pull request uses a merge commit, never a squash. After the merge, run `coord gc --yes`.
   TEXT
 
   ARCHITECT_RULES = <<~TEXT.strip
-    - Never edit files directly. Dispatch work. Merges of task branches are allowed.
+    - Never edit files directly. Dispatch work.
+    - Change a goal branch only with `coord land` and `coord goal sync`. Never run `git merge` or `git commit` on it.
     - Start each goal from the base branch. Never start a goal from another goal branch.
     - Take the `ollama` lock only if you run a local model yourself.
     - Hand work between stages with artifacts: `$COORD_DIR/artifacts/<goal>/<name>.md`. Never use a path inside a worktree.

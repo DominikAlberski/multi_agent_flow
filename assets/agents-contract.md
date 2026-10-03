@@ -121,6 +121,8 @@ coord unlock ollama
    After a claim, run `coord start-task ID`. The command checks out branch
    `task/<short-id>` from the goal branch. Commit the work on that branch.
    Each goal starts from the base branch, never from another goal branch.
+   The architect lands a done task with `coord land ID`. The command squashes
+   the task branch into the goal branch as one commit and deletes the task branch.
 2. One writer per path. The task `scope` defines the paths you own. This is a
    convention `coord add`/`conflicts` warns about, not a lock the filesystem
    enforces. A role with `can_edit: false` (reviewer, architect, project
