@@ -30,6 +30,12 @@ The names of the terms in code and in the CLI are in [flow-cli-names.md](flow-cl
 
 **Goal sync**: Merge the base branch into a goal branch before the merge suite and the pull request.
 
+**Goal pull request**: The pull request from a goal branch into the base branch. The bot account opens it. The human reviewer approves it or requests changes.
+
+**Bot account**: The GitHub account of the agents, in the `github` section of `.maf/config.json`. It pushes goal branches and opens goal pull requests.
+
+**Human reviewer**: The GitHub user who reviews and merges goal pull requests. `coord review-watch` reads reviews of this user only.
+
 **Short id**: The first 8 characters of a task or goal uuid.
 
 **Slot**: A unique number per worktree. The main worktree is slot 0. A project uses the slot for a test database and a port.

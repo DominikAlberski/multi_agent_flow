@@ -159,7 +159,8 @@ end
         stale:     tasks.select { |t| stale?(t) },
         orphaned:  orphaned(tasks),
         conflicts: scope_conflicts(tasks),
-        escalated: tasks.select { |t| escalated?(t) }
+        escalated: tasks.select { |t| escalated?(t) },
+        in_review: tasks.select { |t| in_review?(t) }
       }
     end
 
@@ -167,6 +168,12 @@ end
     # pending list, so only an open escalation shows.
     def escalated?(task)
       (task["annotations"] || []).any? { |note| note["description"].to_s.start_with?("ESCALATED:") }
+    end
+
+    # `coord goal pr` annotates the goal with its pull request. The goal
+    # stays open until the pull request merges.
+    def in_review?(task)
+      task["role"] == "goal" && (task["annotations"] || []).any? { |note| note["description"].to_s.start_with?("PR:") }
     end
 
     def stale?(task)
@@ -339,6 +346,8 @@ end
           if(orphaned.length) alerts.push({l:'danger',m:orphaned.length+' task(s) assigned to roles nobody is running'});
           const escalated=d.tasks.escalated||[];
           if(escalated.length) alerts.push({l:'danger',m:escalated.length+' task(s) escalated to the project manager — waiting for a decision'});
+          const inReview=d.tasks.in_review||[];
+          if(inReview.length) alerts.push({l:'warn',m:inReview.length+' goal pull request(s) wait for your review on GitHub'});
           if(conflicts.length) alerts.push({l:'warn',m:conflicts.length+' scope conflict(s) between pending tasks'});
           Object.entries(d.inboxes||{}).forEach(([role,msgs])=>{if(msgs.length)alerts.push({l:'warn',m:role+' inbox: '+msgs.length+' unread message(s)'})});
           (d.locks||[]).filter(l=>l.stale).forEach(l=>alerts.push({l:'danger',m:'Stale lock: '+esc(l.name)+' held by '+(l.worker||'?')+', expired'}));

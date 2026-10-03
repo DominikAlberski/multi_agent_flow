@@ -369,6 +369,13 @@ module Dispatcher
 
     def unclaimed_task_ids = next_output.to_s.scan(/^([0-9a-f-]{36})\b/).flatten
 
+    # Runs one coord command. Returns true when it succeeds.
+    def coord(*args)
+      system(@env, *coord_command, *args, out: File::NULL, err: File::NULL)
+    rescue Errno::ENOENT
+      false
+    end
+
     # The output of `coord next ROLE`, or nil when the command fails.
     def next_output
       output = IO.popen(@env, coord_command + ["next", @role], err: File::NULL, &:read)
@@ -385,6 +392,30 @@ module Dispatcher
       local = File.expand_path(COORD_BIN)
       [RbConfig.ruby, File.executable?(local) ? local : File.join(Project.root, COORD_BIN)]
     end
+  end
+
+  # ReviewPoll runs `coord review-watch --once` in the architect dispatcher,
+  # at most one time in EVERY seconds. coord sends each new review to the
+  # architect inbox, so the next cycle starts an architect run for it.
+  # Without a github section in .maf/config.json, ReviewPoll does nothing.
+  class ReviewPoll
+    EVERY = 300
+
+    def initialize(poller, role)
+      @poller, @role = poller, role
+    end
+
+    def run
+      return unless due?
+
+      @last = Time.now
+      @poller.coord("review-watch", "--once") || Log.line("coord review-watch failed")
+    end
+
+    private
+
+    def due? = @role == "architect" && github? && (@last.nil? || Time.now - @last >= EVERY)
+    def github? = !Project.manifest.dig("github", "bot_user").to_s.empty?
   end
 
   Result = Struct.new(:output, :success, :timed_out, :reason)
@@ -973,6 +1004,7 @@ module Dispatcher
       @mailbox = Mailbox.new(config.coord_dir, config.role)
       @poller = Poller.new(Main.run_env(config), config.role)
       @watch = TaskWatch.new(config.interval)
+      @reviews = ReviewPoll.new(@poller, config.role)
     end
 
     def self.run_env(config)
@@ -996,6 +1028,7 @@ module Dispatcher
     # agent to work through `coord next`.
     def cycle
       Presence.write(@config)
+      @reviews.run
       worked = dispatch_messages || (@config.poll_tasks && dispatch_tasks)
       Log.line("no work this cycle") if @config.verbose && !worked
     end

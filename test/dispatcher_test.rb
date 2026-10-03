@@ -1080,3 +1080,42 @@ class GraphQueryTest < Minitest::Test
     assert_includes text, "[cut at #{Dispatcher::Prefetch::LIMIT} characters]"
   end
 end
+
+# ReviewPoll asks coord for new pull request reviews. Only the architect
+# dispatcher of a project with a github section does this.
+class ReviewPollTest < Minitest::Test
+  FakeCoord = Struct.new(:calls) do
+    def coord(*args)
+      calls << args
+      true
+    end
+  end
+
+  def setup
+    @dir = File.realpath(Dir.mktmpdir("dispatcher-review-test"))
+    system("git", "-C", @dir, "init", "-q")
+    FileUtils.mkdir_p(File.join(@dir, ".maf"))
+  end
+
+  def teardown = FileUtils.remove_entry(@dir)
+
+  def calls(role, settings)
+    File.write(File.join(@dir, ".maf/config.json"), JSON.generate(settings))
+    poller = FakeCoord.new([])
+    poll = Dispatcher::ReviewPoll.new(poller, role)
+    Dir.chdir(@dir) { 2.times { poll.run } }
+    poller.calls
+  end
+
+  def test_the_architect_polls_reviews_once_per_period
+    assert_equal [%w[review-watch --once]], calls("architect", github: { bot_user: "maf-bot" })
+  end
+
+  def test_no_poll_without_github_settings
+    assert_empty calls("architect", {})
+  end
+
+  def test_no_poll_for_other_roles
+    assert_empty calls("tester", github: { bot_user: "maf-bot" })
+  end
+end

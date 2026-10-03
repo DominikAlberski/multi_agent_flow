@@ -16,6 +16,7 @@ require "time"
 require "shellwords"
 require "rbconfig"
 require "optparse"
+require "open3"
 
 module Coord
   class Error < StandardError; end
@@ -58,6 +59,10 @@ module Coord
       coord goal show ID                   show a goal and its tasks
       coord goal sync ID                   merge the base branch into the goal branch
       coord goal done ID                   close a goal (refused while a task is open or the goal lacks the base head)
+      coord goal pr ID                     push the goal branch as the GitHub bot and open or update its pull request
+      coord review-watch [--once] [--interval S]
+                                           send new reviews of goal pull requests to the architect;
+                                           close a goal and run gc --yes after its pull request merges
       coord land ID [--subject TEXT]       squash a done task branch into its goal branch, then delete the task branch
       coord gc [--yes]                     list (or with --yes delete) merged flow branches and finished goal worktrees
       coord show ID                        show one task: its fields and its annotations
@@ -96,7 +101,7 @@ module Coord
     "log" => :cmd_log, "hooks" => :cmd_hooks,
     "lock" => :cmd_lock, "unlock" => :cmd_unlock, "with-lock" => :cmd_with_lock,
     "worktree" => :cmd_worktree, "goal" => :cmd_goal, "start-task" => :cmd_start_task,
-    "land" => :cmd_land, "gc" => :cmd_gc,
+    "land" => :cmd_land, "gc" => :cmd_gc, "review-watch" => :cmd_review_watch,
     "show" => :cmd_show, "escalate" => :cmd_escalate,
     "status" => :cmd_status, "board" => :cmd_board, "export" => :cmd_export,
     "who" => :cmd_who, "help" => :cmd_help
@@ -1127,11 +1132,14 @@ end
 
     def done(id)
       goal = find!(id)
-      open = @tasks.for_goal(goal["uuid"]).size
-      raise Error, "goal #{id} has #{open} open task#{"s" if open != 1}" if open.positive?
-
+      refuse_open!(goal)
       @tasks.done(goal["uuid"])
       goal
+    end
+
+    def refuse_open!(goal)
+      open = @tasks.for_goal(goal["uuid"]).size
+      raise Error, "goal #{goal["uuid"]} has #{open} open task#{"s" if open != 1}" if open.positive?
     end
 
     private
@@ -1393,6 +1401,141 @@ end
       return false if dir && !(Git.clean?(dir) && Git.run(@root, "worktree", "remove", "--force", dir))
 
       delete(name)
+    end
+  end
+
+  # GitHub runs `gh` as the bot account of the github section in
+  # .maf/config.json. The bot opens the pull request, so the reviewer can
+  # approve it or request changes. Your own `gh` login stays active.
+  class GitHub
+    def initialize(root, settings)
+      @root, @settings = root, settings
+    end
+
+    def bot = @settings["bot_user"].to_s
+    def reviewer = @settings["reviewer"].to_s
+    def configured? = !bot.empty? && !reviewer.empty?
+
+    def repo
+      @repo ||= @settings["repo"] || origin_repo ||
+                raise(Error, "no GitHub repository. Set github.repo in .maf/config.json.")
+    end
+
+    # ssh_host is a Host alias of ~/.ssh/config with the key of the bot.
+    def push(branch)
+      remote = @settings["ssh_host"] ? "git@#{@settings["ssh_host"]}:#{repo}.git" : "origin"
+      return if Git.run(@root, "push", "-q", remote, "#{branch}:#{branch}")
+
+      raise Error, "git push of #{branch} to #{remote} failed"
+    end
+
+    def create_pr(head:, base:, title:, body:)
+      args = ["--head", head, "--base", base, "--title", title, "--reviewer", reviewer, "--body-file", "-"]
+      gh("pr", "create", "--repo", repo, *args, input: body).lines.last.to_s.strip
+    end
+
+    def request_review(url) = gh("pr", "edit", url, "--add-reviewer", reviewer)
+    def comment(url, text) = gh("pr", "comment", url, "--body-file", "-", input: text)
+    def view(url) = JSON.parse(gh("pr", "view", url, "--json", "state,reviews,comments"))
+    def inline_comments(url) = JSON.parse(gh("api", "repos/#{repo}/pulls/#{url[%r{/pull/(\d+)}, 1]}/comments"))
+
+    private
+
+    # The origin URL can use an ssh Host alias such as github.com-maf-bot.
+    ORIGIN = %r{github\.com[^:/]*[:/]([^/]+/[^/]+?)(?:\.git)?\z}
+
+    def origin_repo = Git.out(@root, "remote", "get-url", "origin")[ORIGIN, 1]
+
+    def gh(*args, input: nil)
+      out, err, status = Open3.capture3(env, "gh", *args, stdin_data: input.to_s)
+      raise Error, "gh #{args.first(2).join(" ")} failed: #{err.strip}" unless status.success?
+
+      out
+    rescue Errno::ENOENT
+      raise Error, "gh is not installed. See https://cli.github.com"
+    end
+
+    def env = @env ||= { "GH_TOKEN" => token }
+
+    def token
+      out, _err, status = Open3.capture3("gh", "auth", "token", "--user", bot)
+      raise Error, "gh has no login for #{bot}. Run: gh auth login (as #{bot})" unless status.success?
+
+      out.strip
+    end
+  end
+
+  # ReviewState keeps the pull request of each goal and the review items that
+  # coord already forwarded, in .maf/coordination/reviews.json.
+  class ReviewState
+    def initialize(paths)
+      @path = File.join(paths.coord_dir, "reviews.json")
+      @locks = Locks.new(paths)
+    end
+
+    def all = File.exist?(@path) ? JSON.parse(File.read(@path)) : {}
+    def get(uuid) = all[uuid]
+    def put(uuid, entry) = change { |data| data.merge(uuid => entry) }
+    def drop(uuid) = change { |data| data.reject { |key, _| key == uuid } }
+
+    private
+
+    def change
+      @locks.with_mutex("reviews", worker: "coord") { File.write(@path, JSON.pretty_generate(yield(all))) }
+    end
+  end
+
+  # ReviewFeed reads one pull request and lists the review items that coord
+  # has not forwarded yet. It ignores every author except the reviewer.
+  class ReviewFeed
+    def initialize(github, entry)
+      @github, @entry = github, entry
+      @seen = entry.fetch("seen", [])
+    end
+
+    def state = view["state"]
+    def items = @items ||= (review_items + inline_items + comment_items).reject { |id, _| @seen.include?(id) }
+    def seen_after = @seen + items.map(&:first)
+    def changes_requested? = new_reviews.any? { |review| review["state"] == "CHANGES_REQUESTED" }
+
+    private
+
+    def view = @view ||= @github.view(@entry["url"])
+    def by_reviewer?(item, key = "author") = item.dig(key, "login") == @github.reviewer
+    def new_reviews = (view["reviews"] || []).select { |r| by_reviewer?(r) && !@seen.include?("review-#{r["id"]}") }
+    def review_items = new_reviews.map { |r| ["review-#{r["id"]}", "#{r["state"]}: #{r["body"]}".strip] }
+    def comment_items
+      (view["comments"] || []).select { |c| by_reviewer?(c) }.map { |c| ["comment-#{c["id"]}", c["body"]] }
+    end
+
+    # Inline comments come with a review, so only a new review needs the extra call.
+    def inline_items
+      return [] if new_reviews.empty?
+
+      list = @github.inline_comments(@entry["url"]).select { |c| by_reviewer?(c, "user") }
+      list.map { |c| ["inline-#{c["id"]}", "#{c["path"]}:#{c["line"] || c["original_line"]}: #{c["body"]}"] }
+    end
+  end
+
+  # PrBody describes a goal pull request: one line for each landed task.
+  module PrBody
+    def self.for(root, goal, base_ref)
+      range = "#{base_ref}..#{Goals.branch(goal["uuid"])}"
+      commits = Git.out(root, "log", "--first-parent", "--reverse", "--format=- %h %s", range)
+      "Goal: #{goal["description"]}\nGoal id: #{goal["uuid"]}\n\nCommits (one for each task):\n#{commits}\n\n" \
+        "Review with Approve or Request changes. Coord sends your review to the architect.\n" \
+        "Merge with a merge commit. Do not squash.\n"
+    end
+  end
+
+  # Notify shows a desktop notification on macOS. MAF_NOTIFY=0 turns it off.
+  module Notify
+    def self.user(title, text)
+      return if ENV["MAF_NOTIFY"] == "0" || !system("command -v osascript >/dev/null 2>&1")
+
+      clean = ->(value) { value.to_s.delete("\"\\") }
+      system("osascript", "-e", %(display notification "#{clean.(text)}" with title "#{clean.(title)}"),
+             out: File::NULL, err: File::NULL)
     end
   end
 
@@ -1949,11 +2092,11 @@ end
     end
 
     GOAL_COMMANDS = { "add" => :goal_add, "list" => :goal_list, "show" => :goal_show, "done" => :goal_done,
-                      "sync" => :goal_sync }.freeze
+                      "sync" => :goal_sync, "pr" => :goal_pr }.freeze
 
     def cmd_goal
       sub = @args.shift
-      abort "usage: coord goal add|list|show|sync|done" unless GOAL_COMMANDS.key?(sub)
+      abort "usage: coord goal add|list|show|sync|pr|done" unless GOAL_COMMANDS.key?(sub)
 
       send(GOAL_COMMANDS[sub])
     end
@@ -1974,8 +2117,9 @@ end
       puts "landed #{land.branch}: #{where}"
     end
 
-    def cmd_gc
-      apply = @args.flag?("--yes")
+    def cmd_gc = sweep(@args.flag?("--yes"))
+
+    def sweep(apply)
       items = Sweep.new(main_root, tasks, Git.base_branch(main_root, manifest)).items
       return puts("nothing to clean") if items.empty?
 
@@ -1988,6 +2132,56 @@ end
       return "delete  #{item.label}" unless apply
 
       item.action.call ? "deleted #{item.label}" : "failed  #{item.label}"
+    end
+
+    # The architect dispatcher runs `coord review-watch --once` on a timer.
+    def cmd_review_watch
+      once = @args.flag?("--once")
+      interval = @args.interval
+      require_github!
+      loop do
+        review_state.all.each { |uuid, entry| review_goal(uuid, entry) }
+        break if once
+
+        sleep interval
+      end
+    end
+
+    # One failing pull request must not stop the watch of the others.
+    def review_goal(uuid, entry)
+      feed = ReviewFeed.new(github, entry)
+      forward_review(uuid, entry["url"], feed) unless feed.items.empty?
+      review_state.put(uuid, entry.merge("seen" => feed.seen_after))
+      finish_review(uuid, feed.state) if %w[MERGED CLOSED].include?(feed.state)
+    rescue Error, JSON::ParserError => e
+      warn "coord: review-watch of goal #{uuid}: #{e.message}"
+    end
+
+    REVIEW_FIX = "Create a fix task for each point. Land the fixes. Run coord goal sync %<id>s. " \
+                 "Then run coord goal pr %<id>s."
+
+    def forward_review(uuid, url, feed)
+      text = "Review of goal #{uuid} (#{url}):\n#{feed.items.map { |_, body| "- #{body}" }.join("\n")}\n"
+      text += format(REVIEW_FIX, id: uuid) if feed.changes_requested?
+      tasks.annotate(uuid, "REVIEW: changes requested") if feed.changes_requested?
+      deliver("architect", "coord", text)
+      event_log.append("review", @worker, "#{uuid} #{feed.items.size} item(s)")
+    end
+
+    def finish_review(uuid, state)
+      review_state.drop(uuid)
+      state == "CLOSED" ? deliver("architect", "coord", format(PR_CLOSED, id: uuid)) : close_merged_goal(uuid)
+    end
+
+    PR_CLOSED = "The pull request of goal %<id>s was closed without a merge. Ask the project manager what to do."
+    PR_MERGED = "The pull request of goal %<id>s was merged. coord closed the goal and ran coord gc."
+
+    def close_merged_goal(uuid)
+      tasks.done(uuid) if tasks.find(uuid)["status"] == "pending"
+      event_log.append("goal-merged", @worker, uuid)
+      sweep(true)
+      deliver("architect", "coord", format(PR_MERGED, id: uuid))
+      Notify.user("Goal merged", tasks.find(uuid)["description"])
     end
 
     def cmd_show
@@ -2074,6 +2268,53 @@ end
     end
 
     def goal_sync_for(goal) = GoalSync.new(main_root, goal["uuid"], Git.base_branch(main_root, manifest))
+    def github = @github ||= GitHub.new(main_root, manifest.github)
+    def review_state = @review_state ||= ReviewState.new(paths)
+
+    def require_github!
+      return if github.configured?
+
+      raise Error, "no github section in .maf/config.json. Set bot_user, bot_email and reviewer."
+    end
+
+    # The first call opens the pull request. A later call pushes the fixes and asks for a new review.
+    def goal_pr
+      require_github!
+      goal = goals.find!(@args.require_arg("goal pr", "ID"))
+      goals.refuse_open!(goal)
+      refuse_unsynced!(goal)
+      publish_goal(goal, review_state.get(goal["uuid"]))
+    end
+
+    def publish_goal(goal, entry)
+      branch = Goals.branch(goal["uuid"])
+      github.push(branch)
+      entry = entry ? update_pr(goal, entry, branch) : { "url" => open_pr(goal, branch), "seen" => [] }
+      review_state.put(goal["uuid"], entry.merge("head" => Git.out(main_root, "rev-parse", branch)))
+    end
+
+    def open_pr(goal, branch)
+      sync = goal_sync_for(goal)
+      url = github.create_pr(head: branch, base: Git.base_branch(main_root, manifest), title: goal["description"],
+                             body: PrBody.for(main_root, goal, sync.ref))
+      tasks.annotate(goal["uuid"], "PR: #{url}")
+      announce_pr("Pull request ready for your review", goal, url)
+      url
+    end
+
+    def update_pr(goal, entry, branch)
+      commits = Git.out(main_root, "log", "--reverse", "--format=- %h %s", "#{entry["head"]}..#{branch}")
+      github.comment(entry["url"], "Coord pushed new commits. Please review again.\n\n#{commits}\n")
+      github.request_review(entry["url"])
+      announce_pr("Pull request updated for your review", goal, entry["url"])
+      entry
+    end
+
+    def announce_pr(title, goal, url)
+      Notify.user(title, goal["description"])
+      event_log.append("goal-pr", @worker, url)
+      puts "#{title}: #{url}"
+    end
 
     def goal_done
       id = @args.require_arg("goal done", "ID")

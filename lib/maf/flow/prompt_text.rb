@@ -92,9 +92,13 @@ module Flow
        If the sync conflicts, open a fix task. Then check the graph with `vault age`. Put its state in your report.
        Then run the merge suite one time in the goal worktree:
        `coord with-lock system-test -- <merge suite command>`. Source its `.maf/env.sh` first.
-    9. Close the goal: `coord goal done <goal-id>`.
-       The pull request goes from goal/<goal-short-id> into the base branch.
-       The pull request uses a merge commit, never a squash. After the merge, run `coord gc --yes`.
+    9. If `.maf/config.json` has a `github` section, run `coord goal pr <goal-id>`. Keep the goal open.
+       The command pushes the goal branch and opens the pull request for the user's review.
+       Each review arrives as a message. Fix each point with a fix task. Land it. Then run `coord goal pr` again.
+       After the merge, coord closes the goal and runs `coord gc --yes`.
+       Without a `github` section, close the goal: `coord goal done <goal-id>`. The user opens the pull request
+       from goal/<goal-short-id> into the base branch. After the merge, run `coord gc --yes`.
+       A goal pull request uses a merge commit, never a squash.
   TEXT
 
   ARCHITECT_RULES = <<~TEXT.strip

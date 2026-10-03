@@ -551,6 +551,47 @@ Set a verify command in `.maf/config.json` to check each task mechanically:
 does not skip this check. A dispatched run with a failing verify command is no
 success. Lead roles get no check. Without the key, nothing changes.
 
+### Goal pull requests and reviews
+
+Add a `github` section to `.maf/config.json` to let coord open a pull request
+for each goal and read your review:
+
+```json
+"github": {
+  "bot_user": "maf-bot",
+  "bot_email": "maf-bot@users.noreply.github.com",
+  "reviewer": "<your GitHub user>",
+  "ssh_host": "github.com-maf-bot",
+  "repo": "<owner>/<repo>"
+}
+```
+
+- `bot_user` is a separate GitHub account for the agents. GitHub does not let
+  the author of a pull request approve it, so the bot opens the pull request
+  and you review it. Give the bot write access to the repository.
+- Log the bot in to `gh` once: `gh auth login`. coord reads its token with
+  `gh auth token --user <bot_user>`. Your own `gh` login stays active.
+- `ssh_host` is a `Host` alias in `~/.ssh/config` with the key of the bot.
+  Without it, coord pushes to `origin`.
+- `repo` is optional. Without it, coord reads the repository from the `origin` URL.
+- `bot_email` and `bot_user` are the author of each squash commit of `coord land`.
+
+The flow:
+
+1. The architect lands the tasks and runs `coord goal sync` and the merge suite.
+2. `coord goal pr <goal-id>` pushes the goal branch and opens the pull request
+   into the base branch. GitHub asks you for a review. coord shows a macOS
+   notification. The dashboard lists each goal pull request that waits.
+3. Review on GitHub: approve, or request changes with inline comments.
+4. The architect dispatcher runs `coord review-watch --once` every 5 minutes.
+   It sends your new reviews and comments to the architect. It ignores other authors.
+5. For requested changes, the architect creates fix tasks, lands them, and runs
+   `coord goal pr` again. coord comments the new commits and asks you for a new review.
+6. Merge the pull request with a merge commit, not a squash. coord then closes
+   the goal and runs `coord gc --yes`.
+
+Set `MAF_NOTIFY=0` to turn off the macOS notifications.
+
 Set a copy list in `.maf/config.json` for host files that git does not track:
 `"copy_to_worktree": [".env", "config/master.key"]`. `coord worktree` and
 `maf start` copy each file that exists into the worktree. A file that is
@@ -993,6 +1034,8 @@ nothing to move.
 | `coord goal sync ID` | Merge the base branch into the goal branch. A conflict aborts the merge. |
 | `coord goal done ID` | Close a goal. Refused while a task of the goal is open or the goal lacks the base head. |
 | `coord land ID [--subject TEXT]` | Squash a done task branch into its goal branch as one commit with trailers. Deletes the task branch. |
+| `coord goal pr ID` | Push the goal branch as the bot. Open the pull request, or comment the new commits and ask for a new review. |
+| `coord review-watch [--once]` | Send new reviews of goal pull requests to the architect. Close a merged goal and run `coord gc --yes`. |
 | `coord gc [--yes]` | List merged task, goal, and worker branches and finished goal worktrees. `--yes` deletes them. |
 | `coord add --role ROLE --scope S --title T [--goal ID]` | Create a task for a role. Prints the ID. |
 | `coord next [ROLE]` | List unclaimed tasks for a role (defaults to `$COORD_ROLE`). |

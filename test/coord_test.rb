@@ -1517,3 +1517,132 @@ class GoalTest < Minitest::Test
     assert_includes err, "maf add claude:tester"
   end
 end
+
+# GoalPrTest checks the pull request flow against a fake gh. The fake logs
+# each call and answers from files in its own folder.
+class GoalPrTest < GoalTest
+  # Run only the tests of this class, not the inherited GoalTest tests.
+  def self.runnable_methods = public_instance_methods(false).grep(/\Atest_/).map(&:to_s)
+
+  GITHUB = { bot_user: "maf-bot", bot_email: "bot@example.com", reviewer: "dominik", repo: "o/r" }.freeze
+
+  FAKE_GH = <<~'RUBY'
+    #!/usr/bin/env ruby
+    dir = File.dirname(__dir__)
+    File.open(File.join(dir, "calls.log"), "a") { |f| f.puts("#{ENV["GH_TOKEN"]} #{ARGV.join(" ")}") }
+    File.write(File.join(dir, "input"), $stdin.read) if ARGV.include?("-")
+    case ARGV.first(2)
+    in ["auth", "token"] then puts "tok"
+    in ["pr", "create"] then puts "https://github.com/o/r/pull/7"
+    in ["pr", "view"] then print File.read(File.join(dir, "view.json"))
+    in ["api", *] then print File.read(File.join(dir, "inline.json"))
+    else nil
+    end
+  RUBY
+
+  def setup
+    super
+    @gh_dir = Dir.mktmpdir("coord-fake-gh")
+    FileUtils.mkdir_p(File.join(@gh_dir, "bin"))
+    File.write(File.join(@gh_dir, "bin", "gh"), FAKE_GH)
+    File.chmod(0o755, File.join(@gh_dir, "bin", "gh"))
+    @saved = ENV.to_h.slice("PATH", "MAF_NOTIFY")
+    ENV["PATH"] = "#{File.join(@gh_dir, "bin")}:#{ENV["PATH"]}"
+    ENV["MAF_NOTIFY"] = "0"
+  end
+
+  def teardown
+    @saved&.each { |key, value| ENV[key] = value }
+    ENV.delete("MAF_NOTIFY") unless @saved&.key?("MAF_NOTIFY")
+    FileUtils.rm_rf(@gh_dir) if @gh_dir
+    super
+  end
+
+  def configure_github = File.write(File.join(@root, ".maf/config.json"), JSON.generate(github: GITHUB))
+  def calls = File.read(File.join(@gh_dir, "calls.log"))
+  def gh_input = File.read(File.join(@gh_dir, "input"))
+  def answer(name, data) = File.write(File.join(@gh_dir, name), JSON.generate(data))
+
+  # A goal with one landed task and an open pull request.
+  def goal_with_pr
+    configure_github
+    uuid, task, = done_task_with_work
+    coord("land", task, "--subject", "test(prices): add price test")
+    coord("goal", "pr", uuid)
+    uuid
+  end
+
+  def review(id, login, state, body) = { id: id, author: { login: login }, state: state, body: body }
+
+  def test_goal_pr_pushes_the_goal_and_opens_a_pull_request_as_the_bot
+    with_origin do |origin|
+      uuid = goal_with_pr
+
+      assert_includes calls, "tok pr create --repo o/r --head goal/#{short(uuid)} --base main"
+      assert_includes calls, "--reviewer dominik"
+      assert_includes gh_input, "test(prices): add price test"
+      assert system("git", "-C", origin, "show-ref", "--quiet", "refs/heads/goal/#{short(uuid)}")
+      assert_includes coord("show", uuid), "PR: https://github.com/o/r/pull/7"
+      assert_equal "maf-bot", `git -C #{goal_dir(uuid)} log -1 --format=%an`.strip
+    end
+  end
+
+  def test_a_second_goal_pr_comments_and_asks_for_a_new_review
+    with_origin do
+      uuid = goal_with_pr
+      commit(goal_dir(uuid), "fix after review")
+      coord("goal", "pr", uuid)
+
+      assert_includes calls, "pr edit https://github.com/o/r/pull/7 --add-reviewer dominik"
+      assert_includes gh_input, "fix after review"
+    end
+  end
+
+  def test_goal_pr_is_refused_without_github_settings
+    uuid = add_goal
+
+    error = assert_raises(SystemExit) { coord("goal", "pr", uuid) }
+    assert_includes error.message, "no github section"
+  end
+
+  def test_review_watch_sends_requested_changes_of_the_reviewer_to_the_architect
+    with_origin do
+      uuid = goal_with_pr
+      answer("view.json", state: "OPEN", comments: [],
+                          reviews: [review("R1", "dominik", "CHANGES_REQUESTED", "Fix names"),
+                                    review("R2", "someone", "COMMENTED", "Ignore me")])
+      answer("inline.json", [{ id: 5, user: { login: "dominik" }, path: "price_test.rb", line: 1, body: "Rename" }])
+      coord("review-watch", "--once")
+
+      inbox = coord("inbox", "architect")
+      expected = ["CHANGES_REQUESTED: Fix names", "price_test.rb:1: Rename", "coord goal pr #{uuid}"]
+      expected.each { |text| assert_includes inbox, text }
+      refute_includes inbox, "Ignore me"
+    end
+  end
+
+  def test_review_watch_forwards_each_review_only_once
+    with_origin do
+      goal_with_pr
+      answer("view.json", state: "OPEN", comments: [], reviews: [review("R1", "dominik", "APPROVED", "")])
+      answer("inline.json", [])
+      2.times { coord("review-watch", "--once") }
+
+      assert_equal 1, coord("inbox", "architect").scan("APPROVED").size
+    end
+  end
+
+  def test_review_watch_closes_a_merged_goal_and_cleans_its_branches
+    with_origin do
+      uuid = goal_with_pr
+      git(@root, "merge", "-q", "--no-ff", "--no-edit", "goal/#{short(uuid)}")
+      git(@root, "push", "-q", "origin", "main")
+      answer("view.json", state: "MERGED", comments: [], reviews: [])
+      coord("review-watch", "--once")
+
+      assert_includes coord("show", uuid), "status: completed"
+      refute branch?("goal/#{short(uuid)}")
+      assert_includes coord("inbox", "architect"), "was merged"
+    end
+  end
+end

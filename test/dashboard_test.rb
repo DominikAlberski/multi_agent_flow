@@ -63,6 +63,17 @@ end
     assert_equal ["a"], summary[:escalated].map { |t| t["uuid"] }
   end
 
+  def test_a_goal_with_a_pull_request_is_listed_as_in_review
+    reader = Dashboard::Collector.new(Dashboard::Config.new(["--coord", @coord]))
+    note = { "description" => "PR: https://github.com/o/r/pull/7" }
+    goal = { "uuid" => "g", "role" => "goal", "annotations" => [note] }
+    plain_goal = { "uuid" => "h", "role" => "goal" }
+
+    summary = reader.send(:task_summary, [goal, plain_goal])
+
+    assert_equal ["g"], summary[:in_review].map { |t| t["uuid"] }
+  end
+
   def test_token_usage_per_worker
     FileUtils.mkdir_p(File.join(@coord, "usage"))
     File.write(File.join(@coord, "usage", "tester-bot.json"), JSON.generate("input_tokens" => 5, "runs" => 1))
