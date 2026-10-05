@@ -409,6 +409,21 @@ class MafTeamTest < Minitest::Test
     assert_equal "opencode", workers.dig("backend-developer-2", "harness")
   end
 
+  # Regression: a project commits its own agents in .claude/agents. A new
+  # worktree then had no architect.md, and `claude --agent architect` failed.
+  def test_a_worktree_with_own_agent_files_gets_a_link_to_the_role_file
+    dir = File.join(@dir, "worktree")
+    FileUtils.mkdir_p(File.join(dir, ".claude", "agents"))
+    File.write(File.join(dir, ".claude", "agents", "mine.md"), "mine\n")
+    FileUtils.mkdir_p(File.join(@project, ".maf", "agents", "claude"))
+    File.write(File.join(@project, ".maf", "agents", "claude", "architect.md"), "role\n")
+
+    SetupAgent::RoleFile.copy(@project, dir, "claude", "architect")
+
+    assert_equal "role\n", File.read(File.join(dir, ".claude", "agents", "architect.md"))
+    assert_equal "mine\n", File.read(File.join(dir, ".claude", "agents", "mine.md"))
+  end
+
   def test_start_without_arguments_starts_the_prepared_worker
     maf("prepare", "opencode", "architect_2", "--interactive")
     out, status = maf("start", dir: worktree("architect-2"))
