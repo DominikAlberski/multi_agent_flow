@@ -1148,7 +1148,12 @@ This section holds the board details for the operator.
   It understands `dir/**` and exact paths. It does not understand `{}` alternation or mid-path globs.
 - **Broadcast reach.** `coord broadcast` reaches each role that owns a pending task or is listed
   in `.maf/config.json`, except the sender. `--to` selects `workers` (default), `leads`, or `all`.
-- **Read messages.** `coord inbox` moves a read message to `.maf/coordination/inbox/<agent>/read/`.
+- **Role inboxes.** Each role has one inbox. `coord msg` to a worker, such as `backend-developer-3`,
+  writes to the inbox of its role and adds a `# for: backend-developer-3` line.
+  `coord msg` refuses a name that is no role and no worker.
+  `coord msg --task ID` also adds the text as a note on the task. The note stays after the worker stops.
+  Older versions wrote mail for a worker to `inbox/<worker>/`. `coord inbox` and the dispatcher move those messages to the role inbox.
+- **Read messages.** `coord inbox` moves a read message to `.maf/coordination/inbox/<role>/read/`.
   `--peek` keeps the message unread. `--all` includes read messages.
 - **Presence.** `maf start` records the session pid in `.maf/coordination/presence/`.
   A dispatcher records its own pid. A worker is live while its pid runs.
@@ -1196,7 +1201,7 @@ This section holds the board details for the operator.
 | `coord unclaim ID` | Release a claim without finishing it. |
 | `coord done ID [--force]` | Complete a task. Refused while the task branch has own commits and lacks the goal branch head. |
 | `coord annotate ID TEXT` | Add a note to a task (permanent). |
-| `coord msg --from A TO TEXT` | Send a message to a role. |
+| `coord msg --from A [--task ID] TO TEXT` | Send a message to a role or a worker (the role inbox). `--task` also notes the task. |
 | `coord broadcast --from A [--to workers\|leads\|all] TEXT` | Send a message to a group of roles. Default: workers. |
 | `coord inbox [ROLE]` | Read messages (marks them read; `--peek` keeps them; `--wait` blocks; a second `--wait` for the same role is refused). |
 | `coord log [N]` | Show the last N coordination events. |

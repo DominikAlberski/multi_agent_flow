@@ -30,7 +30,7 @@ coord next [ROLE] [--wait] | --mine          # unclaimed tasks, or your claimed 
 coord claim ID | start-task ID | done ID     # take a task, check out its branch, finish it
 coord annotate ID TEXT                       # add a note to a task
 coord escalate [--task ID] TEXT              # a problem you cannot fix: the project manager asks the user
-coord msg --from A TO TEXT                   # message one role
+coord msg --from A [--task ID] TO TEXT      # message a role or a worker; --task also notes the task
 coord broadcast --from A [--to workers|leads|all] TEXT
 coord inbox [ROLE] [--wait]                  # read your messages
 coord goal list | goal show ID               # open goals, or one goal and its tasks
@@ -39,6 +39,11 @@ coord with-lock NAME -- CMD                  # run a command under a lock
 ```
 
 If a dispatcher serves your role, the prompt holds your messages. Do not run `coord inbox` then.
+
+A worker has no inbox of its own. A message for a worker goes to the inbox of its role.
+Any worker of the role can read it. The `for:` line names the worker.
+If a message is about a task, send it with `--task ID`. The text then also stays as a note on the task.
+If a message names a task that you do not hold, run `coord show ID` before you act.
 
 ### Rules
 

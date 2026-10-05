@@ -246,19 +246,21 @@ module Dispatcher
     def write_handoff(text) = FileUtils.mkdir_p(File.dirname(@handoff_path)) && File.write(@handoff_path, text)
   end
 
-  Message = Struct.new(:path, :from, :text)
+  Message = Struct.new(:path, :from, :text, :worker)
 
   # Mailbox owns a role's inbox: take moves unread messages into processing/,
   # ack moves them to read/, release moves them back (or to failed/).
   class Mailbox
     def initialize(coord_dir, role)
       @dir = File.join(coord_dir, "inbox", role)
+      @worker_dir = /\A#{Regexp.escape(role)}-\d+\z/
     end
 
     # A crash mid-run leaves messages in processing/. Return them to the inbox.
     def recover = Dir.glob(File.join(@dir, "processing", "*.md")).each { |path| move(path, @dir) }
 
     def take
+      fold_worker_inboxes
       Dir.glob(File.join(@dir, "*.md")).sort.filter_map { |path| claim(path) }
     end
 
@@ -275,7 +277,15 @@ module Dispatcher
 
     def parse(path)
       header, _blank, body = File.read(path).partition(/\n\n/)
-      Message.new(path, header[/^# from: (.+)$/, 1].to_s.strip, body.strip)
+      Message.new(path, header[/^# from: (.+)$/, 1].to_s.strip, body.strip, header[/^# for: (.+)$/, 1]&.strip)
+    end
+
+    # Older versions of coord wrote a message for a worker to inbox/<worker>/.
+    # No session reads that folder. Move its unread messages to the role inbox.
+    # NOTE: assets/coord folds the same folders.
+    def fold_worker_inboxes
+      dirs = Dir.glob("#{@dir}-*").select { |dir| File.basename(dir).match?(@worker_dir) }
+      dirs.flat_map { |dir| Dir.glob(File.join(dir, "*.md")) }.each { |path| move(path, @dir) }
     end
 
     # The attempt count lives in the file name (<stamp>.retry2.md), so it
@@ -1023,10 +1033,14 @@ module Dispatcher
                "When every message is handled, stop.\n"
 
     def self.messages(messages, role)
-      bodies = messages.map { |message| "--- message from #{message.from} ---\n#{message.text}\n" }
+      bodies = messages.map { |message| "--- #{heading(message)} ---\n#{message.text}\n" }
       ending = LEADS.include?(role) ? LEAD_END : MESSAGE_END
       "The dispatcher took these messages from your inbox:\n\n#{bodies.join("\n")}\n#{rules(role)}#{ending}"
     end
+
+    # A worker has no inbox of its own, so a message for one worker reaches
+    # any worker of the role.
+    def self.heading(message) = "message from #{message.from}#{" for worker #{message.worker}" if message.worker}"
 
     TASK = <<~TEXT
       The dispatcher claimed task %<id>s for you. Skip the claim step of your work loop.

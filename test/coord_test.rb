@@ -469,6 +469,41 @@ end
     assert_equal "ESCALATED: no ameba installed", find(id)["annotations"].last["description"]
   end
 
+  # A worker has no inbox of its own. Mail for backend-developer-3 must reach
+  # backend-developer-1 when only that worker runs.
+  def test_msg_to_a_worker_goes_to_the_role_inbox
+    write_manifest("architect", "backend-developer")
+    capture_io { Coord::CLI.new(["msg", "--from", "architect", "backend-developer-3", "merge"], env: @env).run }
+
+    assert_empty inbox_files("backend-developer-3")
+    assert_match(/^# for: backend-developer-3$/, File.read(inbox_files("backend-developer").first))
+  end
+
+  def test_msg_to_an_unknown_name_fails
+    write_manifest("architect", "backend-developer")
+
+    error = assert_raises(SystemExit) { capture_io { Coord::CLI.new(["msg", "backend-dev", "hi"], env: @env).run } }
+    assert_includes error.message, "unknown recipient 'backend-dev'"
+  end
+
+  def test_msg_with_a_task_saves_the_text_as_a_task_note
+    write_manifest("architect", "backend-developer")
+    id = add("task with mail")
+    capture_io { Coord::CLI.new(["msg", "--from", "architect", "--task", id, "backend-developer", "use A"], env: @env).run }
+
+    assert_equal "MSG from architect: use A", find(id)["annotations"].last["description"]
+    assert_match(/Task #{id}: use A/, File.read(inbox_files("backend-developer").first))
+  end
+
+  def test_inbox_reads_the_old_worker_inbox_folders
+    old = File.join(@dir, ".maf/coordination/inbox/backend-developer-3")
+    FileUtils.mkdir_p(old)
+    File.write(File.join(old, "1.md"), "# to: backend-developer-3\n# from: architect\n\nlost mail\n")
+
+    assert_includes run_cli("inbox", "backend-developer"), "lost mail"
+    assert_empty Dir.glob(File.join(old, "*.md"))
+  end
+
   def test_escalate_without_a_project_manager_goes_to_the_architect_only
     write_manifest("architect", "backend-developer")
 

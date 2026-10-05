@@ -118,6 +118,22 @@ class MailboxTest < Minitest::Test
     assert_empty @mailbox.take
   end
 
+  # Older coord versions wrote mail for a worker to inbox/<worker>/.
+  def test_take_reads_the_old_worker_inbox_folders
+    write_message("backend-developer-3", "1.md", "architect", "lost mail")
+    write_message("backend-developer-x", "2.md", "architect", "other")
+    assert_equal ["lost mail"], @mailbox.take.map(&:text)
+  end
+
+  def test_take_reads_the_worker_of_a_message
+    path = File.join(@dir, "inbox", "backend-developer", "1.md")
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, "# to: backend-developer\n# for: backend-developer-3\n# from: architect\n\nmerge\n")
+    message = @mailbox.take.first
+    assert_equal "backend-developer-3", message.worker
+    assert_includes Dispatcher::Prompt.messages([message], "backend-developer"), "from architect for worker backend-developer-3"
+  end
+
   def test_ack_moves_to_read
     write_message("backend-developer", "1.md", "architect", "hi")
     @mailbox.ack(@mailbox.take)
