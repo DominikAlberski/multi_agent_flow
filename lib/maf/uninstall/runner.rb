@@ -40,7 +40,7 @@ module Uninstall
       [VaultWatcher.new(project), Worktrees.new(project, @opts[:force]), Scripts.new(project), CommitGuard.new(project),
        DocGraphHooks.new(project), RoleFiles.new(project, manifest), ClaudeSettings.new(project),
        CodexHooks.new(project), McpEntries.new(project),
-       MarkedFiles.new(project), Coordination.new(project), manifest].flat_map(&:steps)
+       MarkedFiles.new(project), LocalFiles.new(project), Coordination.new(project), manifest].flat_map(&:steps)
     end
 
     def apply(steps)

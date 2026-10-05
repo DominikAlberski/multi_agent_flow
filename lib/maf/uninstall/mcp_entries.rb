@@ -1,12 +1,15 @@
 # frozen_string_literal: true
 
 module Uninstall
-  # Removes the graphify server that maf add wrote into .mcp.json and
-  # opencode.json. A foreign entry and all other settings stay. A file goes
-  # only if nothing else is left in it.
+  # Removes the graphify server that an older maf wrote into the project's
+  # .mcp.json and opencode.json. Today the server lives in .maf/mcp/. A
+  # foreign entry and all other settings stay. A file goes only if nothing
+  # else is left in it.
   class McpEntries
+    PROJECT_FILES = { "claude" => ".mcp.json", "opencode" => "opencode.json" }.freeze
+
     def initialize(project)
-      @files = Flow::McpConfig.targets.values.map { |t| [File.join(project, t[:file]), t] }
+      @files = Flow::McpConfig.targets.map { |harness, t| [File.join(project, PROJECT_FILES.fetch(harness)), t] }
     end
 
     def steps

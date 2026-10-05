@@ -1773,9 +1773,10 @@ end
   class Worktree
     ENV_FILE = WorktreeEnv::FILE
     WORKTREES_DIR = ".maf/worktrees"
-    RUNTIME_FILES = %w[.maf/bin/coord .claude/settings.json .maf/coordination/harness-hooks/next-task.rb
+    RUNTIME_FILES = %w[.maf/bin/coord .maf/coordination/harness-hooks/next-task.rb
                        .maf/coordination/harness-hooks/board-watch.rb .maf/coordination/harness-hooks/session-guard.rb
-                       .codex/hooks.json .opencode/plugins/board-watch.js].freeze
+                       .maf/coordination/harness-hooks/context-watch.rb .codex/hooks.json
+                       .opencode/plugins/board-watch.js].freeze
 
     def self.dir_for(root, slug)
       File.join(root, WORKTREES_DIR, slug)
@@ -1849,17 +1850,15 @@ end
       ensure_runtime_files(dir)
       exclude_env_file(dir)
       WorktreeEnv.new(File.join(@root, MAF_DIR, "coordination")).write(dir, File.basename(dir))
-      warn_uncommitted_coord
       puts message, SOURCE_HINT
     end
 
     SOURCE_HINT = "In that worktree, run: source #{ENV_FILE}   (shares this project's .maf/coordination/ " \
                   "and task board)"
 
-    # These files are normally committed, so a fresh worktree checks out its
-    # own copy. If one is not committed yet, the checkout has none: coord
-    # would not exist, and Claude Code would run without the board-watch hook.
-    # Copy the main worktree's copy of each missing file. A reused worktree
+    # The flow is not committed: it is a tool, not a part of the project. So
+    # a fresh worktree checks out none of these files. Copy the main
+    # worktree's copy of each missing file. A reused worktree
     # gets files that were added after it was created. An existing file is
     # never overwritten, so a change by the agent stays.
     def ensure_runtime_files(dir)
@@ -1909,15 +1908,6 @@ end
     def local_exclude(dir)
       path = `git -C #{Shellwords.escape(dir)} rev-parse --git-path info/exclude 2>/dev/null`.strip
       path.empty? ? nil : path
-    end
-
-    def warn_uncommitted_coord
-      tracked = system("git", "-C", @root, "ls-files", "--error-unmatch", ".maf/bin/coord",
-                       out: File::NULL, err: File::NULL)
-      return if tracked
-
-      warn "coord: 'coord' is not committed in #{@root}. It was copied into the worktree so coord " \
-           "works, but commit it (git add .maf/bin .gitignore) so future worktrees are clean and self-contained."
     end
   end
 

@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
 module Flow
-  # McpConfig writes the graphify MCP server into the project config of a
-  # harness. Claude Code reads .mcp.json. opencode reads opencode.json.
+  # McpConfig writes the graphify MCP server into a config file of the flow,
+  # in .maf/mcp/. The project's .mcp.json and opencode.json stay as they are.
+  # `maf start` and the dispatcher pass the file: Claude Code reads it with
+  # --mcp-config, opencode with the OPENCODE_CONFIG variable.
   # The server runs `vault mcp`. A foreign entry with the same name stays.
   # Codex and Hermes keep MCP servers in a global user file. maf does not
   # edit that file. It prints the command that adds the server instead.
@@ -11,9 +13,9 @@ module Flow
     ARGS = %w[ruby .maf/bin/vault mcp].freeze
     SCHEMA = "https://opencode.ai/config.json"
     TARGETS = {
-      "claude" => { file: ".mcp.json", key: "mcpServers",
+      "claude" => { file: ".maf/mcp/claude.json", key: "mcpServers",
                     entry: { "command" => ARGS.first, "args" => ARGS.drop(1) } },
-      "opencode" => { file: "opencode.json", key: "mcp",
+      "opencode" => { file: ".maf/mcp/opencode.json", key: "mcp",
                       entry: { "type" => "local", "command" => ARGS, "enabled" => true } }
     }.freeze
 
@@ -61,6 +63,7 @@ module Flow
 
     def save(data)
       data = { "$schema" => SCHEMA }.merge(data) if @target[:key] == "mcp" && !data.key?("$schema")
+      FileUtils.mkdir_p(File.dirname(@path))
       File.write(@path, "#{JSON.pretty_generate(data)}\n")
     end
   end

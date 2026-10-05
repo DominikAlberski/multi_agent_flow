@@ -2,8 +2,8 @@
 
 module Flow
   # AgentLinks makes the folder of each harness a relative symlink into
-  # .maf/agents/<harness>/. The harness reads its role files there. Git
-  # tracks the symlink.
+  # .maf/agents/<harness>/. The harness reads its role files there. Each
+  # link goes into the local git exclude: the flow is not a part of the project.
   class AgentLinks
     def initialize(project)
       @project = project
@@ -13,7 +13,7 @@ module Flow
     # that the flow does not own, or a symlink to another place.
     def link(harness)
       path = File.join(@project, HARNESS_DIRS.fetch(harness))
-      return :skip if linked?(path, harness)
+      return exclude(path) && :skip if linked?(path, harness)
       return :refuse unless free?(path)
 
       make(path, harness)
@@ -51,10 +51,13 @@ module Flow
     def link_file(dir, source)
       path = File.join(dir, File.basename(source))
       target = self.class.file_target(File.basename(File.dirname(source)), File.basename(source))
-      return File.readlink(path) == target if File.symlink?(path)
+      # A link of an older install is in git status until it is excluded.
+      return File.readlink(path) == target && exclude(path) if File.symlink?(path)
 
-      !File.exist?(path) && File.symlink(target, path)
+      !File.exist?(path) && File.symlink(target, path) && exclude(path)
     end
+
+    def exclude(path) = LocalExclude.add(@project, path.delete_prefix("#{@project}/")) || true
 
     # A link of a removed role points nowhere. Remove it.
     def prune(dir, harness)
@@ -68,7 +71,7 @@ module Flow
       Dir.rmdir(path) if File.directory?(path)
       FileUtils.mkdir_p(File.dirname(path))
       File.symlink(self.class.target(harness), path)
-      :create
+      exclude(path) && :create
     end
   end
 end

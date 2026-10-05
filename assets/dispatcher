@@ -154,6 +154,19 @@ module Dispatcher
   # NOTE: assets/coord carries the same list; both run standalone.
   LEADS = %w[project-manager architect].freeze
 
+  # FlowConfig finds the MCP config of the flow in .maf/mcp/ (next to the
+  # coordination folder). The project's .mcp.json and opencode.json stay as
+  # they are. NOTE: lib/maf/setup_agent/launcher.rb passes the same files.
+  module FlowConfig
+    def self.path(config, name) = File.join(File.dirname(config.coord_dir), "mcp", name)
+    def self.claude_mcp(config) = File.exist?(file = path(config, "claude.json")) ? ["--mcp-config", file] : []
+
+    def self.opencode_env(config)
+      file = path(config, "opencode.json")
+      File.exist?(file) ? { "OPENCODE_CONFIG" => file } : {}
+    end
+  end
+
   # EditGrant reads each agent's can_edit from .maf/config.json. On Hermes,
   # a role with can_edit false starts without the file-writing toolsets.
   # NOTE: lib/maf/flow.rb carries the same toolset list; both run standalone.
@@ -651,7 +664,7 @@ module Dispatcher
       def self.build_command(config, prompt, session_id)
         cmd = %w[claude -p --output-format json --permission-mode bypassPermissions --agent] + [config.role]
         cmd += ["--model", config.model] if config.model
-        cmd + resume(session_id, "--resume") + [prompt]
+        cmd + FlowConfig.claude_mcp(config) + resume(session_id, "--resume") + [prompt]
       end
 
       def self.result_event(output) = Events.last(output) { |event| event.key?("result") }
@@ -1101,7 +1114,7 @@ module Dispatcher
       env = { "COORD_DIR" => config.coord_dir, "COORD_ROLE" => config.role, "COORD_WORKER" => config.worker,
               "COORD_DISPATCHED" => "1", "PWD" => Dir.pwd }
       taskrc = File.join(config.coord_dir, "taskrc")
-      File.exist?(taskrc) ? env.merge("TASKRC" => taskrc) : env
+      env.merge(File.exist?(taskrc) ? { "TASKRC" => taskrc } : {}, FlowConfig.opencode_env(config))
     end
 
     def run

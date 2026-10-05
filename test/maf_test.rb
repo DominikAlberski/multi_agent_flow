@@ -286,7 +286,7 @@ module MafProject
     git("init", "-q")
     maf("add", "opencode:architect")
     git("add", "-A")
-    git("commit", "-q", "-m", "install")
+    git("commit", "-q", "--allow-empty", "-m", "install")
   end
 
   def git(*args)

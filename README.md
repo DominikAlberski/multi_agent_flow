@@ -65,25 +65,34 @@ The flow keeps every file that it owns in one folder, `.maf/`, in the project.
   env.sh          source it: puts .maf/bin on PATH
 ```
 
-The project root keeps `.maf/` and `AGENTS.md`. `GLOSSARY.md` (the domain glossary) and the
-decisions folder join them when the first term or decision resolves. These files must stay where
-their tool reads them:
+maf is a tool, not a part of the project. Nothing that runs maf goes into git:
+`.maf/` and each link and plugin that maf creates are listed in `.git/info/exclude`,
+which is local to the clone. maf never edits a file that the project tracks.
+
+The project keeps what the agents make, also after `maf uninstall`:
+
+| Path | What it is |
+|---|---|
+| the code | The work of the agents, landed on the goal branches. |
+| `GLOSSARY.md` | The domain glossary. The project manager drafts it. A worker commits it on the architect's task. |
+| `docs/decisions/` | ADRs. The architect decides them. A worker commits them. |
+
+Local files that a harness or git reads outside `.maf/`:
 
 | Path | Reason |
 |---|---|
-| `AGENTS.md` | Every harness reads the contract there. |
-| `GLOSSARY.md` | The domain glossary. The project manager drafts it. A worker commits it on the architect's task. |
-| `docs/decisions/` | ADRs. The architect decides them. A worker commits them. |
-| `.gitignore` | Git reads it there. |
 | `.git/hooks/*` | Git reads them there. |
-| `.claude/settings.json` | Claude Code reads it there. |
+| `.git/info/exclude` | Keeps the flow out of git in this clone. |
+| `.claude/agents/`, `.opencode/agents/`, `.codex/prompts/` | Symlinks into `.maf/agents/<harness>/`. |
 | `.opencode/plugins/board-watch.js` | opencode reads it there. |
-| `.mcp.json` | Claude Code reads the MCP servers there. |
-| `opencode.json` | opencode reads the MCP servers there. |
+| `.codex/hooks.json` | Codex reads it there. Excluded when the project does not track it. |
 | `~/.hermes/skills/<project>-<role>/SKILL.md` | Hermes reads it there. |
 
-`.claude/agents/`, `.opencode/agents/`, and `.codex/prompts/` are relative
-symlinks into `.maf/agents/<harness>/`. Git tracks the symlinks.
+Claude Code gets the hooks from `.maf/claude/settings.json` (`--settings`) and the
+graphify MCP server from `.maf/mcp/claude.json` (`--mcp-config`). opencode gets the
+server from `.maf/mcp/opencode.json` (`OPENCODE_CONFIG`). `maf start` and the
+dispatcher pass these files. The project's `.claude/settings.json`, `.mcp.json`,
+`opencode.json`, `AGENTS.md`, and `CLAUDE.md` stay as they are.
 
 MAF installs Codex hooks in the project `.codex/hooks.json` file.
 Hooks act only on sessions that `maf start` registers.
@@ -135,7 +144,9 @@ multi_agent_flow/
     migrate.rb                # maf migrate: moves an old-layout install into .maf/
     flow/role_catalog.rb      # merges .maf/roles.yml over the built-in roles
     flow/workflow.rb          # reads .maf/workflow.md for the architect prompt
-    flow/mcp_config.rb        # writes the graphify MCP server into .mcp.json and opencode.json
+    flow/mcp_config.rb        # writes the graphify MCP server into .maf/mcp/
+    untrack.rb                # maf untrack: removes an older install from git
+    local_exclude.rb          # the flow block in .git/info/exclude
   scripts/
     check.rb                  # repo consistency check (UDA sync, marker blocks, worktree formula)
   templates/
@@ -155,8 +166,7 @@ multi_agent_flow/
     env.sh                    # shell environment: .maf/bin on PATH (installed as .maf/env.sh)
     git-hooks/                # pre-commit guard, post-commit/post-merge refresh blocks
     taskrc.append             # Taskwarrior UDA block
-    agents-contract.md        # contract appended to AGENTS.md
-    gitignore.append          # marker-guarded ignore entries
+    agents-contract.md        # coordination contract at the end of each role prompt
     harness-hooks/            # next-task + board-watch scripts and the opencode plugin
   test/
     coord_test.rb             # behavioral tests for the coord CLI
@@ -261,7 +271,7 @@ those tools are absent. If wiring into CI, install both to get full coverage.
   it becomes claimable again without `--force`. `coord unclaim` releases one on
   demand.
 - **Worktrees live inside the project** at `.maf/worktrees/<role>-<worker_id>`.
-  `.maf/worktrees/` is gitignored. In each worktree, run `source .maf/env.sh` so
+  `.maf/worktrees/` is excluded from git. In each worktree, run `source .maf/env.sh` so
   `COORD_DIR` and `TASKRC` point at the main project; every worktree shares one
   `.maf/coordination/` dir and one task board.
 - **Scope overlap** is checked on `coord add` (warning) and `coord conflicts`
