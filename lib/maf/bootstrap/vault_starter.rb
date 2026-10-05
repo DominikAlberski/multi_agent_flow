@@ -13,7 +13,7 @@ module Bootstrap
     # Returns the note that the next steps print.
     def start(actions)
       return "skipped (VAULT_SKIP is set)" if ENV["VAULT_SKIP"]
-      return "run `vault` after bootstrap (graphify not needed at install time, only to run it)" unless installed?(actions)
+      return "run `vault` after bootstrap (graphify is needed only to run it)" unless installed?(actions)
       return "run `vault` once graphify is installed" unless Bootstrap.which("graphify")
 
       launch

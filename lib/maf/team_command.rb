@@ -63,10 +63,8 @@ module Maf
 
     def parse(args)
       team = { "allow" => [] }
-      OptionParser.new do |o|
-        o.on("--max N", Integer) { |v| team["max_workers"] = v }
-        o.on("--allow SPEC") { |v| team["allow"] << v }
-      end.parse!(args)
+      parser = OptionParser.new { |o| o.on("--max N", Integer) { |v| team["max_workers"] = v } }
+      parser.on("--allow SPEC") { |v| team["allow"] << v }.parse!(args)
       team
     end
   end

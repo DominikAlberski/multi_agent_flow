@@ -60,8 +60,8 @@ module Maf
       return run_menu if @command.nil? && $stdin.tty?
       return help if @command.nil? || %w[help -h --help].include?(@command)
       abort "maf: unknown command '#{@command}'. Run: maf help" unless COMMANDS.key?(@command)
-
       abort "maf: #{Migrate::HINT}" if old_layout?
+
       send("run_#{@command}")
     end
 
@@ -70,10 +70,12 @@ module Maf
     # Every command except these needs the new layout.
     # maf uninstall --check previews the migration on an old layout.
     def old_layout?
-      return false if %w[migrate roles menu].include?(@command) || (@command == "uninstall" && @args.include?("--check"))
+      return false if %w[migrate roles menu].include?(@command) || uninstall_check?
 
       Migrate.old_layout?(Dir.pwd)
     end
+
+    def uninstall_check? = @command == "uninstall" && @args.include?("--check")
 
     def help
       puts "Usage: maf COMMAND [ARGS]   (run in the project root)", ""
@@ -88,8 +90,8 @@ module Maf
     def run_role
       abort "usage: maf role add NAME" unless @args.first == "add" && @args[1]
 
-      status = Flow::RoleStub.new(Dir.pwd, @args[1]).add
-      puts(status == :create ? "Role added: #{Flow::RoleCatalog::FILE}. Fill in the TODO lines." : "Role exists: #{@args[1]}")
+      added = Flow::RoleStub.new(Dir.pwd, @args[1]).add == :create
+      puts(added ? "Role added: #{Flow::RoleCatalog::FILE}. Fill in the TODO lines." : "Role exists: #{@args[1]}")
     end
     def run_start = @args.empty? ? SetupAgent.run_here : SetupAgent.run(@args)
     def run_prepare = Prepare.new(@args).run

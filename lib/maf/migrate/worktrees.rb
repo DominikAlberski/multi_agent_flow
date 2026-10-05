@@ -32,7 +32,8 @@ module Migrate
 
     def move(old, new)
       FileUtils.mkdir_p(File.dirname(new))
-      abort "migrate: git worktree move failed for #{old}" unless system("git", "-C", @project, "worktree", "move", old, new)
+      moved = system("git", "-C", @project, "worktree", "move", old, new)
+      abort "migrate: git worktree move failed for #{old}" unless moved
       env_file(new)
       Dir.rmdir(File.join(@project, ".worktrees")) if Dir.empty?(File.join(@project, ".worktrees"))
     end
@@ -42,10 +43,14 @@ module Migrate
       old = File.join(dir, "coord-env.sh")
       return unless File.file?(old) && File.read(old).include?("COORD_DIR=")
 
-      FileUtils.mkdir_p(File.join(dir, ".maf"))
-      File.write(File.join(dir, ".maf", "env.sh"), converted(File.read(old)))
+      write_env(dir, converted(File.read(old)))
       EnvExclude.add(dir)
       FileUtils.rm(old)
+    end
+
+    def write_env(dir, text)
+      FileUtils.mkdir_p(File.join(dir, ".maf"))
+      File.write(File.join(dir, ".maf", "env.sh"), text)
     end
 
     def converted(text)
