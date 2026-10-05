@@ -45,8 +45,9 @@ class UntrackTest < Minitest::Test
     [out, $?.exitstatus]
   end
 
-  def git(*args) = system("git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args,
-                          chdir: @dir, exception: true, out: File::NULL)
+  # No git hooks: the doc-graph refresh would run in the background and race the teardown.
+  def git(*args) = system("git", "-c", "user.name=t", "-c", "user.email=t@example.com",
+                          "-c", "core.hooksPath=#{File::NULL}", *args, chdir: @dir, exception: true, out: File::NULL)
 
   def write(rel, text) = File.write(File.join(@dir, rel), text)
   def read(rel) = File.read(File.join(@dir, rel))

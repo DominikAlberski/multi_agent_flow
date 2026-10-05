@@ -322,6 +322,19 @@ class FlowTest < InstallerTestCase
     refute File.exist?(File.join(@dir, "AGENTS.md"))
   end
 
+  # An older maf made the links but did not exclude them. maf update excludes them.
+  def test_an_existing_link_is_excluded_on_update
+    system("git", "init", "-q", @dir, exception: true)
+    FileUtils.mkdir_p(File.join(@dir, ".claude", "agents"))
+    File.write(File.join(@dir, ".claude", "agents", "mine.md"), "mine")
+    flow("--agent", "claude:architect")
+    LocalExclude.remove(@dir)
+
+    flow("--agent", "claude:architect")
+
+    assert_includes LocalExclude.listed(File.join(@dir, ".git", "info", "exclude")), ".claude/agents/architect.md"
+  end
+
   # Nothing of the flow goes into git: each harness link is excluded in this clone.
   def test_the_harness_links_are_excluded_locally
     system("git", "init", "-q", @dir, exception: true)
