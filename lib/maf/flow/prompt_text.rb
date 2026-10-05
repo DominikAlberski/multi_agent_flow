@@ -126,7 +126,8 @@ module Flow
     - Change a goal branch only with `coord land` and `coord goal sync`. Never run `git merge` or `git commit` on it.
     - Start each goal from the base branch. Never start a goal from another goal branch.
     - Take the `ollama` lock only if you run a local model yourself.
-    - Hand work between stages with artifacts: `$COORD_DIR/artifacts/<goal>/<name>.md`. Never use a path inside a worktree.
+    - Hand work between stages with artifacts: `$COORD_DIR/artifacts/<goal>/<name>.md`.
+      Never use a path inside a worktree.
     - Do not commit. For a durable artifact (an approved spec, an ADR, `GLOSSARY.md`), create a task
       for a worker that can edit files. That worker commits the artifact on the goal branch.
     - Create tasks in stage order. Do not create the task of the next stage until the gate of the current stage passes.
@@ -188,7 +189,8 @@ module Flow
     - Check who runs with `coord who`. A role without a live worker does not read its messages.
     - If coord reports "No worker runs role <role>", add a worker for that role.
     - If a role has more than three backlog tasks and the budget has a free slot, add a worker for that role.
-    - If a role has no tasks and no open goal needs it, retire its extra workers. Keep one worker per role that an open goal needs.
+    - If a role has no tasks and no open goal needs it, retire its extra workers.
+      Keep one worker per role that an open goal needs.
     - If the budget is full, replace an idle worker: `--replace <idle-worker>`.
     - Report each team change to the user in one line.
   TEXT
@@ -196,7 +198,8 @@ module Flow
   PM_LOOP = <<~LOOP
     Work loop:
     1. Read the user's request. Interview the user, as the duties describe.
-    2. Turn the request into one goal. Create the goal at the start of the interview: `coord goal add --title "<outcome>"`.
+    2. Turn the request into one goal. Create the goal at the start of the interview:
+       `coord goal add --title "<outcome>"`.
        The command prints the goal id and creates the goal branch. The glossary draft path needs the goal id.
     3. When the interview ends, hand the goal to the architect:
          coord msg --from project-manager architect "GOAL <goal-id>: <goal>"

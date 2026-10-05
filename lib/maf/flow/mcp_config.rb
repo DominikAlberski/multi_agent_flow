@@ -11,21 +11,21 @@ module Flow
     ARGS = %w[ruby .maf/bin/vault mcp].freeze
     SCHEMA = "https://opencode.ai/config.json"
     TARGETS = {
-      "claude" => { file: ".mcp.json", key: "mcpServers", entry: { "command" => ARGS.first, "args" => ARGS.drop(1) } },
+      "claude" => { file: ".mcp.json", key: "mcpServers",
+                    entry: { "command" => ARGS.first, "args" => ARGS.drop(1) } },
       "opencode" => { file: "opencode.json", key: "mcp",
                       entry: { "type" => "local", "command" => ARGS, "enabled" => true } }
     }.freeze
 
     def self.targets = TARGETS
 
+    GLOBAL_COMMANDS = { "codex" => "codex mcp add %<name>s -- ruby %<vault>s mcp",
+                        "hermes" => "hermes mcp add %<name>s --command ruby --args %<vault>s mcp" }.freeze
+
     # The shell command for a harness with a global MCP config, or nil.
     def self.global_command(harness, project)
       vault = File.join(project, ".maf", "bin", "vault")
-      name = "#{NAME}-#{File.basename(project)}"
-      case harness
-      when "codex" then "codex mcp add #{name} -- ruby #{vault} mcp"
-      when "hermes" then "hermes mcp add #{name} --command ruby --args #{vault} mcp"
-      end
+      GLOBAL_COMMANDS[harness]&.then { |text| format(text, name: "#{NAME}-#{File.basename(project)}", vault: vault) }
     end
 
     def initialize(project, harness)
@@ -39,13 +39,17 @@ module Flow
       return :refuse unless data
 
       section = data.fetch(@target[:key], {})
-      return (section[NAME] == @target[:entry] ? :skip : :refuse) if section.key?(NAME)
-
-      save(data.merge(@target[:key] => section.merge(NAME => @target[:entry])))
-      :create
+      section.key?(NAME) ? compare(section[NAME]) : add(data, section)
     end
 
     private
+
+    def compare(entry) = entry == @target[:entry] ? :skip : :refuse
+
+    def add(data, section)
+      save(data.merge(@target[:key] => section.merge(NAME => @target[:entry])))
+      :create
+    end
 
     # An unreadable file gives nil. maf never overwrites a file it cannot read.
     def load

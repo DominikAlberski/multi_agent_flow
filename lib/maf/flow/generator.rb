@@ -11,25 +11,31 @@ module Flow
     end
 
     def run
-      @options.parse
-      validate_project
-      @catalog = RoleCatalog.new(@options.project)
-      @roles = @catalog.roles
+      prepare
       return print_roles if @options.list_roles
 
-      validate
-      return finish_without_agents if @options.agents.empty?
-
-      generate_all
+      Validator.new(@options, @roles).run
+      @options.agents.empty? ? finish_without_agents : generate_all
     end
 
     private
 
+    def prepare
+      @options.parse
+      Validator.project!(@options)
+      @catalog = RoleCatalog.new(@options.project)
+      @roles = @catalog.roles
+    end
+
     def generate_all
-      run_bootstrap
+      Bootstrapper.new(@options).run
       results = RoleFiles.new(@options, @roles).generate
-      link_agents
+      HarnessLinker.new(@options).run
       McpInstaller.new(@options).install
+      finish(results)
+    end
+
+    def finish(results)
       pending = @options.check? ? false : HookInstaller.new(@options.agents, @options.project).install
       manifest.write
       Report.new(@options.project, @roles, pending).print(results)
@@ -37,94 +43,19 @@ module Flow
 
     def manifest = Manifest.new(@options, @roles)
 
-    # Point the folder of each harness at the role files in .maf/agents/.
-    def link_agents
-      return if @options.check?
-
-      links = AgentLinks.new(@options.project)
-      @options.agents.map { |a| a[:harness] }.uniq.select { |h| HARNESS_DIRS.key?(h) }.each do |harness|
-        link_role_files(links, harness) if links.link(harness) == :refuse
-      end
-    end
-
-    def link_role_files(links, harness)
-      return warn_not_linked(harness) if File.symlink?(File.join(@options.project, HARNESS_DIRS.fetch(harness)))
-
-      kept = links.link_files(harness)
-      return if kept.empty?
-
-      warn "flow: #{HARNESS_DIRS.fetch(harness)} has own files named #{kept.join(", ")}. Those roles are not linked."
-    end
-
-    def warn_not_linked(harness)
-      warn "flow: #{HARNESS_DIRS.fetch(harness)} points to another folder. " \
-           "The #{harness} harness cannot read the role files. Run: maf migrate"
-    end
-
     def print_roles
       puts "Available roles (model_hint is a recommendation only):"
-      @roles.each do |key, data|
-        puts
-        puts "  #{key} (#{@catalog.source(key)})"
-        puts "    #{data.fetch("description")}"
-        puts "    model hint: #{data.fetch("model_hint")}"
-      end
+      @roles.each { |key, data| print_role(key, data) }
     end
 
-    def validate
-      @options.agents = Roster.new(@options.project).merge(@options.agents, @options.removed)
-      validate_agents
-    end
-
-    def validate_project
-      project = @options.project
-      abort "flow: --project is required" if project.nil?
-      abort "flow: project is not a directory: #{project}" unless Dir.exist?(project)
-
-      @options.project = File.realpath(project)
-    end
-
-    # A removal may leave no agents. Only a run that removes nothing needs one.
-    def validate_agents
-      abort "flow: no agents. Add one with --agent HARNESS:ROLE" if @options.agents.empty? && @options.removed.empty?
-
-      @options.agents.each { |agent| validate_agent(agent) }
-    end
-
-    def validate_agent(agent)
-      unless HARNESSES.include?(agent[:harness])
-        abort "flow: unknown harness '#{agent[:harness]}' (use #{HARNESSES.join(", ")})"
-      end
-      abort "flow: unknown role '#{agent[:role]}'" unless @roles.key?(agent[:role])
+    def print_role(key, data)
+      puts "", "  #{key} (#{@catalog.source(key)})", "    #{data.fetch("description")}",
+           "    model hint: #{data.fetch("model_hint")}"
     end
 
     def finish_without_agents
       manifest.write
       puts "No agents left. Add one: maf add HARNESS:ROLE. Remove the flow: maf uninstall."
-    end
-
-    def run_bootstrap
-      return if !@options.bootstrap? || @options.check?
-
-      # Bootstrap adds the Claude Code hooks only if .claude/ exists, and the
-      # opencode plugin only if .opencode/ exists. Flow writes the role files
-      # after bootstrap, so create these dirs first.
-      make_harness_dirs
-      abort "flow: coordination bootstrap failed" unless system(*bootstrap_command)
-    end
-
-    def make_harness_dirs
-      %w[claude opencode].each do |harness|
-        next unless @options.agents.any? { |a| a[:harness] == harness }
-
-        FileUtils.mkdir_p(File.join(@options.project, ".#{harness}"))
-      end
-    end
-
-    def bootstrap_command
-      roles = @options.agents.map { |a| a[:role] }.uniq.join(",")
-      args = [RbConfig.ruby, File.join(__dir__, "..", "bootstrap.rb"), @options.project, "--roles", roles]
-      @options.force? ? args << "--force" : args
     end
   end
 end

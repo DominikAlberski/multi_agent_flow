@@ -13,28 +13,25 @@ module Flow
 
     # Returns true when the user has steps left.
     def install
-      install_guard
-      HookFiles.copy(File.join(ASSETS, "harness-hooks", "next-task-hermes.sh"), @script)
+      install_files
       steps = self.steps(File.mtime(@script))
       return puts("  hook ready:   #{@script}") || false if steps.empty?
 
-      print_steps(steps)
-      true
+      print_steps(steps) || true
     end
 
     private
 
-    def install_guard
+    def install_files
       HookFiles.copy(File.join(ASSETS, "harness-hooks", "session-guard.rb"),
                      File.join(File.dirname(@script), "session-guard.rb"))
+      HookFiles.copy(File.join(ASSETS, "harness-hooks", "next-task-hermes.sh"), @script)
     end
 
     def print_steps(steps)
-      puts
-      puts "  Hermes hook: #{@script}"
-      puts "  The hook does not run yet. Do these steps one time."
-      puts
+      puts "", "  Hermes hook: #{@script}", "  The hook does not run yet. Do these steps one time.", ""
       steps.each_with_index { |step, index| puts format_step(step, index) }
+      nil
     end
 
     def format_step(step, index)

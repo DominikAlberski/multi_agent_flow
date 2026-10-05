@@ -6,11 +6,22 @@ module Flow
     attr_accessor :project, :agents
     attr_reader :removed, :models, :hermes_dir, :list_roles
 
+    # Each flag: the OptionParser arguments, and a block that runs in the
+    # Options instance with the flag value.
+    FLAGS = [
+      [["--project DIR"], ->(v) { @project = v }],
+      [["--agent SPEC", "HARNESS:ROLE[:MODEL]"], ->(v) { @agents << parse_agent(v) }],
+      [["--remove SPEC", "HARNESS:ROLE"], ->(v) { @removed << parse_agent(v) }],
+      [["--model PAIR", "ROLE=MODEL"], ->(v) { @models.store(*v.split("=", 2)) }],
+      [["--hermes-dir DIR"], ->(v) { @hermes_dir = File.expand_path(v) }],
+      [["--check"], ->(_) { @check = true }],
+      [["--force"], ->(_) { @force = true }],
+      [["--no-bootstrap"], ->(_) { @bootstrap = false }],
+      [["--list-roles"], ->(_) { @list_roles = true }]
+    ].freeze
+
     def initialize(argv)
-      @argv = argv
-      @agents = []
-      @removed = []
-      @models = {}
+      @argv, @agents, @removed, @models = argv, [], [], {}
       @hermes_dir = DEFAULT_HERMES_DIR
       @check = @force = @list_roles = false
       @bootstrap = true
@@ -39,15 +50,7 @@ module Flow
     def parser
       OptionParser.new do |o|
         o.banner = "Usage: maf add|remove|update [HARNESS:ROLE ...] [options]"
-        o.on("--project DIR") { |v| @project = v }
-        o.on("--agent SPEC", "HARNESS:ROLE[:MODEL]") { |v| @agents << parse_agent(v) }
-        o.on("--remove SPEC", "HARNESS:ROLE") { |v| @removed << parse_agent(v) }
-        o.on("--model PAIR", "ROLE=MODEL") { |v| k, m = v.split("=", 2); @models[k] = m }
-        o.on("--hermes-dir DIR") { |v| @hermes_dir = File.expand_path(v) }
-        o.on("--check") { @check = true }
-        o.on("--force") { @force = true }
-        o.on("--no-bootstrap") { @bootstrap = false }
-        o.on("--list-roles") { @list_roles = true }
+        FLAGS.each { |args, set| o.on(*args) { |value| instance_exec(value, &set) } }
         o.on("-h", "--help") { puts o; exit 0 }
       end
     end
