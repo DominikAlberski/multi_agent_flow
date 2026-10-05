@@ -7,7 +7,7 @@ module Bootstrap
     # Each step is [planner, method]. The order is the order of the output.
     PLAN_STEPS = [
       %i[layout dirs], %i[scripts coord], %i[scripts dispatcher], %i[scripts vault], %i[scripts dashboard],
-      %i[scripts env], %i[text taskrc], %i[text claude_md], %i[text contracts], %i[text gitignore],
+      %i[scripts env], %i[text taskrc], %i[text exclude],
       %i[scripts hooks], %i[scripts opencode_plugin], %i[claude plan], %i[git commit_guard],
       %i[scripts doc_graph], %i[git doc_graph_hooks]
     ].freeze

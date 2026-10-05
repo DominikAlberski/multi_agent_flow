@@ -7,7 +7,11 @@ module Uninstall
   class MarkedFiles
     FILES = %w[AGENTS.md .gitignore].freeze
 
-    def initialize(project) = @project = project
+    # keep_rules: false drops the ignore rules too. maf untrack excludes .maf/ locally instead.
+    def initialize(project, keep_rules: true)
+      @project = project
+      @keep_rules = keep_rules
+    end
 
     def steps
       FILES.map { |name| File.join(@project, name) }.select { |path| Owned.marked?(path) }
@@ -23,7 +27,7 @@ module Uninstall
     end
 
     def kept_rules(path)
-      return [] unless File.basename(path) == ".gitignore"
+      return [] unless @keep_rules && File.basename(path) == ".gitignore"
 
       KEPT_DIRS.select { |dir| Dir.exist?(File.join(@project, dir)) }.map { |dir| "#{dir}/" }
     end

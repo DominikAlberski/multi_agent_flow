@@ -74,13 +74,13 @@ The names of the terms in code and in the CLI are in [flow-cli-names.md](flow-cl
 
 **Verify command**: A shell command that checks the work mechanically, for example the test suite. `coord done` and the dispatcher success path refuse a task while the command exits non-zero.
 
-**Token usage**: The input and output tokens of the dispatched runs of one worker, added up. Claude Code, Hermes, and Codex report them.
+**Token usage**: The input, cached input, and output tokens of one worker, in `.maf/coordination/usage/<worker>.json`. The dispatcher adds each run. The context-watch hook adds each turn of an interactive session.
 
 **Copy list**: Host files that `coord worktree` copies into each new or reused worktree, for example `.env`. Only existing files inside the project are copied. A file in the worktree is never overwritten.
 
 **Prefetch**: Live context that the dispatcher adds to a dispatch prompt: the spec of the claimed task (`coord show ID`) and `git log --oneline -10`, each cut to 2000 characters.
 
-**Flow folder**: The folder `.maf/` in a project. It holds every file that the flow owns. A few files stay outside it, because a tool reads them at a fixed path.
+**Flow folder**: The folder `.maf/` in a project. It holds every file that the flow owns. A few files stay outside it, because a tool reads them at a fixed path. Git does not track it: `.git/info/exclude` lists it.
 
 **Harness folder**: The folder where a harness reads role files: `.claude/agents/`, `.opencode/agents/`, or `.codex/prompts/`. It is a relative symlink to `.maf/agents/<harness>/`.
 
@@ -97,6 +97,16 @@ The names of the terms in code and in the CLI are in [flow-cli-names.md](flow-cl
 **Graph age**: The number of commits since the shared knowledge graph was built. The graph is stale when a commit after the build changed a source or markdown file.
 
 **Out-of-scope log**: The list of requests that the project rejects on purpose, each with its reason.
+
+**Coordination contract**: The terms and rules that every role shares. It is at the end of each role file, not in the project's `AGENTS.md`.
+
+**Local exclude**: The marked block in `.git/info/exclude` that lists `.maf/` and each link and plugin that the flow creates. It is local to the clone, so the flow stays out of the project's git.
+
+**Worker status**: The model, the context size, and the last run of one worker, in `.maf/coordination/status/<worker>.json`. The dispatcher and the context-watch hook write it. The dashboard shows it.
+
+**Handoff note**: A note of at most 300 words that a session writes for the next session of its worker: state, decisions, open questions, and the next step. It is in `.maf/coordination/sessions/<worker>.handoff.md`.
+
+**Context limit**: The context size, in tokens, at which the context-watch hook asks an interactive session for a handoff note and tells the user to type `/clear`. Default: 150000.
 
 ## Notes
 

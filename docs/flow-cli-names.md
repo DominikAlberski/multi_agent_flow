@@ -25,7 +25,7 @@ This file lists the code and CLI name of each term in [flow-glossary.md](flow-gl
 | commit guard | `assets/git-hooks/pre-commit` |
 | lock | `coord lock`, lock field `worker` |
 | message hook | `coord hooks` |
-| harness hook | `next-task.rb`, `board-watch.rb`, `board-watch-opencode.js` |
+| harness hook | `next-task.rb`, `board-watch.rb`, `context-watch.rb`, `board-watch-opencode.js` |
 | report block | `ReportBlock`, `REPORT_FORMAT` |
 | completion signal | `--completion-signal`, `Limits#complete` |
 | abort signal | `--abort-signal`, `Limits#abort` |
@@ -44,3 +44,8 @@ This file lists the code and CLI name of each term in [flow-glossary.md](flow-gl
 | artifact | `.maf/coordination/artifacts/<goal>/<name>.md` |
 | graph age | `vault age`, `vault status`, `coord status` |
 | out-of-scope log | `docs/out-of-scope.md` |
+| coordination contract | `assets/agents-contract.md`, `Flow::CONTRACT` |
+| local exclude | `.git/info/exclude`, `LocalExclude`, `maf untrack` |
+| worker status | `.maf/coordination/status/<worker>.json`, `WorkerStatus`, `maf worker status` |
+| handoff note | `.maf/coordination/sessions/<worker>.handoff.md` |
+| context limit | `MAF_CONTEXT_LIMIT`, `.maf/config.json` key `team.context_limit` |

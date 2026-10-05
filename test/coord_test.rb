@@ -1200,11 +1200,11 @@ class WorktreeFirstRunTest < Minitest::Test
     %w[coord dispatcher vault].each { |name| assert File.exist?(File.join(@worktree_dir, ".maf", "bin", name)), name }
   end
 
-  HOOK_FILES = %w[.claude/settings.json .maf/coordination/harness-hooks/board-watch.rb
+  HOOK_FILES = %w[.maf/coordination/harness-hooks/context-watch.rb .maf/coordination/harness-hooks/board-watch.rb
                   .maf/coordination/harness-hooks/next-task.rb .opencode/plugins/board-watch.js].freeze
 
-  # Regression: an uncommitted .claude/settings.json never reached the
-  # worktree, so Claude agents there ran without the board-watch hook.
+  # The flow is not committed, so a worktree gets the hook scripts as copies.
+  # Claude Code reads the hook settings from .maf/claude/settings.json of the main project.
   def test_worktree_copies_uncommitted_harness_hooks
     HOOK_FILES.each { |path| write(path) }
     Coord::Worktree.new(@root).create("tester", nil)

@@ -41,18 +41,19 @@ class McpTestCase < Minitest::Test
 end
 
 class McpInstallTest < McpTestCase
-  def test_claude_gets_the_server_in_mcp_json
+  def test_claude_gets_the_server_in_the_flow_config
     out, status = add("claude:architect")
 
     assert_equal 0, status, out
-    assert_equal({ "command" => "ruby", "args" => %w[.maf/bin/vault mcp] }, json(".mcp.json").dig("mcpServers", "graphify"))
+    entry = json(".maf/mcp/claude.json").dig("mcpServers", "graphify")
+    assert_equal({ "command" => "ruby", "args" => %w[.maf/bin/vault mcp] }, entry)
   end
 
-  def test_opencode_gets_the_server_in_opencode_json
+  def test_opencode_gets_the_server_in_the_flow_config
     add("opencode:architect")
 
     assert_equal({ "type" => "local", "command" => %w[ruby .maf/bin/vault mcp], "enabled" => true },
-                 json("opencode.json").dig("mcp", "graphify"))
+                 json(".maf/mcp/opencode.json").dig("mcp", "graphify"))
   end
 
   def test_codex_and_hermes_get_a_printed_command_and_no_file
@@ -60,42 +61,47 @@ class McpInstallTest < McpTestCase
 
     assert_includes out, "codex mcp add graphify-#{File.basename(@dir)} -- ruby #{@dir}/.maf/bin/vault mcp"
     assert_includes out, "hermes mcp add graphify-#{File.basename(@dir)}"
-    refute File.exist?(path(".mcp.json"))
+    refute File.exist?(path(".maf/mcp/claude.json"))
   end
 
-  def test_other_servers_and_settings_stay
-    write(".mcp.json", JSON.generate("mcpServers" => { "mine" => { "command" => "x" } }, "other" => 1))
+  # The project's own MCP config is a part of the project. maf never edits it.
+  def test_the_project_mcp_json_and_opencode_json_stay_as_they_are
+    mine = JSON.generate("mcpServers" => { "mine" => { "command" => "x" } })
+    write(".mcp.json", mine)
 
-    add("claude:architect")
+    add("claude:architect", "opencode:tester")
 
-    assert_equal %w[graphify mine], json(".mcp.json").fetch("mcpServers").keys.sort
-    assert_equal 1, json(".mcp.json")["other"]
+    assert_equal mine, File.read(path(".mcp.json"))
+    refute File.exist?(path("opencode.json"))
+    assert json(".maf/mcp/claude.json").dig("mcpServers", "graphify")
   end
 
   def test_a_foreign_graphify_entry_stays
-    write(".mcp.json", JSON.generate("mcpServers" => { "graphify" => { "command" => "mine" } }))
+    FileUtils.mkdir_p(path(".maf", "mcp"))
+    write(".maf/mcp/claude.json", JSON.generate("mcpServers" => { "graphify" => { "command" => "mine" } }))
 
     out, = add("claude:architect")
 
-    assert_equal "mine", json(".mcp.json").dig("mcpServers", "graphify", "command")
+    assert_equal "mine", json(".maf/mcp/claude.json").dig("mcpServers", "graphify", "command")
     assert_includes out, "another graphify entry"
   end
 
   def test_a_broken_file_stays
-    write(".mcp.json", "{ not json")
+    FileUtils.mkdir_p(path(".maf", "mcp"))
+    write(".maf/mcp/claude.json", "{ not json")
 
     add("claude:architect")
 
-    assert_equal "{ not json", File.read(path(".mcp.json"))
+    assert_equal "{ not json", File.read(path(".maf/mcp/claude.json"))
   end
 
   def test_a_rerun_changes_nothing
     add("claude:architect")
-    before = File.read(path(".mcp.json"))
+    before = File.read(path(".maf/mcp/claude.json"))
 
     out, = add("claude:architect")
 
-    assert_equal before, File.read(path(".mcp.json"))
+    assert_equal before, File.read(path(".maf/mcp/claude.json"))
     refute_includes out, "wrote the graphify server"
   end
 
@@ -105,8 +111,8 @@ class McpInstallTest < McpTestCase
 
     add("claude:architect", "opencode:tester")
 
-    refute File.exist?(path(".mcp.json"))
-    refute File.exist?(path("opencode.json"))
+    refute File.exist?(path(".maf/mcp/claude.json"))
+    refute File.exist?(path(".maf/mcp/opencode.json"))
     assert_equal false, json(".maf/config.json")["mcp"]
   end
 end
@@ -118,8 +124,8 @@ class McpUninstallTest < McpTestCase
     out, status = maf("uninstall", "--yes")
 
     assert_equal 0, status, out
-    refute File.exist?(path(".mcp.json"))
-    refute File.exist?(path("opencode.json"))
+    refute File.exist?(path(".maf/mcp/claude.json"))
+    refute File.exist?(path(".maf/mcp/opencode.json"))
   end
 
   def test_uninstall_keeps_other_servers

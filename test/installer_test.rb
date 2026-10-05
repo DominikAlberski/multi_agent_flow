@@ -60,27 +60,28 @@ class BootstrapTest < InstallerTestCase
     assert File.executable?(File.join(@dir, ".maf", "bin", "coord"))
     refute File.exist?(File.join(@dir, "setup_agent"))
     assert_includes File.read(taskrc_path), "data.location=#{File.join(@dir, ".maf/coordination", "taskdata")}"
-    assert_includes File.read(File.join(@dir, "AGENTS.md")), ">>> multi-agent-flow >>>"
-    assert_includes File.read(File.join(@dir, ".gitignore")), ".maf/env.sh"
   end
 
-  # Root keeps only .maf/ and AGENTS.md (and .gitignore, which git reads there).
-  def test_installs_only_the_flow_folder_and_the_text_files_at_the_root
+  # The flow is a tool, not a part of the project: it writes only .maf/.
+  def test_installs_only_the_flow_folder
     out, status = bootstrap
 
     assert_equal 0, status, out
-    assert_equal %w[.gitignore .maf AGENTS.md], Dir.children(@dir).sort
-    assert_equal %w[bin coordination env.sh], Dir.children(File.join(@dir, ".maf")).sort
+    assert_equal %w[.maf], Dir.children(@dir)
+    assert_equal %w[bin claude coordination env.sh], Dir.children(File.join(@dir, ".maf")).sort
   end
 
-  def test_ignore_rules_cover_the_runtime_folders
+  def exclude_lines = File.read(File.join(@dir, ".git", "info", "exclude")).lines.map(&:strip)
+
+  # Nothing of the flow goes into git. The excludes are local to the clone.
+  def test_excludes_the_flow_locally_and_leaves_git_files_as_they_are
+    system("git", "init", "-q", @dir, exception: true)
+    File.write(File.join(@dir, ".gitignore"), "node_modules/\n")
     bootstrap
 
-    rules = File.read(File.join(@dir, ".gitignore")).lines.map(&:strip)
-
-    %w[.maf/coordination/ .maf/worktrees/ .maf/graphify-out/ .maf/obsidian/ .maf/*.log .maf/*.pid].each do |rule|
-      assert_includes rules, rule
-    end
+    assert_includes exclude_lines, ".maf/"
+    assert_includes exclude_lines, ".opencode/plugins/board-watch.js"
+    assert_equal "node_modules/\n", File.read(File.join(@dir, ".gitignore"))
   end
 
   def test_env_sh_puts_the_flow_bin_folder_on_the_path
@@ -93,46 +94,15 @@ class BootstrapTest < InstallerTestCase
   end
 
   def test_is_idempotent
+    system("git", "init", "-q", @dir, exception: true)
     bootstrap
     taskrc = File.read(taskrc_path)
-    contract = File.read(File.join(@dir, "AGENTS.md"))
 
     out, status = bootstrap
 
     assert_equal 0, status, out
     assert_equal taskrc, File.read(taskrc_path)
-    assert_equal contract, File.read(File.join(@dir, "AGENTS.md"))
-    assert_equal 1, contract.scan(">>> multi-agent-flow >>>").size
-  end
-
-  # Regression: a re-run skipped any file that already had the marker, so an
-  # existing install never got new ignore rules (e.g. `obsidian/` after the
-  # vault/ rename) or new contract commands. The stale block must be replaced
-  # in place, and text outside the block must survive.
-  def test_rerun_replaces_a_stale_marked_block
-    gitignore = File.join(@dir, ".gitignore")
-    File.write(gitignore, "node_modules/\n\n# >>> multi-agent-flow >>>\nvault/\n# <<< multi-agent-flow <<<\nafter/\n")
-
-    out, status = bootstrap
-
-    assert_equal 0, status, out
-    content = File.read(gitignore)
-    assert_includes content, "obsidian/"
-    refute_match(/^vault\/$/, content)
-    assert content.start_with?("node_modules/\n")
-    assert content.end_with?("after/\n")
-    assert_equal 1, content.scan(">>> multi-agent-flow >>>").size
-  end
-
-  def test_check_does_not_replace_a_stale_block
-    gitignore = File.join(@dir, ".gitignore")
-    stale = "# >>> multi-agent-flow >>>\nvault/\n# <<< multi-agent-flow <<<\n"
-    File.write(gitignore, stale)
-
-    out, = bootstrap("--check")
-
-    assert_includes out, "replace"
-    assert_equal stale, File.read(gitignore)
+    assert_equal 1, exclude_lines.count(".maf/")
   end
 
   def test_refuses_a_foreign_coord_script
@@ -204,21 +174,19 @@ class BootstrapTest < InstallerTestCase
     refute File.exist?(File.join(@dir, ".maf/coordination", "vault.pid"))
   end
 
-  def test_adds_board_watch_hooks_to_claude_settings_once
-    settings_path = File.join(@dir, ".claude", "settings.json")
-    FileUtils.mkdir_p(File.dirname(settings_path))
-    File.write(settings_path, JSON.generate(hooks: { Stop: [{ matcher: "", hooks: [{ type: "command",
-                                                     command: "ruby .maf/coordination/harness-hooks/next-task.rb" }] }] }))
+  # The hooks go into the settings file of the flow. maf start passes it with
+  # --settings, so the project's own .claude/settings.json stays as it is.
+  def test_adds_the_hooks_to_the_flow_settings_once
+    project_settings = File.join(@dir, ".claude", "settings.json")
+    FileUtils.mkdir_p(File.dirname(project_settings))
+    File.write(project_settings, "{}")
     2.times { assert_equal 0, bootstrap.last }
 
-    hooks = JSON.parse(File.read(settings_path))["hooks"]
-    watch = hooks["SessionStart"].map { |entry| entry["hooks"][0] }
-    async = watch.select { |hook| hook["asyncRewake"] }
-    assert_equal [true], async.map { |hook| hook["asyncRewake"] }
+    hooks = JSON.parse(File.read(File.join(@dir, ".maf", "claude", "settings.json")))["hooks"]
+    async = hooks["SessionStart"].map { |entry| entry["hooks"][0] }.select { |hook| hook["asyncRewake"] }
     assert_equal ["ruby .maf/coordination/harness-hooks/board-watch.rb"], async.map { |hook| hook["command"] }
     assert_equal 3, hooks["Stop"].size
-    assert File.exist?(File.join(@dir, ".maf/coordination", "harness-hooks", "board-watch.rb"))
-    assert Dir.exist?(File.join(@dir, ".maf/coordination", "message-hooks"))
+    assert_equal "{}", File.read(project_settings)
   end
 
   def opencode_plugin = File.join(@dir, ".opencode", "plugins", "board-watch.js")
@@ -236,45 +204,19 @@ class BootstrapTest < InstallerTestCase
     refute File.exist?(opencode_plugin)
   end
 
-  # Claude Code reads AGENTS.md only when no project CLAUDE.md exists, so the
-  # user's CLAUDE.md text moves into AGENTS.md and CLAUDE.md goes.
-  def test_moves_claude_md_into_agents_md
+  # The coordination contract lives in the role files. The project's own
+  # instruction files stay as they are.
+  def test_leaves_claude_md_and_agents_md_as_they_are
     File.write(File.join(@dir, "AGENTS.md"), "# Agents rules\n")
-    File.write(File.join(@dir, "CLAUDE.md"), "# Claude rules\n@AGENTS.md\n")
-
-    out, status = bootstrap
-
-    assert_equal 0, status, out
-    refute File.exist?(File.join(@dir, "CLAUDE.md"))
-    agents = File.read(File.join(@dir, "AGENTS.md"))
-    assert agents.start_with?("# Agents rules\n\n# Claude rules\n")
-    refute_includes agents, "@AGENTS.md"
-    assert_equal 1, agents.scan(">>> multi-agent-flow >>>").size
-  end
-
-  def test_moves_dot_claude_claude_md_and_drops_its_old_contract
-    path = File.join(@dir, ".claude", "CLAUDE.md")
-    FileUtils.mkdir_p(File.dirname(path))
-    File.write(path, "# Mine\n\n<!-- >>> multi-agent-flow >>> -->\nold\n<!-- <<< multi-agent-flow <<< -->\n")
-
-    out, status = bootstrap
-
-    assert_equal 0, status, out
-    refute File.exist?(path)
-    agents = File.read(File.join(@dir, "AGENTS.md"))
-    assert agents.start_with?("# Mine\n")
-    refute_match(/^old$/, agents)
-    assert_equal 1, agents.scan(">>> multi-agent-flow >>>").size
-  end
-
-  def test_check_does_not_move_claude_md
     File.write(File.join(@dir, "CLAUDE.md"), "# Claude rules\n")
 
-    out, = bootstrap("--check")
+    out, status = bootstrap
 
-    assert_includes out, "CLAUDE.md (move into AGENTS.md)"
+    assert_equal 0, status, out
+    assert_equal "# Agents rules\n", File.read(File.join(@dir, "AGENTS.md"))
     assert_equal "# Claude rules\n", File.read(File.join(@dir, "CLAUDE.md"))
   end
+
 end
 
 class FlowTest < InstallerTestCase
@@ -370,6 +312,40 @@ class FlowTest < InstallerTestCase
   end
 
   # opencode asked for each access to /tmp, the board, and git data.
+  # The contract lives in the role files, so the project's AGENTS.md needs no maf text.
+  def test_each_role_file_holds_the_coordination_contract
+    flow("--agent", "opencode:tester", "--agent", "claude:architect")
+
+    %w[opencode/tester.md claude/architect.md].each do |rel|
+      assert_includes File.read(File.join(@dir, ".maf", "agents", rel)), "## Multi-agent coordination"
+    end
+    refute File.exist?(File.join(@dir, "AGENTS.md"))
+  end
+
+  # An older maf made the links but did not exclude them. maf update excludes them.
+  def test_an_existing_link_is_excluded_on_update
+    system("git", "init", "-q", @dir, exception: true)
+    FileUtils.mkdir_p(File.join(@dir, ".claude", "agents"))
+    File.write(File.join(@dir, ".claude", "agents", "mine.md"), "mine")
+    flow("--agent", "claude:architect")
+    LocalExclude.remove(@dir)
+
+    flow("--agent", "claude:architect")
+
+    assert_includes LocalExclude.listed(File.join(@dir, ".git", "info", "exclude")), ".claude/agents/architect.md"
+  end
+
+  # Nothing of the flow goes into git: each harness link is excluded in this clone.
+  def test_the_harness_links_are_excluded_locally
+    system("git", "init", "-q", @dir, exception: true)
+    flow("--agent", "opencode:tester", "--agent", "codex:architect")
+
+    listed = LocalExclude.listed(File.join(@dir, ".git", "info", "exclude"))
+    assert_includes listed, ".opencode/agents"
+    assert_includes listed, ".codex/prompts"
+    assert_includes listed, ".codex/hooks.json"
+  end
+
   def test_opencode_role_file_allows_the_directories_outside_the_worktree
     flow("--agent", "opencode:tester")
 
@@ -495,7 +471,7 @@ class FlowTest < InstallerTestCase
     out, status = run_ruby(*FLOW, "--project", @dir, "--agent", "claude:backend-developer")
 
     assert_equal 0, status, out
-    settings = JSON.parse(File.read(File.join(@dir, ".claude", "settings.json")))
+    settings = JSON.parse(File.read(File.join(@dir, ".maf", "claude", "settings.json")))
     commands = settings["hooks"]["SessionStart"].map { |entry| entry["hooks"][0]["command"] }
     assert_includes commands, "ruby .maf/coordination/harness-hooks/board-watch.rb"
   end
@@ -732,6 +708,22 @@ class SetupAgentTest < Minitest::Test
         Dir.chdir(dir) { SetupAgent::Launcher::Codex.launch("tester", "tester-1", nil) }
       end
       assert_equal ["--add-dir", File.join(File.realpath(dir), ".maf", "coordination")], calls.first[1, 2]
+    end
+  end
+
+  # The project's harness config stays as it is. The flow passes its own files at the start.
+  def test_claude_launch_passes_the_settings_and_the_mcp_config_of_the_flow
+    calls = []
+    Dir.mktmpdir do |dir|
+      %w[claude/settings.json mcp/claude.json].each do |rel|
+        FileUtils.mkdir_p(File.dirname(File.join(dir, ".maf", rel)))
+        File.write(File.join(dir, ".maf", rel), "{}")
+      end
+      launch = -> { Dir.chdir(dir) { SetupAgent::Launcher::Claude.launch("tester", "t", nil) } }
+      with_exec_stub(->(cmd) { calls << cmd }, &launch)
+      flow = File.join(File.realpath(dir), ".maf")
+      expected = ["--settings", "#{flow}/claude/settings.json", "--mcp-config", "#{flow}/mcp/claude.json"]
+      assert_equal expected, calls.first[1, 4]
     end
   end
 

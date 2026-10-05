@@ -11,10 +11,13 @@ module SetupAgent
       copy(dir, "board-watch-opencode.js", ".opencode/plugins/board-watch.js") if harness == "opencode"
     end
 
+    # Claude Code reads the hooks from the settings file of the main project
+    # (`maf start` passes it with --settings). The hook commands run in the
+    # worktree, where the copies above live.
     def self.configure(dir, harness)
-      project = Bootstrap::Project.new(dir, false)
-      settings = File.join(dir, ".claude/settings.json")
-      Bootstrap::ClaudeSettings.new(project).configure(settings) if harness == "claude"
+      root = Project.root
+      settings = File.join(root, Bootstrap::CLAUDE_SETTINGS)
+      Bootstrap::ClaudeSettings.new(Bootstrap::Project.new(root, false)).configure(settings) if harness == "claude"
       Flow::CodexHooks.new(dir).install if harness == "codex"
     end
 

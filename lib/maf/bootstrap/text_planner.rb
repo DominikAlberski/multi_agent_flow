@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
 module Bootstrap
-  # TextPlanner plans the taskrc, AGENTS.md, and .gitignore changes.
+  # TextPlanner plans the taskrc and the local git excludes. The flow never
+  # writes into a file that git tracks: it is a tool, not a part of the project.
   class TextPlanner
     def initialize(project)
       @project = project
@@ -14,22 +15,13 @@ module Bootstrap
       @project.action(status, file, label)
     end
 
-    # Claude Code reads AGENTS.md only when the project has no CLAUDE.md.
-    # Move each CLAUDE.md into AGENTS.md, so every harness reads one file.
-    def claude_md
-      CLAUDE_MD_FILES.map { |name| @project.path(name) }.select { |file| File.file?(file) }
-                     .map { |file| @project.action(:move_claude_md, file, "#{file} (move into AGENTS.md)") }
-    end
+    # .git/info/exclude hides the flow from git in this clone only.
+    def exclude
+      file = LocalExclude.exclude_path(@project.target)
+      return [] unless file
 
-    # AGENTS.md is the only instruction file. Every harness reads it.
-    def contracts
-      file = @project.path("AGENTS.md")
-      [@project.action(block_status(file, :contract), file, "#{file} (agent contract)", :contract)]
-    end
-
-    def gitignore
-      file = @project.path(".gitignore")
-      @project.action(block_status(file, :gitignore), file, "#{file} (ignore rules)", :gitignore)
+      status = (EXCLUDED - LocalExclude.listed(file)).empty? ? :skip : :local_exclude
+      [@project.action(status, file, "#{file} (local git excludes)")]
     end
 
     private
@@ -43,15 +35,6 @@ module Bootstrap
       return :refuse unless @project.ours?(file, MARKER)
 
       File.read(file).match?(/^data\.location=/) ? :skip : :upgrade_taskrc
-    end
-
-    # A marked block is owned by this tool. When the shipped block changed
-    # (new ignore rules, new commands in the contract), replace the old block
-    # in place so existing installs pick it up. Text outside the block stays.
-    def block_status(file, source)
-      return :append unless @project.marked?(file)
-
-      MarkedBlock.new(File.read(file)).current?(@project.append_content(source)) ? :skip : :replace
     end
   end
 end

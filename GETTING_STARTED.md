@@ -115,15 +115,15 @@ Use `maf roles` to see all roles. Each argument is `HARNESS:ROLE`.
    Writes `.maf/env.sh`. The file puts `.maf/bin` on `PATH`.
 3. Creates `.maf/coordination/taskrc`: a project-local Taskwarrior config. Your
    global `~/.taskrc` is never touched; two projects never share one board.
-4. Appends the coordination contract to `AGENTS.md`.
-5. Adds ignore rules to `.gitignore`.
-6. Writes a role file per agent into `.maf/agents/<harness>/`. The folders of the
-   harnesses (`.claude/agents/`, `.opencode/agents/`, `.codex/prompts/`) are
-   symlinks to them. Writes the `.maf/config.json` manifest.
+4. Lists `.maf/` and each link that it creates in `.git/info/exclude`. That file
+   is local to your clone, so nothing of the flow goes into git.
+5. Writes a role file per agent into `.maf/agents/<harness>/`. Each role file ends
+   with the coordination contract. The folders of the harnesses
+   (`.claude/agents/`, `.opencode/agents/`, `.codex/prompts/`) are symlinks to
+   them. Writes the `.maf/config.json` manifest.
 
-The project root keeps `.maf/` and `AGENTS.md`. A few files must stay where
-their tool reads them (`.gitignore`, `.claude/settings.json`, the git hooks).
-See the project layout in [README.md](README.md).
+maf does not change `AGENTS.md`, `CLAUDE.md`, `.gitignore`, `.mcp.json`,
+`opencode.json`, or `.claude/settings.json`. See the project layout in [README.md](README.md).
 
 `maf add` is idempotent. Run it again at any time; it skips work already
 done. It keeps the current agents, so give only the new ones.
@@ -145,16 +145,11 @@ coord status
 
 ---
 
-## 6. Commit the installed files
+## 6. Nothing to commit
 
-Each agent works in its own git worktree. A worktree contains only committed
-files, so commit before starting any agent.
-
-```sh
-cd /path/to/your/project
-git add .maf AGENTS.md .gitignore .claude .opencode .codex
-git commit -m "Add multi-agent flow"
-```
+maf is a tool, not a part of the project, so `git status` shows no maf file.
+Each agent works in its own git worktree, and maf copies its files into each one.
+The project needs at least one commit, because a worktree starts from a commit.
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: multi-agent-flow
-description: Use when setting up or running multiple coding agents (opencode, Claude Code, Hermes, Codex) on one project and they need shared task state, messaging, resource locks, and a shared knowledge base. Installs a Taskwarrior-backed `coord` CLI, a .maf/coordination/ directory, an agent contract, and a graphify/Obsidian knowledge base into a target project.
+description: Use when setting up or running multiple coding agents (opencode, Claude Code, Hermes, Codex) on one project and they need shared task state, messaging, resource locks, and a shared knowledge base. Installs a Taskwarrior-backed `coord` CLI, a .maf/coordination/ directory, a coordination contract in each role file, and a graphify/Obsidian knowledge base. Nothing of it goes into the project's git.
 ---
 
 # Multi-agent flow
@@ -53,6 +53,10 @@ maf add opencode:tester                             # add one more agent later
 maf remove opencode:tester                          # remove an agent
 maf agents                                          # list the current agents
 maf update                                          # regenerate the current agents
+maf prepare claude reviewer_2 --dispatch            # add a worker (the architect is dispatched by default)
+maf worker restart reviewer_2                       # status|stop|start|restart one worker
+maf retire reviewer_2                               # remove a worker
+maf untrack                                         # remove an older install from git
 maf                                                 # interactive menu (in a terminal)
 ```
 
@@ -69,16 +73,16 @@ It creates and never destroys:
 - `.maf/coordination/taskrc`: a project-local Taskwarrior config (own database,
   under `.maf/coordination/taskdata`) plus the UDA block — never the user's
   global `~/.taskrc`, so two projects never share one board
-- a "Multi-agent coordination" contract appended to `AGENTS.md`, the only
-  instruction file; `maf add` moves the text of an existing `CLAUDE.md` or
-  `.claude/CLAUDE.md` into `AGENTS.md` and deletes that file, because Claude
-  Code reads `AGENTS.md` only when no `CLAUDE.md` exists
-- `.gitignore` entries (marker-guarded)
+- the "Multi-agent coordination" contract at the end of each role file; the
+  project's `AGENTS.md` and `CLAUDE.md` stay as they are
+- a marked block in `.git/info/exclude` that lists `.maf/` and each link maf
+  creates: the flow is a tool, not a part of the project, so nothing of it goes
+  into git, and the code, the decisions, and `GLOSSARY.md` stay after `maf uninstall`
 
 Re-running is safe: the installer is idempotent. It compares file contents and
 checks marker blocks, so it skips anything already present, updates `coord` only
-when it changed, and never duplicates the contract, `.gitignore`, or `.taskrc`
-blocks. Dependencies are detected, not blindly installed. If it finds an
+when it changed, and never duplicates the exclude or `.taskrc` blocks. An install
+of an older maf version that git tracks moves to this layout with `maf untrack`. Dependencies are detected, not blindly installed. If it finds an
 older, global `~/.taskrc` install, it prints a one-time migration note instead
 of silently stranding those tasks.
 
@@ -149,19 +153,20 @@ an updated script needs a new approval.
 
 ## How agents use it
 
-Set `COORD_ROLE` so messages and locks are attributed:
+Set `COORD_ROLE` and `COORD_WORKER` so claims, messages, and locks are attributed:
 
 ```sh
-export COORD_ROLE=local
-coord claim <id> local
+export COORD_ROLE=local COORD_WORKER=local-1
+coord claim <id>
 coord annotate <id> "working on it"
 coord msg --from local deepseek "review test/foo.rb when free"
 coord inbox local
 coord done <id>
 ```
 
-Commands: `init, add, claim, unclaim, done, annotate, msg, inbox, lock, unlock,
-with-lock, worktree, status, board, export`.
+Main commands: `next, show, claim, start-task, annotate, done, msg, inbox,
+escalate, goal, land, with-lock, status, who, log`. Run `coord help` for all
+commands and flags.
 
 A claim idle past `COORD_LEASE_TTL` seconds (default 4 hours) is treated as
 abandoned: `next`/`claim` reclaim it without `--force`. Use `coord unclaim`
@@ -205,19 +210,19 @@ watcher, with its pid in `.maf/coordination/vault.pid` and its output in
   `graphify query "..." --budget 800 --graph "$COORD_DIR/../graphify-out/graph.json"`).
   A missing or stale graph goes into the report. `vault age` shows the graph age:
   the commits since the build. `coord status` and the dashboard show it too.
-- `maf add` writes the MCP server into `.mcp.json` (Claude Code) and `opencode.json`
-  (opencode). For Codex and Hermes, it prints the command that adds the server.
+- `maf add` writes the MCP server into `.maf/mcp/` (Claude Code and opencode); `maf start`
+  passes the file. For Codex and Hermes, it prints the command that adds the server.
   Set `"mcp": false` in `.maf/config.json` to turn this off.
 - The graph holds code knowledge. Plans and specs use artifacts, not the graph.
 - `.maf/obsidian/` is the human-facing Obsidian base (graph notes, canvas). It is
-  regenerated and gitignored — durable decisions belong in the decisions folder
+  regenerated and excluded from git — durable decisions belong in the decisions folder
   (`.agent/decisions/` if it exists, else `docs/decisions/`),
   not here.
 - `coord board` regenerates `.maf/coordination/exports/board.md`. It is not part
   of the graphify export and is outside `.maf/obsidian/`. Open `.maf/coordination/exports/`
   as a second vault, or open the project root as the vault to see both.
 
-## Operating rules (also written into the project contract)
+## Operating rules (also in the contract of each role file)
 
 Automatic hooks require a session that `maf start` registers.
 Coordination environment variables alone do not activate hooks.
@@ -231,7 +236,7 @@ Restart workers with `maf start` after the update.
    one, and the git `pre-commit` guard refuses their commits.
 2. Work in a per-agent branch or git worktree (`coord worktree ROLE`, or
    `maf start HARNESS ROLE` which also does this). Worktrees live inside the
-   project at `.maf/worktrees/<role>-<worker_id>` (gitignored). In the worktree,
+   project at `.maf/worktrees/<role>-<worker_id>` (excluded from git). In the worktree,
    run `source .maf/env.sh` so `COORD_DIR`/`TASKRC` point at the main project
    and every worktree shares one .maf/coordination/ dir and board.
 3. Acquire the `ollama` lock before any local generation.

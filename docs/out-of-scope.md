@@ -56,7 +56,7 @@ A task that does not exist cannot be claimed, so no dependency field is needed.
 Decided: 2026-10-01.
 Source: design discussion for the workflow fragment.
 The coordination state lives in `.maf/coordination/` and is not committed.
-A durable artifact is committed on the goal branch by the architect.
+A durable artifact is committed on the goal branch by a worker that can edit files.
 
 ## A second ADR folder (`docs/adr/`)
 

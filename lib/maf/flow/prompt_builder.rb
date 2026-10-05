@@ -9,15 +9,16 @@ module Flow
       @workflow = workflow
     end
 
-    def build(harness, role, data)
-      case role
-      when "project-manager" then project_manager_prompt(data)
-      when "architect" then architect_prompt(harness, data)
-      else worker_prompt(harness, role, data)
-      end
-    end
+    def build(harness, role, data) = "#{role_prompt(harness, role, data).rstrip}\n\n#{CONTRACT}\n"
 
     private
+
+    def role_prompt(harness, role, data)
+      return project_manager_prompt(data) if role == "project-manager"
+      return architect_prompt(harness, data) if role == "architect"
+
+      worker_prompt(harness, role, data)
+    end
 
     def worker_prompt(harness, role, data)
       loop_text = format(WORKER_LOOP, role: role, no_task_instruction: no_task_line(harness))

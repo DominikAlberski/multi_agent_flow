@@ -59,31 +59,42 @@ The flow keeps every file that it owns in one folder, `.maf/`, in the project.
   graphify-out/   knowledge graph
   obsidian/       generated Obsidian vault
   agents/         role files: claude/, opencode/, codex/
+  claude/         settings.json: the Claude Code hooks (maf start passes --settings)
+  mcp/            the graphify MCP server for Claude Code and opencode
   config.json     the agents and settings of the project
   roles.yml       project roles (you write it; maf role add NAME)
   workflow.md     stage instructions for the architect (you write it)
   env.sh          source it: puts .maf/bin on PATH
 ```
 
-The project root keeps `.maf/` and `AGENTS.md`. `GLOSSARY.md` (the domain glossary) and the
-decisions folder join them when the first term or decision resolves. These files must stay where
-their tool reads them:
+maf is a tool, not a part of the project. Nothing that runs maf goes into git:
+`.maf/` and each link and plugin that maf creates are listed in `.git/info/exclude`,
+which is local to the clone. maf never edits a file that the project tracks.
+
+The project keeps what the agents make, also after `maf uninstall`:
+
+| Path | What it is |
+|---|---|
+| the code | The work of the agents, landed on the goal branches. |
+| `GLOSSARY.md` | The domain glossary. The project manager drafts it. A worker commits it on the architect's task. |
+| `docs/decisions/` | ADRs. The architect decides them. A worker commits them. |
+
+Local files that a harness or git reads outside `.maf/`:
 
 | Path | Reason |
 |---|---|
-| `AGENTS.md` | Every harness reads the contract there. |
-| `GLOSSARY.md` | The domain glossary. The project manager drafts it. A worker commits it on the architect's task. |
-| `docs/decisions/` | ADRs. The architect decides them. A worker commits them. |
-| `.gitignore` | Git reads it there. |
 | `.git/hooks/*` | Git reads them there. |
-| `.claude/settings.json` | Claude Code reads it there. |
+| `.git/info/exclude` | Keeps the flow out of git in this clone. |
+| `.claude/agents/`, `.opencode/agents/`, `.codex/prompts/` | Symlinks into `.maf/agents/<harness>/`. |
 | `.opencode/plugins/board-watch.js` | opencode reads it there. |
-| `.mcp.json` | Claude Code reads the MCP servers there. |
-| `opencode.json` | opencode reads the MCP servers there. |
+| `.codex/hooks.json` | Codex reads it there. Excluded when the project does not track it. |
 | `~/.hermes/skills/<project>-<role>/SKILL.md` | Hermes reads it there. |
 
-`.claude/agents/`, `.opencode/agents/`, and `.codex/prompts/` are relative
-symlinks into `.maf/agents/<harness>/`. Git tracks the symlinks.
+Claude Code gets the hooks from `.maf/claude/settings.json` (`--settings`) and the
+graphify MCP server from `.maf/mcp/claude.json` (`--mcp-config`). opencode gets the
+server from `.maf/mcp/opencode.json` (`OPENCODE_CONFIG`). `maf start` and the
+dispatcher pass these files. The project's `.claude/settings.json`, `.mcp.json`,
+`opencode.json`, `AGENTS.md`, and `CLAUDE.md` stay as they are.
 
 MAF installs Codex hooks in the project `.codex/hooks.json` file.
 Hooks act only on sessions that `maf start` registers.
@@ -133,11 +144,16 @@ multi_agent_flow/
     setup_agent.rb            # maf start: worktree + harness launch
     uninstall.rb              # removes the flow from a project; keeps .maf/graphify-out/ and .maf/obsidian/
     migrate.rb                # maf migrate: moves an old-layout install into .maf/
+    team.rb                   # maf prepare: adds or replaces one worker
+    retire.rb                 # maf retire: removes one worker and archives its state
+    worker_control.rb         # maf worker: stops, starts, or restarts one worker
     flow/role_catalog.rb      # merges .maf/roles.yml over the built-in roles
     flow/workflow.rb          # reads .maf/workflow.md for the architect prompt
-    flow/mcp_config.rb        # writes the graphify MCP server into .mcp.json and opencode.json
+    flow/mcp_config.rb        # writes the graphify MCP server into .maf/mcp/
+    untrack.rb                # maf untrack: removes an older install from git
+    local_exclude.rb          # the flow block in .git/info/exclude
   scripts/
-    check.rb                  # repo consistency check (UDA sync, marker blocks, worktree formula)
+    check.rb                  # repo consistency check (UDA sync, markers, shared literals, worktree formula)
   templates/
     roles.yml                 # role definitions + model hints
     role-stub.yml.erb         # stub that maf role add writes
@@ -150,14 +166,13 @@ multi_agent_flow/
     coord                     # coordination CLI (Ruby)
     dispatcher                # polls task board + inbox, starts one-shot agents (Ruby)
     vault                     # graphify + Obsidian + MCP watcher control, graph age (Ruby)
-    dashboard                 # web dashboard: stuck-detection UI (Ruby/Sinatra)
+    dashboard                 # web dashboard: workers table with actions, alerts, board (Ruby/WEBrick)
     doc-graph-refresh         # graphify rebuild runner called by the git hooks (Ruby)
     env.sh                    # shell environment: .maf/bin on PATH (installed as .maf/env.sh)
     git-hooks/                # pre-commit guard, post-commit/post-merge refresh blocks
     taskrc.append             # Taskwarrior UDA block
-    agents-contract.md        # contract appended to AGENTS.md
-    gitignore.append          # marker-guarded ignore entries
-    harness-hooks/            # next-task + board-watch scripts and the opencode plugin
+    agents-contract.md        # coordination contract at the end of each role prompt
+    harness-hooks/            # next-task, board-watch, and context-watch scripts, and the opencode plugin
   test/
     coord_test.rb             # behavioral tests for the coord CLI
     installer_test.rb         # tests for bootstrap.rb, flow.rb, setup_agent.rb
@@ -170,6 +185,12 @@ multi_agent_flow/
     graph_age_test.rb         # tests for vault age and the graph prompt rules
     mcp_test.rb               # tests for the MCP server wiring
     doc_graph_refresh_test.rb # tests for the doc-graph refresh script
+    board_watch_test.rb       # tests for the board watcher
+    context_watch_test.rb     # tests for the context-watch hook
+    hook_session_test.rb      # tests for session isolation
+    hook_config_test.rb       # tests for project hooks
+    worker_control_test.rb    # tests for maf worker
+    untrack_test.rb           # tests for maf untrack
 ```
 
 ---
@@ -216,9 +237,11 @@ After editing the UDA block or the worktree-path formula:
 ruby scripts/check.rb
 ```
 
-Verifies: UDA block in `assets/coord` matches `assets/taskrc.append`; marker
-blocks are present in all generated files; worktree path formula is identical in
-`assets/coord` and `lib/maf/setup_agent.rb`.
+Verifies: the UDA block in `assets/coord` matches `assets/taskrc.append`; the
+markers are present; the worktree path formula is identical in `assets/coord`
+and `lib/maf/setup_agent/worktree.rb`; each script carries its signature; and the
+literals that the standalone scripts share (lead roles, read-only toolsets,
+the report format, the presence start time) are identical.
 
 An agent session exports `TASKRC` and `COORD_DIR` for the shared board. Unset
 them before the tests, so a test never writes to that board:
@@ -240,6 +263,11 @@ ruby test/dashboard_test.rb  # covers the dashboard data
 ruby test/doc_graph_refresh_test.rb  # covers the doc-graph refresh
 ruby test/hook_session_test.rb       # covers session isolation
 ruby test/hook_config_test.rb        # covers project hooks and legacy hook removal
+ruby test/dispatcher_test.rb         # covers the dispatcher
+ruby test/board_watch_test.rb        # covers the board watcher
+ruby test/context_watch_test.rb      # covers the context-watch hook
+ruby test/worker_control_test.rb     # covers maf worker
+ruby test/untrack_test.rb            # covers maf untrack
 ```
 
 Minitest, stdlib only. Tests that require `task` or `git` skip (exit 0) when
@@ -261,7 +289,7 @@ those tools are absent. If wiring into CI, install both to get full coverage.
   it becomes claimable again without `--force`. `coord unclaim` releases one on
   demand.
 - **Worktrees live inside the project** at `.maf/worktrees/<role>-<worker_id>`.
-  `.maf/worktrees/` is gitignored. In each worktree, run `source .maf/env.sh` so
+  `.maf/worktrees/` is excluded from git. In each worktree, run `source .maf/env.sh` so
   `COORD_DIR` and `TASKRC` point at the main project; every worktree shares one
   `.maf/coordination/` dir and one task board.
 - **Scope overlap** is checked on `coord add` (warning) and `coord conflicts`

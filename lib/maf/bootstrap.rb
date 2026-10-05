@@ -56,14 +56,19 @@ module Bootstrap
     end
   ].freeze
 
-  # Project instruction files that stop Claude Code from reading AGENTS.md.
-  CLAUDE_MD_FILES = ["CLAUDE.md", File.join(".claude", "CLAUDE.md")].freeze
+  # The paths that every install excludes from git. AgentLinks and CodexHooks
+  # add the harness paths they create.
+  EXCLUDED = [".maf/", OPENCODE_PLUGIN].freeze
+
+  # The Claude Code settings of the flow. `maf start` passes them with --settings,
+  # so the project's .claude/settings.json stays as it is.
+  CLAUDE_SETTINGS = File.join(MAF_DIR, "claude", "settings.json")
 
   # Maps each writing action kind to the Installer method that performs it.
   # Every writer takes (path, source). :skip and :refuse write nothing.
   WRITERS = { mkdir: :make_dir, touch: :touch_file, create: :write_script, update: :write_script,
               create_taskrc: :write_taskrc, upgrade_taskrc: :upgrade_taskrc,
-              append: :append_marked, replace: :replace_marked, move_claude_md: :move_claude_md,
+              local_exclude: :write_exclude,
               configure_claude_hook: :configure_claude_settings, merge_hook: :merge_hook }.freeze
 
   REQUIRED_DEPS = {
@@ -122,6 +127,7 @@ module Bootstrap
   end
 end
 
+require_relative "local_exclude"
 require_relative "bootstrap/marked_block"
 require_relative "bootstrap/options"
 require_relative "bootstrap/dependencies"

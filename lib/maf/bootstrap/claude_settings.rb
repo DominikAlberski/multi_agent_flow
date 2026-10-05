@@ -1,17 +1,16 @@
 # frozen_string_literal: true
 
 module Bootstrap
-  # ClaudeSettings plans and applies the Claude Code hooks in
-  # .claude/settings.json. The hooks are installed only if .claude/ exists.
+  # ClaudeSettings plans and applies the Claude Code hooks in the settings
+  # file of the flow, .maf/claude/settings.json. `maf start` passes the file
+  # with --settings. Claude Code runs these hooks next to the project's own.
   class ClaudeSettings
     def initialize(project)
       @project = project
     end
 
     def plan
-      return [] unless Dir.exist?(@project.path(".claude"))
-
-      file = @project.path(".claude", "settings.json")
+      file = @project.path(CLAUDE_SETTINGS)
       [@project.action(status(file), file, "#{file} (next-task + board-watch hooks)", :claude_stop_hook)]
     end
 

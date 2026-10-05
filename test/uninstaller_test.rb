@@ -13,6 +13,7 @@ require "fileutils"
 require "json"
 require "open3"
 require "rbconfig"
+require_relative "../lib/maf/local_exclude"
 
 ROOT = File.expand_path("..", __dir__)
 LIB = File.join(ROOT, "lib", "maf")
@@ -87,7 +88,9 @@ class UninstallRemovesTest < UninstallerTestCase
     refute File.exist?(path(".opencode", "plugins", "board-watch.js"))
   end
 
-  def test_keeps_graphify_and_obsidian_and_their_ignore_rules
+  # The graph and the vault stay, and git keeps ignoring them in this clone.
+  def test_keeps_graphify_and_obsidian_and_their_local_excludes
+    system("git", "init", "-q", @dir, exception: true)
     install
     write(".maf/graphify-out/graph.json", "{}")
     write(".maf/obsidian/note.md", "note")
@@ -96,8 +99,9 @@ class UninstallRemovesTest < UninstallerTestCase
 
     assert File.exist?(path(".maf", "graphify-out", "graph.json"))
     assert File.exist?(path(".maf", "obsidian", "note.md"))
-    assert_equal ".maf/graphify-out/\n.maf/obsidian/\n", File.read(path(".gitignore"))
+    assert_equal [".maf/graphify-out/", ".maf/obsidian/"], LocalExclude.listed(path(".git", "info", "exclude"))
     assert_equal %w[graphify-out obsidian], Dir.children(path(".maf")).sort
+    refute File.exist?(path(".gitignore"))
   end
 
   def test_keeps_user_text_outside_the_marked_blocks
