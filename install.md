@@ -134,8 +134,8 @@ Preview first. This writes nothing.
 maf add claude:project-manager claude:architect \
   opencode:backend-developer opencode:frontend-developer \
   codex:reviewer hermes:tester \
-  --model project-manager=anthropic/claude-opus-4-6 \
-  --model architect=anthropic/claude-opus-4-6 \
+  --model project-manager=claude-opus-5-5 \
+  --model architect=claude-opus-5-5 \
   --check
 ```
 
@@ -248,6 +248,9 @@ Then give the user these instructions.
 >
 >     maf start hermes tester --dispatch
 >
+> The architect never talks to the user. Run it with `--dispatch` unless the
+> user wants to watch it: `maf start claude architect --dispatch`.
+>
 > This creates (or reuses) a worktree at `.maf/worktrees/<role>-<worker_id>`,
 > sets `COORD_ROLE` and `COORD_WORKER`, and launches the harness there with
 > its role loaded. To run several instances of one role, add a worker suffix:
@@ -269,7 +272,8 @@ Then give the user these instructions.
 
 Do not create `GLOSSARY.md` at install time. The project has no terms yet.
 The project manager creates the first draft when the first term resolves.
-The architect commits `GLOSSARY.md` on the goal branch. Tell the user this in the report of Step 7.
+The architect owns `GLOSSARY.md`. A worker that can edit files commits it on the goal branch.
+Tell the user this in the report of Step 7.
 Do not add a `GLOSSARY-MAP.md` unless the project has more than one bounded context.
 ADRs use the decisions folder: `.agent/decisions/` if it exists, else `docs/decisions/`.
 
@@ -285,7 +289,7 @@ ADRs use the decisions folder: `.agent/decisions/` if it exists, else `docs/deci
   `coord with-lock ollama -- <command>`.
 - Give each agent its own worktree so file changes never collide:
   `coord worktree <role>` creates `.maf/worktrees/<role>-<worker_id>` (inside the
-  project, gitignored) on branch `worker/<role>-<worker_id>`. In that worktree
+  project, excluded from git) on branch `worker/<role>-<worker_id>`. In that worktree
   run `source .maf/env.sh` first; it points `COORD_DIR` and `TASKRC` at the
   main project, so every worktree shares one .maf/coordination/ dir and one task
   board. `maf start` does all of this for you.

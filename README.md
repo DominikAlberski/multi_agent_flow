@@ -59,6 +59,8 @@ The flow keeps every file that it owns in one folder, `.maf/`, in the project.
   graphify-out/   knowledge graph
   obsidian/       generated Obsidian vault
   agents/         role files: claude/, opencode/, codex/
+  claude/         settings.json: the Claude Code hooks (maf start passes --settings)
+  mcp/            the graphify MCP server for Claude Code and opencode
   config.json     the agents and settings of the project
   roles.yml       project roles (you write it; maf role add NAME)
   workflow.md     stage instructions for the architect (you write it)
@@ -142,13 +144,16 @@ multi_agent_flow/
     setup_agent.rb            # maf start: worktree + harness launch
     uninstall.rb              # removes the flow from a project; keeps .maf/graphify-out/ and .maf/obsidian/
     migrate.rb                # maf migrate: moves an old-layout install into .maf/
+    team.rb                   # maf prepare: adds or replaces one worker
+    retire.rb                 # maf retire: removes one worker and archives its state
+    worker_control.rb         # maf worker: stops, starts, or restarts one worker
     flow/role_catalog.rb      # merges .maf/roles.yml over the built-in roles
     flow/workflow.rb          # reads .maf/workflow.md for the architect prompt
     flow/mcp_config.rb        # writes the graphify MCP server into .maf/mcp/
     untrack.rb                # maf untrack: removes an older install from git
     local_exclude.rb          # the flow block in .git/info/exclude
   scripts/
-    check.rb                  # repo consistency check (UDA sync, marker blocks, worktree formula)
+    check.rb                  # repo consistency check (UDA sync, markers, shared literals, worktree formula)
   templates/
     roles.yml                 # role definitions + model hints
     role-stub.yml.erb         # stub that maf role add writes
@@ -161,13 +166,13 @@ multi_agent_flow/
     coord                     # coordination CLI (Ruby)
     dispatcher                # polls task board + inbox, starts one-shot agents (Ruby)
     vault                     # graphify + Obsidian + MCP watcher control, graph age (Ruby)
-    dashboard                 # web dashboard: stuck-detection UI (Ruby/Sinatra)
+    dashboard                 # web dashboard: workers table with actions, alerts, board (Ruby/WEBrick)
     doc-graph-refresh         # graphify rebuild runner called by the git hooks (Ruby)
     env.sh                    # shell environment: .maf/bin on PATH (installed as .maf/env.sh)
     git-hooks/                # pre-commit guard, post-commit/post-merge refresh blocks
     taskrc.append             # Taskwarrior UDA block
     agents-contract.md        # coordination contract at the end of each role prompt
-    harness-hooks/            # next-task + board-watch scripts and the opencode plugin
+    harness-hooks/            # next-task, board-watch, and context-watch scripts, and the opencode plugin
   test/
     coord_test.rb             # behavioral tests for the coord CLI
     installer_test.rb         # tests for bootstrap.rb, flow.rb, setup_agent.rb
@@ -180,6 +185,12 @@ multi_agent_flow/
     graph_age_test.rb         # tests for vault age and the graph prompt rules
     mcp_test.rb               # tests for the MCP server wiring
     doc_graph_refresh_test.rb # tests for the doc-graph refresh script
+    board_watch_test.rb       # tests for the board watcher
+    context_watch_test.rb     # tests for the context-watch hook
+    hook_session_test.rb      # tests for session isolation
+    hook_config_test.rb       # tests for project hooks
+    worker_control_test.rb    # tests for maf worker
+    untrack_test.rb           # tests for maf untrack
 ```
 
 ---
@@ -226,9 +237,11 @@ After editing the UDA block or the worktree-path formula:
 ruby scripts/check.rb
 ```
 
-Verifies: UDA block in `assets/coord` matches `assets/taskrc.append`; marker
-blocks are present in all generated files; worktree path formula is identical in
-`assets/coord` and `lib/maf/setup_agent.rb`.
+Verifies: the UDA block in `assets/coord` matches `assets/taskrc.append`; the
+markers are present; the worktree path formula is identical in `assets/coord`
+and `lib/maf/setup_agent/worktree.rb`; each script carries its signature; and the
+literals that the standalone scripts share (lead roles, read-only toolsets,
+the report format, the presence start time) are identical.
 
 An agent session exports `TASKRC` and `COORD_DIR` for the shared board. Unset
 them before the tests, so a test never writes to that board:
@@ -250,6 +263,11 @@ ruby test/dashboard_test.rb  # covers the dashboard data
 ruby test/doc_graph_refresh_test.rb  # covers the doc-graph refresh
 ruby test/hook_session_test.rb       # covers session isolation
 ruby test/hook_config_test.rb        # covers project hooks and legacy hook removal
+ruby test/dispatcher_test.rb         # covers the dispatcher
+ruby test/board_watch_test.rb        # covers the board watcher
+ruby test/context_watch_test.rb      # covers the context-watch hook
+ruby test/worker_control_test.rb     # covers maf worker
+ruby test/untrack_test.rb            # covers maf untrack
 ```
 
 Minitest, stdlib only. Tests that require `task` or `git` skip (exit 0) when

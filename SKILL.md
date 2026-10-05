@@ -53,6 +53,10 @@ maf add opencode:tester                             # add one more agent later
 maf remove opencode:tester                          # remove an agent
 maf agents                                          # list the current agents
 maf update                                          # regenerate the current agents
+maf prepare claude reviewer_2 --dispatch            # add a worker (the architect is dispatched by default)
+maf worker restart reviewer_2                       # status|stop|start|restart one worker
+maf retire reviewer_2                               # remove a worker
+maf untrack                                         # remove an older install from git
 maf                                                 # interactive menu (in a terminal)
 ```
 
@@ -149,19 +153,20 @@ an updated script needs a new approval.
 
 ## How agents use it
 
-Set `COORD_ROLE` so messages and locks are attributed:
+Set `COORD_ROLE` and `COORD_WORKER` so claims, messages, and locks are attributed:
 
 ```sh
-export COORD_ROLE=local
-coord claim <id> local
+export COORD_ROLE=local COORD_WORKER=local-1
+coord claim <id>
 coord annotate <id> "working on it"
 coord msg --from local deepseek "review test/foo.rb when free"
 coord inbox local
 coord done <id>
 ```
 
-Commands: `init, add, claim, unclaim, done, annotate, msg, inbox, lock, unlock,
-with-lock, worktree, status, board, export`.
+Main commands: `next, show, claim, start-task, annotate, done, msg, inbox,
+escalate, goal, land, with-lock, status, who, log`. Run `coord help` for all
+commands and flags.
 
 A claim idle past `COORD_LEASE_TTL` seconds (default 4 hours) is treated as
 abandoned: `next`/`claim` reclaim it without `--force`. Use `coord unclaim`
@@ -210,7 +215,7 @@ watcher, with its pid in `.maf/coordination/vault.pid` and its output in
   Set `"mcp": false` in `.maf/config.json` to turn this off.
 - The graph holds code knowledge. Plans and specs use artifacts, not the graph.
 - `.maf/obsidian/` is the human-facing Obsidian base (graph notes, canvas). It is
-  regenerated and gitignored — durable decisions belong in the decisions folder
+  regenerated and excluded from git — durable decisions belong in the decisions folder
   (`.agent/decisions/` if it exists, else `docs/decisions/`),
   not here.
 - `coord board` regenerates `.maf/coordination/exports/board.md`. It is not part
@@ -231,7 +236,7 @@ Restart workers with `maf start` after the update.
    one, and the git `pre-commit` guard refuses their commits.
 2. Work in a per-agent branch or git worktree (`coord worktree ROLE`, or
    `maf start HARNESS ROLE` which also does this). Worktrees live inside the
-   project at `.maf/worktrees/<role>-<worker_id>` (gitignored). In the worktree,
+   project at `.maf/worktrees/<role>-<worker_id>` (excluded from git). In the worktree,
    run `source .maf/env.sh` so `COORD_DIR`/`TASKRC` point at the main project
    and every worktree shares one .maf/coordination/ dir and board.
 3. Acquire the `ollama` lock before any local generation.
