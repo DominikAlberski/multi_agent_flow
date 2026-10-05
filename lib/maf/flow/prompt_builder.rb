@@ -12,7 +12,7 @@ module Flow
     def build(harness, role, data)
       case role
       when "project-manager" then project_manager_prompt(data)
-      when "architect" then architect_prompt(data)
+      when "architect" then architect_prompt(harness, data)
       else worker_prompt(harness, role, data)
       end
     end
@@ -30,11 +30,14 @@ module Flow
       harness == "claude" ? NO_TASK_STOP : NO_TASK_WAIT
     end
 
-    def architect_prompt(data)
+    def architect_prompt(harness, data)
       loop_text = project_manager? ? ARCHITECT_LOOP_PM : ARCHITECT_LOOP_DIRECT
       "#{intro(data)} You do not implement code yourself.\n\n#{duties_block(data)}\n\n" \
-        "#{format(loop_text, roles: dispatch_roles_text)}#{workflow_block}"
+        "#{format(loop_text, roles: dispatch_roles_text)}#{claude_rule(harness)}#{workflow_block}"
     end
+
+    # The loop text ends with a newline, so the rule lands as the last rule line.
+    def claude_rule(harness) = harness == "claude" ? "#{CLAUDE_ARCHITECT_RULE}\n" : ""
 
     # The workflow goes into the orchestrator prompt only. Workers stay workflow-blind.
     def workflow_block = @workflow ? "\n\n#{@workflow}" : ""

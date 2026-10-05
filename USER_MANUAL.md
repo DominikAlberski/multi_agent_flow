@@ -1023,6 +1023,37 @@ nothing to move.
 
 ---
 
+## Board rules
+
+The agent contract in `AGENTS.md` holds only the rules that agents act on.
+This section holds the board details for the operator.
+
+- **Claim lease.** A claim with no activity for `COORD_LEASE_TTL` seconds (default 4 hours)
+  is free again. `coord next` and `coord claim` then treat the task as unclaimed.
+- **Claim steal.** `coord claim` refuses an active claim of another worker.
+  `coord claim --force` takes the task. The prior holder gets a message that names the new holder.
+- **Scope check.** `coord add` warns on stderr when a new scope overlaps a pending task.
+  `coord conflicts` lists all overlaps. The check is a path-prefix heuristic.
+  It understands `dir/**` and exact paths. It does not understand `{}` alternation or mid-path globs.
+- **Broadcast reach.** `coord broadcast` reaches each role that owns a pending task or is listed
+  in `.maf/config.json`, except the sender. `--to` selects `workers` (default), `leads`, or `all`.
+- **Read messages.** `coord inbox` moves a read message to `.maf/coordination/inbox/<agent>/read/`.
+  `--peek` keeps the message unread. `--all` includes read messages.
+- **Presence.** `maf start` records the session pid in `.maf/coordination/presence/`.
+  A dispatcher records its own pid. A worker is live while its pid runs.
+  If a receiver role has no live worker and no message hook, `coord msg` prints a warning.
+  The message waits until a session for that role starts.
+- **Read-only roles.** A role with `can_edit: false` gets a read-only tool grant where the harness supports one.
+- **Vault.** `vault` controls the graphify watcher. `vault status` and `vault stop` report or stop the watcher.
+  `vault export` regenerates the Obsidian vault one time. Agents never run `graphify export`.
+  The separate `graphify-mcp` process (`vault mcp`) serves MCP, not the watcher.
+- **Bounded contexts.** Add a `GLOSSARY-MAP.md` only if the project has more than one bounded context.
+- **Containerized agents.** An agent in a container (for example `coi`) needs `.maf/coordination/`,
+  `coord`, and `.maf/coordination/taskrc` mounted from the host.
+  Without a shared file system, the agent does not share state with the host or other agents.
+
+---
+
 ## Command reference
 
 | Command | What it does |
