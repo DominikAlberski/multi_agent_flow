@@ -708,14 +708,44 @@ watch -n 10 coord board
 `dashboard` starts a local server at `http://localhost:4567`. The page
 auto-refreshes every 5 seconds. It shows everything `coord status` shows, plus
 signals the kanban cannot: expired-lease claims (crashed workers), unread inbox
-messages, stale locks, orphaned tasks, and scope conflicts. The Workers panel lists
-each worker from `.maf/coordination/workers.json` with its harness, role, current task,
-and last event. Each declared role has a card, also without tasks.
+messages, stale locks, orphaned tasks, and scope conflicts. Each declared role has a
+card, also without tasks.
+
+The Workers table has one row per worker from `.maf/coordination/workers.json`:
+
+| Column | Source |
+|---|---|
+| Harness | The registry: the harness, and the mode (dispatch or interactive). |
+| Model | The model that the last run or turn used. Without status data: the model of the registry. |
+| State | `stopped` when the process is gone. A dispatched worker shows `run Nm` during a run, else `idle`. |
+| Context | The context size of the session, with a % of the window for Codex. `over limit` past the context limit. |
+| Task | The task that the worker claimed. |
+| Last run | A dispatched worker: success or failure, and the last dispatcher message. |
+| Tokens | Input, cached input, and output tokens, and the runs (dispatch) or turns (interactive). |
+| Actions | The buttons, and the last log lines of the dispatcher and of the last action. |
+
+The status comes from `.maf/coordination/status/<worker>.json`. The dispatcher and the
+`context-watch.rb` hook write it.
+
+Actions run `maf worker ACTION WORKER` in the background, in the project root:
+
+- A dispatched worker has `start`, `stop`, and `restart`. A stop waits until a running
+  agent finishes its run.
+- An interactive worker has `stop`. maf stops the session only when it is idle. The
+  row then shows the start command: `cd <worktree> && maf start`.
+- One action per worker runs at a time. The output goes to
+  `.maf/coordination/sessions/<worker>.control.log`.
+
+The server listens on 127.0.0.1 only. An action needs a token that changes at each
+server start, and a localhost Host header. So another web site cannot start an action.
 
 ```sh
-dashboard           # default port 4567
-dashboard --port N  # custom port
+dashboard             # default port 4567
+dashboard --port N    # custom port
+dashboard --maf PATH  # the maf command for actions (default: maf on PATH)
 ```
+
+From a terminal, use the same command: `maf worker status|stop|start|restart ROLE[_WORKER]`.
 
 ---
 
@@ -1094,6 +1124,7 @@ This section holds the board details for the operator.
 |---|---|
 | `maf prepare HARNESS ROLE[_WORKER] [--replace W]` | Prepare a worker: role file, worktree, registry. Prints the two start commands. |
 | `maf retire ROLE[_WORKER]` | Remove a worker. Stops its background dispatcher. Its claimed tasks return to the pool. |
+| `maf worker ACTION ROLE[_WORKER]` | Control one worker. ACTION is status, stop, start, or restart. Each action is idempotent. A dispatched worker starts again in the background. An idle interactive session stops; maf prints its start command. |
 | `maf team` | Show the budget, the workers, and the tasks by role. |
 | `maf team set --max N --allow HARNESS[:MODEL]` | Set the team budget in `.maf/config.json`. |
 | `maf start ... --dispatch --detach` | Start a dispatcher in the background. |

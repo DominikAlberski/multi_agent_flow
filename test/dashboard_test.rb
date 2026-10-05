@@ -117,3 +117,81 @@ class DashboardBoardCheckTest < Minitest::Test
     end
   end
 end
+
+# The workers table shows every fact about a worker in one row.
+class DashboardWorkerTest < Minitest::Test
+  def setup
+    @dir = Dir.mktmpdir("dashboard-worker")
+    @coord = File.join(@dir, ".maf", "coordination")
+    write("workers.json", "architect-1" => { "role" => "architect", "harness" => "claude", "dispatch" => true })
+  end
+
+  def teardown = FileUtils.remove_entry(@dir)
+
+  def write(name, data)
+    path = File.join(@coord, name)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, data.is_a?(String) ? data : JSON.generate(data))
+  end
+
+  def cfg(*argv) = Dashboard::Config.new(["--coord", @coord, *argv])
+  def worker = Dashboard::Collector.new(cfg).collect[:workers].first
+
+  def test_a_worker_row_holds_status_usage_log_and_last_action
+    write("status/architect-1.json", "model" => "claude-opus-5-5", "running" => true)
+    write("usage/architect-1.json", "input_tokens" => 10)
+    write("sessions/architect-1.log", "one\ntwo\n")
+    write("sessions/architect-1.control.log", "maf worker restart architect-1\n")
+
+    assert_equal "claude-opus-5-5", worker.dig("status", "model")
+    assert_equal 10, worker.dig("usage", "input_tokens")
+    assert_equal %w[one two], worker["log"]
+    assert_equal ["maf worker restart architect-1"], worker["action"]
+  end
+
+  def test_a_dead_pid_is_not_live
+    write("presence/architect-1.json", "pid" => 999_999, "started" => "x")
+
+    refute worker["live"]
+  end
+
+  def test_the_live_process_with_its_start_time_is_live
+    started = Dashboard::WorkerReader.new(cfg).send(:started_at, Process.pid)
+    write("presence/architect-1.json", "pid" => Process.pid, "started" => started)
+
+    assert worker["live"]
+  end
+
+  def test_an_action_runs_maf_worker_in_the_background
+    fake = File.join(@dir, "fake-maf")
+    File.write(fake, "#!/bin/sh\necho \"args: $@\"\n")
+    FileUtils.chmod(0o755, fake)
+
+    assert_nil Dashboard::ActionRunner.new(cfg("--maf", fake)).run("architect-1", "restart")
+    log = File.join(@coord, "sessions", "architect-1.control.log")
+    30.times { break if File.read(log).include?("args:") || !sleep(0.1) }
+    assert_includes File.read(log), "args: worker restart architect-1"
+  end
+
+  def test_an_action_refuses_an_unknown_worker_or_action
+    runner = Dashboard::ActionRunner.new(cfg)
+
+    assert_match(/unknown worker/, runner.run("ghost-1", "stop"))
+    assert_match(/unknown action/, runner.run("architect-1", "rm"))
+  end
+
+  Request = Struct.new(:request_method, :headers, :host) do
+    def [](name) = headers[name]
+  end
+
+  # Another web site in the browser must not start an action.
+  def test_an_action_needs_post_the_token_and_a_local_host
+    server = Dashboard::Server.new(cfg)
+    token = server.instance_variable_get(:@token)
+
+    assert_equal "use POST", server.send(:refusal, Request.new("GET", { "X-Maf-Token" => token }, "localhost"))
+    assert_equal "wrong token", server.send(:refusal, Request.new("POST", {}, "localhost"))
+    assert_equal "wrong host", server.send(:refusal, Request.new("POST", { "X-Maf-Token" => token }, "evil.example"))
+    assert_nil server.send(:refusal, Request.new("POST", { "X-Maf-Token" => token }, "127.0.0.1"))
+  end
+end
