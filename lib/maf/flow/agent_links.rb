@@ -52,9 +52,8 @@ module Flow
       path = File.join(dir, File.basename(source))
       target = self.class.file_target(File.basename(File.dirname(source)), File.basename(source))
       return File.readlink(path) == target if File.symlink?(path)
-      return false if File.exist?(path)
 
-      File.symlink(target, path)
+      !File.exist?(path) && File.symlink(target, path)
     end
 
     # A link of a removed role points nowhere. Remove it.

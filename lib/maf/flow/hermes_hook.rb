@@ -22,10 +22,7 @@ module Flow
 
     def self.approved?(allowlist, script_path, mtime)
       entry = approvals(allowlist).find { |item| item["command"] == script_path && item["event"] == EVENT }
-      return false unless entry
-
-      recorded = Time.iso8601(entry["script_mtime_at_approval"].to_s)
-      (mtime - recorded).abs <= MTIME_TOLERANCE
+      entry ? (mtime - Time.iso8601(entry["script_mtime_at_approval"].to_s)).abs <= MTIME_TOLERANCE : false
     rescue ArgumentError, TypeError
       false
     end

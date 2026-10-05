@@ -50,10 +50,14 @@ module Check
 
   # Standalone scripts repeat the lead role list and the read-only Hermes
   # toolsets. Each file must carry the same literal.
+  PRESENCE_READERS = %w[assets/coord assets/dispatcher assets/dashboard lib/maf/worker_control.rb].freeze
   SHARED_LITERALS = {
     "LEADS = %w[project-manager architect].freeze" => %w[assets/coord assets/dispatcher lib/maf/flow.rb],
     %(READ_ONLY_TOOLSETS = "terminal,web,skills,todo,memory,session_search,clarify") =>
-      %w[assets/dispatcher lib/maf/flow.rb]
+      %w[assets/dispatcher lib/maf/flow.rb],
+    # A presence record holds the process start time. Each reader must format it the same way.
+    %(PS_ENV = { "TZ" => "UTC", "LC_ALL" => "C" }.freeze) => PRESENCE_READERS,
+    %(["ps", "-o", "lstart=", "-p") => PRESENCE_READERS
   }.freeze
 
   module_function
@@ -77,66 +81,54 @@ module Check
     match
   end
 
+  # Prints the failure and returns false, so a check ends with `ok || fail_with(...)`.
+  def fail_with(first, *details)
+    warn "FAIL: #{first}", *details
+    false
+  end
+
   def check_udas
     expected = uda_lines(File.read(FILES[:taskrc]))
     actual = uda_lines(coord_block)
-    return true if expected == actual
-
-    warn "FAIL: UDA blocks differ"
-    warn "  assets/taskrc.append: #{expected.inspect}"
-    warn "  assets/coord:         #{actual.inspect}"
-    false
+    expected == actual || fail_with("UDA blocks differ", "  assets/taskrc.append: #{expected.inspect}",
+                                    "  assets/coord:         #{actual.inspect}")
   end
 
   def check_markers
     missing = FILES.reject { |_, path| File.read(path).include?(MARKER) }
-    return true if missing.empty?
-
-    warn "FAIL: marker '#{MARKER}' missing in: #{missing.keys.join(", ")}"
-    false
+    missing.empty? || fail_with("marker '#{MARKER}' missing in: #{missing.keys.join(", ")}")
   end
 
   def check_no_duplicate_block
-    return true unless File.read(FILES[:bootstrap]).include?("TASKRC_BLOCK")
-
-    warn "FAIL: lib/maf/bootstrap.rb defines TASKRC_BLOCK; it must read taskrc.append"
-    false
+    !File.read(FILES[:bootstrap]).include?("TASKRC_BLOCK") ||
+      fail_with("lib/maf/bootstrap.rb defines TASKRC_BLOCK; it must read taskrc.append")
   end
 
   def check_worktree_paths
-    bad = WORKTREE_FILES.reject do |_, path|
-      next false unless File.exist?(path)
+    bad = WORKTREE_FILES.reject { |_, path| worktree_synced?(path) }
+    bad.empty? || fail_with("worktree path definition out of sync in: #{bad.keys.join(", ")}")
+  end
 
-      text = File.read(path)
-      text.include?(WORKTREE_SUFFIX_DEF) && text.include?(WORKTREE_DIR_EXPR)
-    end
-    return true if bad.empty?
-
-    warn "FAIL: worktree path definition out of sync in: #{bad.keys.join(", ")}"
-    false
+  def worktree_synced?(path)
+    File.exist?(path) && [WORKTREE_SUFFIX_DEF, WORKTREE_DIR_EXPR].all? { |text| File.read(path).include?(text) }
   end
 
   def check_script_signatures
     bootstrap = File.read(FILES[:bootstrap])
-    bad = SCRIPTS.reject do |name, signature|
-      path = File.join(ROOT, "assets", name)
-      File.exist?(path) && File.read(path).include?(signature) && bootstrap.include?(signature)
-    end
-    return true if bad.empty?
-
-    warn "FAIL: script signature missing in the asset or lib/maf/bootstrap.rb: #{bad.keys.join(", ")}"
-    false
+    bad = SCRIPTS.reject { |name, signature| signed?(File.join(ROOT, "assets", name), signature, bootstrap) }
+    bad.empty? || fail_with("script signature missing in the asset or lib/maf/bootstrap.rb: #{bad.keys.join(", ")}")
   end
 
-def check_shared_literals
-  bad = SHARED_LITERALS.flat_map do |literal, files|
-    files.reject { |rel| File.read(File.join(ROOT, rel)).include?(literal) }
+  def signed?(path, signature, bootstrap)
+    File.exist?(path) && File.read(path).include?(signature) && bootstrap.include?(signature)
   end
-  return true if bad.empty?
 
-  warn "FAIL: shared literal out of sync in: #{bad.uniq.join(", ")}"
-  false
-end
+  def check_shared_literals
+    bad = SHARED_LITERALS.flat_map { |literal, files| files.reject { |rel| includes?(rel, literal) } }
+    bad.empty? || fail_with("shared literal out of sync in: #{bad.uniq.join(", ")}")
+  end
+
+  def includes?(rel, literal) = File.read(File.join(ROOT, rel)).include?(literal)
 
 CHECKS = %i[check_udas check_markers check_no_duplicate_block check_worktree_paths
             check_script_signatures check_shared_literals].freeze

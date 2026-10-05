@@ -19,7 +19,8 @@ require_relative "budget"
 module Maf
   module Team
     def self.coord(root, *args, env: {})
-      IO.popen(env, [RbConfig.ruby, File.join(root, ".maf", "bin", "coord"), *args], chdir: root, err: File::NULL, &:read).to_s
+      command = [RbConfig.ruby, File.join(root, ".maf", "bin", "coord"), *args]
+      IO.popen(env, command, chdir: root, err: File::NULL, &:read).to_s
     end
 
     def self.notify(root, text) = coord(root, "msg", "--from", "maf", "architect", text)
@@ -51,10 +52,13 @@ module Maf
 
     def run
       @budget.check!(@args.harness, @args.model, @budget.count(workers_after))
-      retire = @replace && Retire.new(@root, @replace)
-      retire&.check!
+      retire = (Retire.new(@root, @replace).tap(&:check!) if @replace)
       Dir.chdir(@root) { prepare }
       retire.run if retire && Workers.id(@replace) != @args.worker
+      announce
+    end
+
+    def announce
       Team.notify(@root, "Team change: worker #{@args.worker} (#{@args.harness}) joined as #{@args.role}.")
       @args.dispatch ? start_dispatcher : print_next_steps
     end

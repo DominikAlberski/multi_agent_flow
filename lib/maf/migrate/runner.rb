@@ -7,7 +7,8 @@ module Migrate
 
     def initialize(argv)
       @opts = {}
-      OptionParser.new(USAGE) { |o| ["--project DIR", "--check", "--yes"].each { |f| o.on(f) } }.parse!(argv, into: @opts)
+      parser = OptionParser.new(USAGE) { |o| ["--project DIR", "--check", "--yes"].each { |f| o.on(f) } }
+      parser.parse!(argv, into: @opts)
     end
 
     def run
@@ -46,7 +47,8 @@ module Migrate
 
     # A dispatcher in the background keeps the old paths. The registry lists its pid.
     def running_workers
-      path = [".maf/coordination", "coordination"].map { |dir| File.join(project, dir, "workers.json") }.find { |f| File.exist?(f) }
+      paths = [".maf/coordination", "coordination"].map { |dir| File.join(project, dir, "workers.json") }
+      path = paths.find { |file| File.exist?(file) }
       pids = path ? JSON.parse(File.read(path)).values.filter_map { |entry| entry["pid"] } : []
       pids.select { |pid| alive?(pid) }
     end

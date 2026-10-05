@@ -43,11 +43,9 @@ module Bootstrap
     # Status of a script that this tool copies from assets/NAME to DEST.
     def script_status(dest, name, signature)
       return :create unless File.exist?(dest)
-      return :refuse if File.directory?(dest)
-      return :refuse if !ours?(dest, signature) && !force?
-      return :skip if ours?(dest, signature) && !changed_script?(dest, name)
+      return :refuse if File.directory?(dest) || (!ours?(dest, signature) && !force?)
 
-      :update
+      ours?(dest, signature) && !changed_script?(dest, name) ? :skip : :update
     end
 
     def taskrc_path
@@ -70,13 +68,8 @@ module Bootstrap
       status == :refuse ? "#{file} (#{text})" : file
     end
 
-    def format_action(act)
-      case act[:kind]
-      when :skip then "skip   #{act[:label]}"
-      when :refuse then "REFUSE #{act[:label]}"
-      when :upgrade_taskrc then "upgrade #{act[:label]}"
-      else "#{act[:kind]} #{act[:label]}"
-      end
-    end
+    ACTION_WORDS = { skip: "skip  ", refuse: "REFUSE", upgrade_taskrc: "upgrade" }.freeze
+
+    def format_action(act) = "#{ACTION_WORDS.fetch(act[:kind], act[:kind])} #{act[:label]}"
   end
 end

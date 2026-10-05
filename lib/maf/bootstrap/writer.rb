@@ -48,10 +48,8 @@ module Bootstrap
     # would otherwise fall back to the user's global ~/.task.
     def upgrade_taskrc(file, _source = nil)
       FileUtils.mkdir_p(@project.taskdata_path)
-      File.open(file, "a") do |io|
-        io.puts unless io.size.zero?
-        io.puts("data.location=#{@project.taskdata_path}")
-      end
+      separator = File.size(file).zero? ? "" : "\n"
+      File.write(file, "#{separator}data.location=#{@project.taskdata_path}\n", mode: "a")
       true
     end
 
@@ -66,50 +64,13 @@ module Bootstrap
       true
     end
 
-    SH_SHEBANG = %r{\A#!\s*(?:/usr/bin/env\s+)?(?:\S*/)?(?:ba)?sh(?:\s|\z)}
-
-    def merge_hook(file, source)
-      return skip_foreign_hook(file) if foreign_interpreter?(file)
-
-      block = @project.append_content(source)
-      body = File.exist?(file) ? MarkedBlock.new(File.read(file)).remove : "#!/bin/sh\n"
-      write_hook(file, prepend_block(body, block))
-    end
-
-    def foreign_interpreter?(file)
-      return false unless File.exist?(file)
-
-      first = File.open(file, &:gets).to_s
-      first.start_with?("#!") && !first.match?(SH_SHEBANG)
-    end
-
-    def skip_foreign_hook(file)
-      Bootstrap.say("skip   #{file}: foreign hook with a non-sh shebang, doc-graph refresh is off")
-      false
-    end
-
-    def prepend_block(body, block)
-      shebang, rest = split_shebang(body)
-      "#{shebang}#{block.chomp}\n#{rest.lstrip}"
-    end
-
-    def split_shebang(body)
-      lines = body.lines
-      return ["", body] unless lines.first&.start_with?("#!")
-
-      [lines.first, lines[1..].join]
-    end
-
-    def write_hook(file, text)
-      File.write(file, text)
-      FileUtils.chmod("+x", file)
-      true
-    end
+    def merge_hook(file, source) = HookMerger.new(@project).merge(file, source)
 
     # Drops the old contract block and any `@AGENTS.md` import: AGENTS.md
     # gets its own contract, and a self-import is a loop.
     def move_claude_md(file, _source = nil)
-      text = MarkedBlock.new(File.read(file)).remove.lines.reject { |line| line.strip == "@AGENTS.md" }.join.strip
+      text = MarkedBlock.new(File.read(file)).remove.lines.reject { |line| line.strip == "@AGENTS.md" }
+      text = text.join.strip
       append_text(@project.path("AGENTS.md"), text) unless text.empty?
       FileUtils.rm(file)
     end

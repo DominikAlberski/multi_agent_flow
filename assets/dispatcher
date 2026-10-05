@@ -624,12 +624,14 @@ module Dispatcher
       STALE_SESSION = "Session not found"
 
       def self.build_command(config, prompt, session_id)
-        cmd = %w[hermes chat --oneshot --yolo --format stream-json -Q]
-        cmd += ["--skills", config.skill] if config.skill
-        cmd += ["--model", config.model] if config.model
-        cmd += ["-t", EditGrant::READ_ONLY_TOOLSETS] if EditGrant.read_only?(config.role)
+        cmd = %w[hermes chat --oneshot --yolo --format stream-json -Q] + options(config)
         cmd += ["--max-turns", config.max_turns.to_s, "--run-budget", run_budget(config).to_s]
         cmd + resume(session_id, "--resume") + ["-q", prompt]
+      end
+
+      def self.options(config)
+        tools = EditGrant.read_only?(config.role) ? ["-t", EditGrant::READ_ONLY_TOOLSETS] : []
+        [*(["--skills", config.skill] if config.skill), *(["--model", config.model] if config.model), *tools]
       end
 
       # Stop Hermes before the dispatcher's kill, so it can still write its result event.
@@ -944,10 +946,11 @@ module Dispatcher
 
     # A missing or invalid report block resumes the session with the error,
     # at most REPORT_RETRIES times. A harness without a session gets no retry.
+    # The retry is part of the same run, so it does not count as a session run.
     def report(result, retries = REPORT_RETRIES)
       return failed(result) unless result.success
 
-      @harness.session_id(result.output)&.then { |id| @session.save(id) }
+      @harness.session_id(result.output)&.then { |id| @session.save(id) } if retries == REPORT_RETRIES
       block = ReportBlock.parse(@harness.result_text(result.output) || result.output)
       retry_report?(block, retries) ? report(ask_for_report(block), retries - 1) : conclude(block, result)
     end
@@ -1091,9 +1094,7 @@ module Dispatcher
       @runner = Runner.new(config, Harness.for(config), Main.run_env(config))
       @mailbox = Mailbox.new(config.coord_dir, config.role)
       @poller = Poller.new(Main.run_env(config), config.role)
-      @watch = TaskWatch.new(config.interval)
-      @chores = LeadChores.new(@poller, config.role)
-      @resume = TaskWatch.new(config.interval)
+      @watch, @resume = Array.new(2) { TaskWatch.new(config.interval) }
     end
 
     def self.run_env(config)
@@ -1104,9 +1105,7 @@ module Dispatcher
     end
 
     def run
-      Log.line("started: role=#{@config.role} #{harness_label} #{timing_label}")
-      @mailbox.recover
-      @stop = StopSignal.new
+      start
       cycle_forever
       Log.line("stopped (TERM)") unless @config.once
     rescue Interrupt
@@ -1117,7 +1116,7 @@ module Dispatcher
     # cycle claims a task.
     def cycle
       Presence.write(@config)
-      @chores.run
+      chores.run
       worked = dispatch_messages || (@config.poll_tasks && (dispatch_claimed || dispatch_tasks))
       Log.line("no work this cycle") if @config.verbose && !worked
     end
@@ -1125,6 +1124,13 @@ module Dispatcher
     private
 
     def context(task_id = nil) = Prefetch.context(@poller, task_id)
+    def chores = @chores ||= LeadChores.new(@poller, @config.role)
+
+    def start
+      Log.line("started: role=#{@config.role} #{harness_label} #{timing_label}")
+      @mailbox.recover
+      @stop = StopSignal.new
+    end
     def timing_label = "interval=#{@config.interval}s cache_window=#{@config.cache_window}s"
     def harness_label = @config.command ? "command=#{@config.command.inspect}" : "harness=#{@config.harness}"
 
@@ -1233,6 +1239,11 @@ module Dispatcher
       config.worker = env.fetch("COORD_WORKER", "#{config.role}-bot")
       config.timeout ||= role_timeout(config.role) || DEFAULT_TIMEOUT
       config.poll_tasks = false if LEADS.include?(config.role)
+      skill(config)
+    end
+
+    # --no-skill drops a skill. Without --skill, the generated Hermes skill of the role loads.
+    def self.skill(config)
       config.skill = nil if config.no_skill
       config.skill ||= HermesSkill.name(config.role) if !config.no_skill && HermesSkill.installed?(config.role)
       config

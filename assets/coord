@@ -77,7 +77,8 @@ module Coord
                                            or while the verify command fails)
       coord annotate ID TEXT...
       coord msg [--from A] TO TEXT...
-      coord escalate [--task ID] TEXT...   report a problem you cannot fix to the project manager (copy to the architect)
+      coord escalate [--task ID] TEXT...   report a problem you cannot fix to the project manager
+                                           (copy to the architect)
       coord broadcast [--from A] [--to workers|leads|all] TEXT...
                                            send to a group of roles (default: workers)
       coord inbox [ROLE] [--peek] [--all] [--wait [--interval S] [--timeout S]]
@@ -193,12 +194,14 @@ module Coord
     # data.location) would otherwise fall back to the global ~/.task; add the
     # missing data.location in place.
     def ensure_data_location(warn_when_external:)
-      unless project_local?
-        warn "coord: TASKRC=#{@taskrc} is outside .maf/coordination/; using its existing database as-is, not redirecting it." if warn_when_external
-        return
-      end
+      return warn_external if warn_when_external && !project_local?
 
-      write_data_location unless has_data_location?
+      write_data_location if project_local? && !has_data_location?
+    end
+
+    def warn_external
+      warn "coord: TASKRC=#{@taskrc} is outside .maf/coordination/; using its existing database as-is, " \
+           "not redirecting it."
     end
 
     def write_data_location
@@ -335,12 +338,13 @@ module Coord
     def create(args)
       require!
       output = capture(args)
-      uuid = extract_uuid(output)
-      return uuid if uuid
+      extract_uuid(output) || add_failed(output)
+    end
 
-      # The add may have succeeded even when the uuid could not be read back
-      # (extract_uuid queries the created task again). Distinguish the two so a
-      # caller does not retry and create a duplicate.
+    # The add may have succeeded even when the uuid could not be read back
+    # (extract_uuid queries the created task again). Distinguish the two so a
+    # caller does not retry and create a duplicate.
+    def add_failed(output)
       id = created_id(output)
       raise Error, "task #{id} was created but its uuid could not be read" if id
 
@@ -427,12 +431,12 @@ module Coord
       return DEFAULT_LEASE_TTL if raw.empty?
 
       value = Integer(raw, exception: false)
-      return value if value&.positive?
+      value&.positive? ? value : invalid_ttl(raw)
+    end
 
-      unless @warned[raw]
-        warn "coord: invalid COORD_LEASE_TTL=#{raw.inspect}; using default #{DEFAULT_LEASE_TTL}s"
-        @warned[raw] = true
-      end
+    def self.invalid_ttl(raw)
+      warn "coord: invalid COORD_LEASE_TTL=#{raw.inspect}; using default #{DEFAULT_LEASE_TTL}s" unless @warned[raw]
+      @warned[raw] = true
       DEFAULT_LEASE_TTL
     end
 
@@ -496,8 +500,7 @@ module Coord
       task = @cli.task(id)
       holder = task["worker"].to_s
       refuse_steal(id, holder) if active_claim?(task, holder, worker) && !force
-      @cli.modify(id, "worker:#{worker}", "start:now")
-      holder.empty? ? nil : Holder.new(task["role"].to_s, holder)
+      @cli.modify(id, "worker:#{worker}", "start:now") && (Holder.new(task["role"].to_s, holder) unless holder.empty?)
     end
 
     def unclaim(id)
@@ -563,13 +566,16 @@ module Coord
 
     # Short critical section (e.g. claiming a task). Retries briefly instead of
     # failing when two workers contend.
-    def with_mutex(name, worker:)
+    def with_mutex(name, worker:, &block)
       acquire_with_retry(name, worker)
-      begin
-        yield
-      ensure
-        release(name)
-      end
+      locked(name, &block)
+    end
+
+    # The lock is released only after it was taken.
+    def locked(name)
+      yield
+    ensure
+      release(name)
     end
 
     def acquire!(name, ttl:, worker:)
@@ -587,12 +593,15 @@ module Coord
     private
 
     def acquire_with_retry(name, worker, attempts: 20)
-      attempts.times do
-        return acquire!(name, ttl: 30, worker: worker)
-      rescue Error
-        sleep 0.05
-      end
+      attempts.times { return true if try_acquire(name, worker) }
       raise Error, "could not lock #{name}"
+    end
+
+    def try_acquire(name, worker)
+      acquire!(name, ttl: 30, worker: worker) || true
+    rescue Error
+      sleep 0.05
+      false
     end
 
     def run_locked(name, command)
@@ -964,7 +973,8 @@ class GraphAge
   end
 
   def line
-    data = JSON.parse(IO.popen([RbConfig.ruby, @paths.vault_path, "age", "--json"], chdir: root, err: File::NULL, &:read))
+    output = IO.popen([RbConfig.ruby, @paths.vault_path, "age", "--json"], chdir: root, err: File::NULL, &:read)
+    data = JSON.parse(output)
     data["commits"] ? "graph age: #{data["commits"]} commits (#{data["state"]})" : "graph age: #{data["state"]}"
   rescue SystemCallError, JSON::ParserError
     nil
@@ -1418,12 +1428,18 @@ end
 
     def hold
       refuse_other!
-      FileUtils.mkdir_p(File.dirname(@path))
-      File.write(@path, Process.pid.to_s)
+      write_pid
       yield
     ensure
-      File.delete(@path) if File.exist?(@path) && File.read(@path).to_i == Process.pid
+      File.delete(@path) if own?
     end
+
+    def write_pid
+      FileUtils.mkdir_p(File.dirname(@path))
+      File.write(@path, Process.pid.to_s)
+    end
+
+    def own? = File.exist?(@path) && File.read(@path).to_i == Process.pid
 
     private
 
@@ -1646,7 +1662,8 @@ end
     # `git worktree remove` both free the slot on the next assign.
     def live = read.select { |slug, _slot| Dir.exist?(worktree_dir(slug)) }
 
-    def worktree_dir(slug) = File.join(File.dirname(File.dirname(File.expand_path(@coord_dir))), Worktree::WORKTREES_DIR, slug)
+    def worktree_dir(slug) = File.join(project_root, Worktree::WORKTREES_DIR, slug)
+    def project_root = File.dirname(File.dirname(File.expand_path(@coord_dir)))
 
     def write(slots)
       File.write(@path, JSON.pretty_generate(slots))
@@ -1788,11 +1805,14 @@ end
       dir = self.class.dir_for(@root, slug)
       return reuse(dir, branch) if Dir.exist?(dir)
 
+      add_worktree(dir, branch, base)
+      finish(dir, branch, "worktree #{dir} on branch #{branch}")
+    end
+
+    def add_worktree(dir, branch, base)
       FileUtils.mkdir_p(File.dirname(dir))
       ok = system("git", "-C", @root, "worktree", "add", *add_args(dir, branch, base))
       abort "coord: git worktree add failed" unless ok
-
-      finish(dir, branch, "worktree #{dir} on branch #{branch}")
     end
 
     # A WORKER that already starts with the role ("frontend-developer-2") is
@@ -1830,9 +1850,11 @@ end
       exclude_env_file(dir)
       WorktreeEnv.new(File.join(@root, MAF_DIR, "coordination")).write(dir, File.basename(dir))
       warn_uncommitted_coord
-      puts message
-      puts "In that worktree, run: source #{ENV_FILE}   (shares this project's .maf/coordination/ and task board)"
+      puts message, SOURCE_HINT
     end
+
+    SOURCE_HINT = "In that worktree, run: source #{ENV_FILE}   (shares this project's .maf/coordination/ " \
+                  "and task board)"
 
     # These files are normally committed, so a fresh worktree checks out its
     # own copy. If one is not committed yet, the checkout has none: coord
@@ -1876,14 +1898,13 @@ end
     # main worktree.
     def exclude_env_file(dir)
       exclude = local_exclude(dir)
-      return if exclude.nil?
-
-      listed = File.exist?(exclude) && File.read(exclude).lines.map(&:strip).include?(ENV_FILE)
-      return if listed
+      return if exclude.nil? || listed?(exclude)
 
       FileUtils.mkdir_p(File.dirname(exclude))
       File.open(exclude, "a") { |file| file.puts(ENV_FILE) }
     end
+
+    def listed?(exclude) = File.exist?(exclude) && File.read(exclude).lines.map(&:strip).include?(ENV_FILE)
 
     def local_exclude(dir)
       path = `git -C #{Shellwords.escape(dir)} rev-parse --git-path info/exclude 2>/dev/null`.strip
@@ -1971,37 +1992,49 @@ end
     end
 
     def cmd_add
-      opts = @args.parse_options(ADD_OPTS)
-      opts[:title] ||= @args.join unless @args.empty?
-      abort "usage: coord add --role R --scope S --title T" if opts[:title].to_s.empty?
-      opts[:goal] &&= goal_uuid(opts[:goal])
+      opts = add_options
       id = tasks.add(**opts)
       event_log.append("add", @worker, "#{id} #{opts[:title]}")
+      after_add(opts, id)
+    end
+
+    def after_add(opts, id)
       conflicts.warn_with(opts[:scope], exclude: id)
       report_unstaffed(opts[:role], id)
       puts id
     end
 
+    def add_options
+      opts = @args.parse_options(ADD_OPTS)
+      opts[:title] ||= @args.join unless @args.empty?
+      abort "usage: coord add --role R --scope S --title T" if opts[:title].to_s.empty?
+      opts[:goal] &&= goal_uuid(opts[:goal])
+      opts
+    end
+
     def cmd_next
-      # Every flag must be parsed out before the positional `shift` below:
-      # `shift` takes whatever token is first, flag or not, so a flag left
-      # unparsed (e.g. --timeout) would be swallowed as the ROLE argument.
-      mine = @args.flag?("--mine")
-      wait = @args.flag?("--wait")
-      interval = @args.interval
-      timeout = @args.timeout
+      flags = next_flags
       role = require_role!(@args.shift || @role, "next ROLE, or export COORD_ROLE")
-      refuse_lead!(role, "has no tasks to wait for") if wait
-      return board.mine_tasks(role, @worker) if mine
+      refuse_lead!(role, "has no tasks to wait for") if flags[:wait]
+      return board.mine_tasks(role, @worker) if flags[:mine]
 
-      return board.next_tasks(role, @worker) unless wait
+      flags[:wait] ? wait_next(role, flags) : board.next_tasks(role, @worker)
+    end
 
-      # A fresh Tasks instance per check: Tasks#pending memoizes (so one
-      # `coord board` run only shells out to `task` once), but reusing the
-      # single Wiring-memoized instance across poll iterations would freeze
-      # the result at the first, possibly-empty, snapshot forever.
-      # A message ends the wait too: an agent blocked here must not miss it.
-      wait_for(interval, timeout, -> { Tasks.new.next_for(role, @worker) + messages.files(role) }) do
+    # Every flag must be parsed out before the positional `shift`: `shift`
+    # takes whatever token is first, flag or not, so a flag left unparsed
+    # (e.g. --timeout) would be swallowed as the ROLE argument.
+    def next_flags
+      { mine: @args.flag?("--mine"), wait: @args.flag?("--wait"), interval: @args.interval, timeout: @args.timeout }
+    end
+
+    # A fresh Tasks instance per check: Tasks#pending memoizes (so one
+    # `coord board` run only shells out to `task` once), but reusing the
+    # single Wiring-memoized instance across poll iterations would freeze
+    # the result at the first, possibly-empty, snapshot forever.
+    # A message ends the wait too: an agent blocked here must not miss it.
+    def wait_next(role, flags)
+      wait_for(flags[:interval], flags[:timeout], -> { Tasks.new.next_for(role, @worker) + messages.files(role) }) do
         board.next_tasks(role, @worker)
         announce_messages(role)
       end
@@ -2019,7 +2052,10 @@ end
       force = @args.flag?("--force")
       require_worker!(@worker, "claim ID (needs COORD_WORKER or COORD_ROLE)")
       refuse_lead!(@role, "never claims a task")
-      holder = locks.with_mutex("task-#{id}", worker: @worker) { tasks.claim(id, @worker, force: force) }
+      claimed(id, locks.with_mutex("task-#{id}", worker: @worker) { tasks.claim(id, @worker, force: force) })
+    end
+
+    def claimed(id, holder)
       notify_prior_holder(id, holder) if holder && holder.worker != @worker
       event_log.append("claim", @worker, id)
       puts "claimed #{id} by #{@worker}"
@@ -2036,10 +2072,14 @@ end
       force = @args.flag?("--force")
       id = @args.require_arg("done", "ID")
       task = tasks.find(id)
+      refuse_done!(task, force)
+      finish_task(id, task)
+    end
+
+    def refuse_done!(task, force)
       refuse_foreign!(task, force)
       refuse_stale!(task) unless force
       refuse_unverified!
-      finish_task(id, task)
     end
 
     def finish_task(id, task)
@@ -2054,7 +2094,8 @@ end
     def report_done(task)
       return if [nil, "architect", Goals::ROLE].include?(task["role"]) || @role == "architect"
 
-      deliver("architect", @worker, "Task #{task["uuid"]} is done: #{task["description"]}. Check the diff and the TESTS line.")
+      text = "Task #{task["uuid"]} is done: #{task["description"]}. Check the diff and the TESTS line."
+      deliver("architect", @worker, text)
     end
 
     def cmd_annotate
@@ -2082,6 +2123,10 @@ end
       text = @args.require_text("escalate")
       abort "coord: the project manager cannot escalate to itself. Ask the user." if @role == ESCALATE_PM
       tasks.annotate(find_task!(task)["uuid"], "ESCALATED: #{text}") if task
+      escalate(task, text)
+    end
+
+    def escalate(task, text)
       send_escalation(task, text)
       event_log.append("escalate", @worker, "#{task} #{text}".strip)
     end
@@ -2104,20 +2149,23 @@ end
     end
 
     def cmd_inbox
-      # Same ordering requirement as cmd_next: parse every flag before the
-      # positional `shift`, or an unparsed flag gets read as the ROLE.
-      wait = @args.flag?("--wait")
-      interval = @args.interval
-      timeout = @args.timeout
-      peek = @args.flag?("--peek")
-      all = @args.flag?("--all")
+      flags = inbox_flags
       role = require_role!(@args.shift || @role, "inbox ROLE, or export COORD_ROLE")
-      return messages.inbox(role, peek: peek, all: all) unless wait
+      return messages.inbox(role, peek: flags[:peek], all: flags[:all]) unless flags[:wait]
 
-      InboxWaiter.new(paths, role).hold do
-        wait_for(interval, timeout, -> { messages.files(role, all: all) }) do
-          messages.inbox(role, peek: peek, all: all)
-        end
+      InboxWaiter.new(paths, role).hold { wait_inbox(role, flags) }
+    end
+
+    # Same ordering requirement as cmd_next: parse every flag before the
+    # positional `shift`, or an unparsed flag gets read as the ROLE.
+    def inbox_flags
+      { wait: @args.flag?("--wait"), interval: @args.interval, timeout: @args.timeout,
+        peek: @args.flag?("--peek"), all: @args.flag?("--all") }
+    end
+
+    def wait_inbox(role, flags)
+      wait_for(flags[:interval], flags[:timeout], -> { messages.files(role, all: flags[:all]) }) do
+        messages.inbox(role, peek: flags[:peek], all: flags[:all])
       end
     end
 
@@ -2134,10 +2182,14 @@ end
       command = @args.take_command
       abort "usage: coord with-lock NAME [--ttl SECONDS] -- CMD..." if command.nil? || command.empty?
 
+      exit(run_with_lock(name, command) ? 0 : 1)
+    end
+
+    def run_with_lock(name, command)
       started = Time.now
       ok = locks.with_lock(name, ttl: @args.ttl, command: command, worker: @worker)
       event_log.append("with-lock", @worker, "#{name} #{ok ? "ok" : "failed"} #{(Time.now - started).round}s")
-      exit(ok ? 0 : 1)
+      ok
     end
 
     # Broadcast sends a message to every known role except the sender (see
@@ -2147,10 +2199,14 @@ end
       from = require_role!(@args.value_of("--from") || @role, "broadcast --from A, or export COORD_ROLE")
       audience = Audiences.pick(@args.value_of("--to") || "workers")
       text = @args.require_text("broadcast")
+      deliver_broadcast(from, text, broadcast_roles(from, audience))
+    end
+
+    def broadcast_roles(from, audience)
       roles = Roster.new(paths, tasks).roles.select(&audience) - [from]
       abort "coord: no other roles to broadcast to" if roles.empty?
 
-      deliver_broadcast(from, text, roles)
+      roles
     end
 
     # Log shows the shared coordination history: claims, completions, unclaims,
@@ -2247,20 +2303,26 @@ end
       once = @args.flag?("--once")
       interval = @args.interval
       require_github!
-      loop do
-        review_state.all.each { |uuid, entry| review_goal(uuid, entry) }
-        break if once
-
-        sleep interval
-      end
+      watch_reviews(once, interval)
     end
 
+    def watch_reviews(once, interval)
+      review_all
+      loop { sleep(interval).then { review_all } } unless once
+    end
+
+    def review_all = review_state.all.each { |uuid, entry| review_goal(uuid, entry) }
+
     # One failing pull request must not stop the watch of the others.
+    def record_review(uuid, entry, feed)
+      review_state.put(uuid, entry.merge("seen" => feed.seen_after))
+      finish_review(uuid, feed.state) if %w[MERGED CLOSED].include?(feed.state)
+    end
+
     def review_goal(uuid, entry)
       feed = ReviewFeed.new(github, entry)
       forward_review(uuid, entry["url"], feed) unless feed.items.empty?
-      review_state.put(uuid, entry.merge("seen" => feed.seen_after))
-      finish_review(uuid, feed.state) if %w[MERGED CLOSED].include?(feed.state)
+      record_review(uuid, entry, feed)
     rescue Error, JSON::ParserError => e
       warn "coord: review-watch of goal #{uuid}: #{e.message}"
     end
@@ -2401,10 +2463,13 @@ end
       review_state.put(goal["uuid"], entry.merge("head" => Git.out(main_root, "rev-parse", branch)))
     end
 
+    def create_pr(goal, branch)
+      body = PrBody.for(main_root, goal, goal_sync_for(goal).ref)
+      github.create_pr(head: branch, base: Git.base_branch(main_root, manifest), title: goal["description"], body: body)
+    end
+
     def open_pr(goal, branch)
-      sync = goal_sync_for(goal)
-      url = github.create_pr(head: branch, base: Git.base_branch(main_root, manifest), title: goal["description"],
-                             body: PrBody.for(main_root, goal, sync.ref))
+      url = create_pr(goal, branch)
       tasks.annotate(goal["uuid"], "PR: #{url}")
       announce_pr("Pull request ready for your review", goal, url)
       url
@@ -2567,13 +2632,13 @@ end
     # rule in code instead of leaving it to agent self-discipline.
     def wait_for(interval, timeout, check)
       deadline = Time.now + timeout if timeout
-      loop do
-        break unless check.call.empty?
-        abort "coord: timed out after #{timeout}s waiting" if deadline && Time.now >= deadline
-
-        sleep interval
-      end
+      sleep interval while check.call.empty? && !timed_out!(deadline, timeout)
       yield
+    end
+
+    def timed_out!(deadline, timeout)
+      abort "coord: timed out after #{timeout}s waiting" if deadline && Time.now >= deadline
+      false
     end
   end
 
@@ -2583,14 +2648,11 @@ end
     include Wiring
 
     def initialize(argv, env: ENV)
-      @args = Args.new(argv)
+      @args, @env, @project_root = Args.new(argv), env, Dir.pwd
       @coord_dir = env.fetch("COORD_DIR", File.join(MAF_DIR, "coordination"))
       @role = env.fetch("COORD_ROLE", "unknown")
       @worker = env.fetch("COORD_WORKER", @role)
-      @taskrc = env.fetch("TASKRC", File.join(@coord_dir, "taskrc"))
-      @project_root = Dir.pwd
-      @env = env
-      ENV["TASKRC"] = @taskrc
+      ENV["TASKRC"] = @taskrc = env.fetch("TASKRC", File.join(@coord_dir, "taskrc"))
     end
 
     def run

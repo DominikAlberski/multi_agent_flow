@@ -10,7 +10,7 @@ module Bootstrap
     def taskrc
       file = @project.taskrc_path
       status = taskrc_status(file)
-      label = status == :refuse ? "#{file} (exists and is not ours; use --force)" : "#{file} (Taskwarrior UDAs, project-local)"
+      label = status == :refuse ? @project.refuse_label(status, file) : "#{file} (Taskwarrior UDAs, project-local)"
       @project.action(status, file, label)
     end
 

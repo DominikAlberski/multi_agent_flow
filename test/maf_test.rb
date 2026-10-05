@@ -587,7 +587,7 @@ module MafArchiveProject
 
   def setup
     super
-    assert_maf("prepare", "opencode", "architect_2")
+    assert_maf("prepare", "opencode", "architect_2", "--interactive")
   end
 
   def state_path(*parts) = File.join(@project, ".maf", "coordination", *parts)
@@ -649,6 +649,20 @@ class MafRetireArchiveTest < Minitest::Test
     assert_active("architect")
   end
 
+  # Regression: a new worker with a reused id resumed the retired worker's
+  # session and got its handoff note.
+  def test_retire_archives_the_session_the_handoff_note_and_the_status
+    %w[session handoff.md log].each { |ext| write_state(state_path("sessions", "#{WORKER}.#{ext}"), ext) }
+    write_state(state_path("sessions", "architect-20.log"), "other worker")
+    write_state(state_path("status", "#{WORKER}.json"), "{}")
+    assert_maf("retire", "architect_2")
+
+    assert_equal "handoff.md", File.read(File.join(archives.fetch(0), "sessions", "#{WORKER}.handoff.md"))
+    assert_equal "{}", File.read(File.join(archives.first, "status.json"))
+    assert_empty Dir.glob(state_path("sessions", "#{WORKER}.*"))
+    assert_path_exists state_path("sessions", "architect-20.log")
+  end
+
   def test_retire_archives_usage_without_an_inbox
     write_state(state_path("usage", "#{WORKER}.json"), USAGE)
     assert_maf("retire", "architect_2")
@@ -680,7 +694,7 @@ class MafRetireArchiveTest < Minitest::Test
 
   def test_retire_keeps_separate_archives_when_the_worker_id_is_reused
     retire_with_state("first")
-    assert_maf("prepare", "opencode", "architect_2")
+    assert_maf("prepare", "opencode", "architect_2", "--interactive")
     retire_with_state("second")
     assert_equal 2, archives.size
     assert_equal %w[first second], archives.map { |dir| File.read(File.join(dir, "inbox", "unread.md")) }.sort
@@ -696,7 +710,7 @@ class MafRetireArchiveTest < Minitest::Test
 
   def test_prepare_with_the_same_worker_id_keeps_active_files
     seed_state
-    assert_maf("prepare", "opencode", "architect_2", "--replace", "architect_2")
+    assert_maf("prepare", "opencode", "architect_2", "--interactive", "--replace", "architect_2")
     assert_active
     assert_empty archives
   end

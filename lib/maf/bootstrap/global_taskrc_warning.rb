@@ -14,7 +14,8 @@ module Bootstrap
       return unless File.exist?(global) && File.read(global).include?(MARKER)
       return if same_file?(global, @project.taskrc_path)
 
-      puts format(MIGRATION_NOTE, taskrc: global, project: @project.target, project_name: File.basename(@project.target))
+      target = @project.target
+      puts format(MIGRATION_NOTE, taskrc: global, project: target, project_name: File.basename(target))
     end
 
     private

@@ -506,6 +506,13 @@ class RunnerTest < Minitest::Test
     assert_equal ["", "s-1"], calls
   end
 
+  # Regression: the report retry counted as a second run toward --max-session-runs.
+  def test_a_report_retry_does_not_count_as_a_session_run
+    capture_io { runner(reply("no block")).dispatch("go") }
+    assert_equal 2, calls.size
+    assert_equal 1, session.runs
+  end
+
   def test_invalid_block_resumes_once_then_fails
     capture_io { refute runner(reply('<report>{"status":"maybe"}</report>')).dispatch("go") }
     assert_equal ["", "s-1"], calls

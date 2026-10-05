@@ -20,7 +20,8 @@ module Flow
     private
 
     def worker_prompt(harness, role, data)
-      "#{intro(data)}\n\n#{duties_block(data)}\n\n#{format(WORKER_LOOP, role: role, no_task_instruction: no_task_line(harness))}"
+      loop_text = format(WORKER_LOOP, role: role, no_task_instruction: no_task_line(harness))
+      "#{intro(data)}\n\n#{duties_block(data)}\n\n#{loop_text}"
     end
 
     # Claude Code wakes an idle session with the board-watch hook, and opencode

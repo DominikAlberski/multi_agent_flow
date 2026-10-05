@@ -35,8 +35,7 @@ module SetupAgent
 
   def self.run(argv)
     args = Args.parse(argv)
-    manifest = Manifest.load(MANIFEST)
-    manifest.verify!(args.harness, args.role)
+    manifest = Manifest.load(MANIFEST).tap { |m| m.verify!(args.harness, args.role) }
     worktree = enter_worktree(args)
     register(args, manifest.model_for(args.harness, args.role))
     launch(args, manifest, worktree)

@@ -17,13 +17,14 @@ module Bootstrap
 
     private
 
+    # Each flag and the block that runs in the Options instance with its value.
+    FLAGS = { "--roles LIST" => ->(v) { @roles = v }, "--check" => ->(_) { @check = true },
+              "--install-deps" => ->(_) { @install_deps = true }, "--force" => ->(_) { @force = true } }.freeze
+
     def parser
       OptionParser.new do |o|
         o.banner = BANNER
-        o.on("--roles LIST") { |v| @roles = v }
-        o.on("--check") { @check = true }
-        o.on("--install-deps") { @install_deps = true }
-        o.on("--force") { @force = true }
+        FLAGS.each { |flag, set| o.on(flag) { |value| instance_exec(value, &set) } }
         o.on("-h", "--help") { puts o; exit 0 }
       end
     end

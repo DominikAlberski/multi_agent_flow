@@ -10,12 +10,8 @@ module Flow
     end
 
     def print(results)
-      puts
-      puts "Generated role files:"
-      results.each { |result| puts generated_line(result) }
-      print_missing_models(results)
-      print_unembeddable(results)
-      print_sessions(results)
+      puts "", "Generated role files:", results.map { |result| generated_line(result) }
+      %i[print_missing_models print_unembeddable print_sessions].each { |name| send(name, results) }
       print_hermes_reminder
     end
 
@@ -26,8 +22,8 @@ module Flow
     def print_hermes_reminder
       return unless @hermes_pending
 
-      puts "The Hermes hook is not active yet. Finish the steps above."
-      puts "Then run `maf update` to confirm the hook is ready."
+      puts "The Hermes hook is not active yet. Finish the steps above.",
+           "Then run `maf update` to confirm the hook is ready."
     end
 
     def generated_line(result)
@@ -36,43 +32,41 @@ module Flow
     end
 
     def print_missing_models(results)
-      missing = results.reject { |result| result[:model] }
+      missing = results.reject { |result| result[:model] }.map { |result| "  #{model_hint(result)}" }
       return if missing.empty?
 
-      puts
-      puts "No model chosen for these roles. maf leaves the choice to you. Suggestions:"
-      missing.each { |result| puts "  #{result[:agent][:role]}: #{model_hint(result)}" }
-      puts "  Set one with: --model <role>=<provider/model>"
+      puts "", "No model chosen for these roles. maf leaves the choice to you. Suggestions:", missing,
+           "  Set one with: --model <role>=<provider/model>"
     end
 
     def model_hint(result)
-      @roles.fetch(result[:agent][:role]).fetch("model_hint")
+      role = result[:agent][:role]
+      "#{role}: #{@roles.fetch(role).fetch("model_hint")}"
     end
 
+    PASTE_HINT = %(  "Run coord inbox <role>. Then work the pending tasks assigned to you. Repeat.")
+
     def print_sessions(results)
-      puts
-      puts "Next: start one session per agent in #{@project}:"
-      results.each { |result| puts "  maf start #{result[:agent][:harness]} #{result[:agent][:role]}" }
-      puts
-      puts "In each worker session, paste:"
-      puts %(  "Run coord inbox <role>. Then work the pending tasks assigned to you. Repeat.")
-      puts entry_point_hint(results)
+      puts "", "Next: start one session per agent in #{@project}:",
+           results.map { |result| "  maf start #{result[:agent][:harness]} #{result[:agent][:role]}" },
+           "", "In each worker session, paste:",
+           PASTE_HINT, entry_point_hint(results)
     end
 
     def entry_point_hint(results)
-      roles = results.map { |result| result[:agent][:role] }
-      return "Talk to the project manager session. It hands goals to the architect." if roles.include?("project-manager")
+      return "In the architect session, describe what you want built." if results.none? { |r| pm?(r) }
 
-      "In the architect session, describe what you want built."
+      "Talk to the project manager session. It hands goals to the architect."
     end
+
+    def pm?(result) = result[:agent][:role] == "project-manager"
 
     def print_unembeddable(results)
       list = results.select { |r| r[:model] && %w[codex hermes].include?(r[:agent][:harness]) }
       return if list.empty?
 
-      puts
-      puts "These harnesses cannot embed a model in the role file. Set it in the harness:"
-      list.each { |r| puts "  #{r[:agent][:harness]}:#{r[:agent][:role]} -> #{model_command(r)}" }
+      puts "", "These harnesses cannot embed a model in the role file. Set it in the harness:",
+           list.map { |r| "  #{r[:agent][:harness]}:#{r[:agent][:role]} -> #{model_command(r)}" }
     end
 
     def model_command(result)

@@ -35,17 +35,15 @@ module Dashboard
   class Config
     attr_reader :port, :coord_dir, :interval, :maf
 
+    # Each flag: the OptionParser arguments and the instance variable it sets.
+    FLAGS = { ["--port N", Integer] => :@port, ["--coord DIR"] => :@coord_dir,
+              ["--interval S", Integer] => :@interval, ["--maf PATH"] => :@maf }.freeze
+
     def initialize(argv)
-      @port     = DEFAULT_PORT
-      @coord_dir = DEFAULT_COORD
-      @interval  = DEFAULT_INTERVAL
-      @maf       = "maf"
-      OptionParser.new do |o|
-        o.on("--port N", Integer)    { |v| @port = v }
-        o.on("--coord DIR")          { |v| @coord_dir = v }
-        o.on("--interval S", Integer) { |v| @interval = v }
-        o.on("--maf PATH")           { |v| @maf = v }
-      end.parse!(argv)
+      @port, @coord_dir, @interval, @maf = DEFAULT_PORT, DEFAULT_COORD, DEFAULT_INTERVAL, "maf"
+      parser = OptionParser.new
+      FLAGS.each { |args, name| parser.on(*args) { |value| instance_variable_set(name, value) } }
+      parser.parse!(argv)
     end
 
     def taskrc       = File.join(coord_dir, "taskrc")
@@ -54,7 +52,6 @@ module Dashboard
     def locks_dir    = File.join(coord_dir, "locks")
     def manifest     = File.join(File.dirname(coord_dir), "config.json")
     def workers_path = File.join(coord_dir, "workers.json")
-    def usage_dir    = File.join(coord_dir, "usage")
     def vault_path   = File.join(File.dirname(File.expand_path(coord_dir)), "bin", "vault")
     def root         = File.dirname(File.dirname(File.expand_path(coord_dir)))
     def lease_ttl
@@ -68,11 +65,12 @@ module Dashboard
       @taskrc = taskrc
     end
 
+    QUERY = ["task", "(", "status:pending", "or", "status:waiting", ")", "export"].freeze
+
     def read
       return [] unless File.exist?(@taskrc)
-      env = ENV.to_h.merge("TASKRC" => @taskrc)
-      IO.popen([env, "task", "(", "status:pending", "or", "status:waiting", ")", "export",
-                { err: File::NULL }]) { |f| parse(f.read) }
+
+      IO.popen(ENV.to_h.merge("TASKRC" => @taskrc), QUERY, err: File::NULL) { |f| parse(f.read) }
     rescue StandardError
       []
     end
@@ -83,22 +81,6 @@ module Dashboard
       raw.strip.empty? ? [] : JSON.parse(raw)
     rescue JSON::ParserError
       []
-    end
-  end
-
-  # TokenReader reads the token usage that the dispatcher adds up per worker in
-  # .maf/coordination/usage/<worker>.json. A broken file counts as no usage.
-  class TokenReader
-    def initialize(dir)
-      @dir = dir
-    end
-
-    def read
-      Dir.glob(File.join(@dir, "*.json")).sort.to_h do |path|
-        [File.basename(path, ".json"), JSON.parse(File.read(path))]
-      rescue JSON::ParserError
-        [File.basename(path, ".json"), {}]
-      end
     end
   end
 
@@ -124,14 +106,16 @@ end
     PS_ENV = { "TZ" => "UTC", "LC_ALL" => "C" }.freeze
     LOG_LINES = 5
 
-    def initialize(cfg)
+    # last_events maps each worker to the time of its last event.
+    def initialize(cfg, last_events = {})
       @cfg = cfg
+      @last_events = last_events
     end
 
     def read(id, entry)
       entry.merge("id" => id, "live" => live?(file("presence", id)), "status" => file("status", id),
                   "usage" => file("usage", id), "log" => tail("#{id}.log"), "action" => tail("#{id}.control.log"),
-                  "handoff_at" => mtime(File.join(sessions, "#{id}.handoff.md")))
+                  "handoff_at" => mtime(File.join(sessions, "#{id}.handoff.md")), "last_event" => @last_events[id])
     end
 
     private
@@ -189,6 +173,13 @@ end
 
     private
 
+    def start_log(id, action)
+      log = File.join(@cfg.coord_dir, "sessions", "#{id}.control.log")
+      FileUtils.mkdir_p(File.dirname(log))
+      File.write(log, "[#{Time.now.utc.iso8601}] maf worker #{action} #{id}\n", mode: "a")
+      log
+    end
+
     def registered?(id)
       JSON.parse(File.read(@cfg.workers_path)).key?(id)
     rescue Errno::ENOENT, JSON::ParserError
@@ -196,9 +187,7 @@ end
     end
 
     def spawn_maf(id, action)
-      log = File.join(@cfg.coord_dir, "sessions", "#{id}.control.log")
-      FileUtils.mkdir_p(File.dirname(log))
-      File.write(log, "[#{Time.now.utc.iso8601}] maf worker #{action} #{id}\n", mode: "a")
+      log = start_log(id, action)
       pid = spawn(@cfg.maf, "worker", action, id, chdir: @cfg.root, in: File::NULL, out: [log, "a"], err: %i[child out])
       Process.detach(pid) && nil
     rescue SystemCallError => e
@@ -206,30 +195,25 @@ end
     end
   end
 
+  # Collector builds the data of one page refresh.
   class Collector
     def initialize(cfg)
       @cfg = cfg
+      @files = BoardFiles.new(cfg)
     end
 
     def collect
-      tasks = TaskReader.new(@cfg.taskrc).read
-      {
-        project:          File.basename(Dir.pwd),
-        generated_at:     Time.now.utc.iso8601,
-        refresh_interval: @cfg.interval,
-        lease_ttl:        @cfg.lease_ttl,
-        declared_roles:   declared_roles,
-        workers:          workers,
-        tokens:           TokenReader.new(@cfg.usage_dir).read,
-        graph:            GraphReader.new(@cfg).read,
-        tasks:            task_summary(tasks),
-        events:           recent_events,
-        inboxes:          inbox_messages,
-        locks:            active_locks
-      }
+      { project: File.basename(Dir.pwd), generated_at: Time.now.utc.iso8601, refresh_interval: @cfg.interval,
+        lease_ttl: @cfg.lease_ttl, declared_roles: declared_roles }.merge(board)
     end
 
     private
+
+    def board
+      tasks = TaskReader.new(@cfg.taskrc).read
+      { workers: workers, graph: GraphReader.new(@cfg).read, tasks: TaskSummary.new(@cfg, declared_roles).of(tasks),
+        events: @files.recent_events, inboxes: @files.inbox_messages, locks: @files.active_locks }
+    end
 
     def declared_roles
       JSON.parse(File.read(@cfg.manifest)).fetch("agents", []).map { |entry| entry["role"] }.compact
@@ -240,117 +224,104 @@ end
     # .maf/coordination/workers.json lists each worker that `maf prepare` or
     # `maf start` set up. The last event shows when the worker last acted.
     def workers
-      last = recent_events(500).to_h { |event| [event[:worker], event[:ts]] }
-      reader = WorkerReader.new(@cfg)
-      registry = JSON.parse(File.read(@cfg.workers_path))
-      registry.map { |id, entry| reader.read(id, entry).merge("last_event" => last[id]) }
+      reader = WorkerReader.new(@cfg, @files.recent_events(500).to_h { |event| [event[:worker], event[:ts]] })
+      JSON.parse(File.read(@cfg.workers_path)).map { |id, entry| reader.read(id, entry) }
     rescue Errno::ENOENT, JSON::ParserError
       []
     end
+  end
 
-    def task_summary(tasks)
-      {
-        all:       tasks,
-        stale:     tasks.select { |t| stale?(t) },
-        orphaned:  orphaned(tasks),
-        conflicts: scope_conflicts(tasks),
-        escalated: tasks.select { |t| escalated?(t) },
-        in_review: tasks.select { |t| in_review?(t) }
-      }
+  # TaskSummary sorts the pending tasks into the lists that raise alerts.
+  class TaskSummary
+    def initialize(cfg, roles)
+      @cfg = cfg
+      @roles = roles
     end
 
-    # `coord escalate --task` annotates the task. A done task leaves the
-    # pending list, so only an open escalation shows.
-    def escalated?(task)
-      (task["annotations"] || []).any? { |note| note["description"].to_s.start_with?("ESCALATED:") }
+    def of(tasks)
+      { all: tasks, stale: tasks.select { |t| stale?(t) }, orphaned: orphaned(tasks),
+        conflicts: scope_conflicts(tasks), escalated: tasks.select { |t| note?(t, "ESCALATED:") },
+        in_review: tasks.select { |t| t["role"] == "goal" && note?(t, "PR:") } }
     end
 
-    # `coord goal pr` annotates the goal with its pull request. The goal
-    # stays open until the pull request merges.
-    def in_review?(task)
-      task["role"] == "goal" && (task["annotations"] || []).any? { |note| note["description"].to_s.start_with?("PR:") }
-    end
+    private
+
+    # `coord escalate --task` writes an ESCALATED note. `coord goal pr` writes
+    # a PR note on the goal. A done task leaves the pending list.
+    def note?(task, prefix) = (task["annotations"] || []).any? { |note| note["description"].to_s.start_with?(prefix) }
 
     def stale?(task)
       start = task["start"].to_s
-      return false if start.empty?
-      Time.parse(start) + @cfg.lease_ttl <= Time.now
+      !start.empty? && Time.parse(start) + @cfg.lease_ttl <= Time.now
     rescue ArgumentError
       false
     end
 
+    # Goals are not work for a role, so a goal never lacks a runner.
     def orphaned(tasks)
-      roles = declared_roles
-      return [] if roles.empty?
-      # Goals are not work for a role, so a goal never lacks a runner.
-      tasks.select { |t| t["role"] && t["role"] != "goal" && !roles.include?(t["role"]) }
+      return [] if @roles.empty?
+
+      tasks.select { |t| t["role"] && t["role"] != "goal" && !@roles.include?(t["role"]) }
     end
 
     def scope_conflicts(tasks)
-      tasks.combination(2)
-           .select { |a, b| scopes_overlap?(a["scope"], b["scope"]) }
-           .map { |a, b| [a["uuid"], b["uuid"]] }
+      tasks.combination(2).select { |a, b| overlap?(a["scope"], b["scope"]) }.map { |a, b| [a["uuid"], b["uuid"]] }
     end
 
-    def scopes_overlap?(a, b)
-      return false if a.to_s.empty? || b.to_s.empty?
-      pa = non_glob_parts(a)
-      pb = non_glob_parts(b)
-      return false if pa.empty? || pb.empty?
-      short, long = [pa, pb].sort_by(&:size)
-      short == long.first(short.size)
+    def overlap?(first, second)
+      short, long = [parts(first), parts(second)].sort_by(&:size)
+      !short.empty? && short == long.first(short.size)
     end
 
-    def non_glob_parts(scope)
-      scope.split("/").take_while { |p| p !~ /[*?{}]/ }
+    def parts(scope) = scope.to_s.split("/").take_while { |part| part !~ /[*?{}]/ }
+  end
+
+  # BoardFiles reads the event log, the inboxes, and the locks.
+  class BoardFiles
+    def initialize(cfg)
+      @cfg = cfg
     end
 
     def recent_events(limit = 60)
       path = @cfg.log_path
-      return [] unless File.exist?(path)
-      File.readlines(path).last(limit).filter_map { |line| parse_event(line.chomp) }
-    end
-
-    def parse_event(line)
-      ts, action, worker, detail = line.split("\t", 4)
-      return nil unless ts && action
-      { ts: ts, action: action, worker: worker, detail: detail }
+      File.exist?(path) ? File.readlines(path).last(limit).filter_map { |line| parse_event(line.chomp) } : []
     end
 
     def inbox_messages
-      dir = @cfg.inbox_dir
-      return {} unless Dir.exist?(dir)
-      Dir.children(dir).each_with_object({}) do |role, h|
-        rdir = File.join(dir, role)
-        next unless File.directory?(rdir)
-        h[role] = Dir.glob(File.join(rdir, "*.md")).sort.filter_map { |p| read_message(p) }
-      end
+      roles = Dir.exist?(@cfg.inbox_dir) ? Dir.children(@cfg.inbox_dir) : []
+      roles.select { |role| File.directory?(File.join(@cfg.inbox_dir, role)) }.to_h { |role| [role, messages(role)] }
     end
+
+    def active_locks = Dir.glob(File.join(@cfg.locks_dir, "*.json")).filter_map { |path| read_lock(path) }
+
+    private
+
+    def parse_event(line)
+      ts, action, worker, detail = line.split("\t", 4)
+      ts && action ? { ts: ts, action: action, worker: worker, detail: detail } : nil
+    end
+
+    def messages(role) = Dir.glob(File.join(@cfg.inbox_dir, role, "*.md")).sort.filter_map { |p| read_message(p) }
 
     def read_message(path)
       header, body = File.read(path).split("\n\n", 2)
-      { from: header[/^# from: (.+)$/, 1], at: header[/^# at: (.+)$/, 1],
-        preview: body.to_s.strip.slice(0, 140) }
+      { from: header[/^# from: (.+)$/, 1], at: header[/^# at: (.+)$/, 1], preview: body.to_s.strip.slice(0, 140) }
     rescue Errno::ENOENT
       nil
     end
 
-    def active_locks
-      dir = @cfg.locks_dir
-      return [] unless Dir.exist?(dir)
-      Dir.glob(File.join(dir, "*.json")).filter_map { |p| read_lock(p) }
-    end
-
+    # A lock without a ttl is a mutex of `coord with-lock`. Only advisory locks expire.
     def read_lock(meta)
       data = JSON.parse(File.read(meta))
-      name = File.basename(meta, ".json")
-      ts   = data["ts"].to_i
-      ttl  = data.fetch("ttl") { nil }&.to_i
-      return nil unless ttl&.positive?
-      { name: name, worker: data["worker"], acquired_at: Time.at(ts).utc.iso8601,
-        expires_at: Time.at(ts + ttl).utc.iso8601, stale: ts + ttl < Time.now.to_i }
+      ts, ttl = data["ts"].to_i, data["ttl"].to_i
+      ttl.positive? ? lock_record(File.basename(meta, ".json"), data["worker"], ts, ttl) : nil
     rescue JSON::ParserError, Errno::ENOENT
       nil
+    end
+
+    def lock_record(name, worker, ts, ttl)
+      { name: name, worker: worker, acquired_at: Time.at(ts).utc.iso8601,
+        expires_at: Time.at(ts + ttl).utc.iso8601, stale: ts + ttl < Time.now.to_i }
     end
   end
 
@@ -429,130 +400,236 @@ end
         </div>
       </div>
       <script>
-        let paused=false,INTERVAL=5;const TOKEN='__TOKEN__';
-        function k(n){return n==null?'-':n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?Math.round(n/1e3)+'k':String(n)}
-        async function act(id,action){
-          if(action!=='start'&&!confirm(action+' '+id+'? A running agent finishes its run first.'))return;
-          const r=await fetch('/action',{method:'POST',headers:{'Content-Type':'application/json','X-Maf-Token':TOKEN},
-            body:JSON.stringify({worker:id,action:action})}).then(r=>r.json()).catch(e=>({error:e.message}));
-          if(r.error)alert(r.error);refresh(true);
+        let paused = false, INTERVAL = 5, timer = null;
+        const TOKEN = '__TOKEN__';
+        const $ = id => document.getElementById(id);
+        const meta = text => `<div class="meta">${text}</div>`;
+        const muted = text => `<div class="muted">${text}</div>`;
+
+        function k(n) {
+          if (n == null) return '-';
+          if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+          return n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n);
         }
-        function state(w){
-          const s=w.status||{};
-          if(!w.live)return b('stopped','danger');
-          if(w.dispatch)return s.running?b('run '+ago(s.run_started_at),'info'):b('idle','ok');
-          return b('live','ok');
+        function ago(iso) {
+          const s = Math.round((Date.now() - new Date(iso)) / 1000);
+          if (s < 60) return s + 's';
+          if (s < 3600) return Math.floor(s / 60) + 'm';
+          return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
         }
-        function ctx(w){
-          const s=w.status||{};if(s.context_tokens==null)return'-';
-          const pct=s.context_window?' ('+Math.round(100*s.context_tokens/s.context_window)+'%)':'';
-          const over=s.context_limit&&s.context_tokens>=s.context_limit;
-          return(over?b('over limit','warn')+' ':'')+k(s.context_tokens)+pct;
+        function esc(s) {
+          return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
-        function lastRun(w){
-          const r=(w.status||{}).last_run;if(!r)return'-';
-          return b(r.success?'ok':'failed',r.success?'ok':'danger')+' '+ago(r.finished_at)+' ago<div class="log">'+esc(r.detail)+'</div>';
+        function b(t, l) { return `<span class="b b-${l}">${t}</span>`; }
+        function ac(a) {
+          const classes = { done: 'ad', claim: 'ac', unclaim: 'au', msg: 'am', broadcast: 'am' };
+          return classes[a] || '';
         }
-        function buttons(w){
-          if(!w.dispatch&&!w.live)return'<div class="log">cd '+esc(w.dir)+' &amp;&amp; maf start</div>';
-          const acts=w.dispatch?(w.live?['stop','restart']:['start']):['stop'];
-          return acts.map(a=>`<button class="act" onclick="act('${esc(w.id)}','${a}')">${a}</button>`).join('');
+        function togglePause() {
+          paused = !paused;
+          $('pbtn').textContent = paused ? 'Resume' : 'Pause';
+          if (!paused) refresh();
         }
-        function workerRows(ws,tasks){
-          return ws.map(w=>{
-            const s=w.status||{},u=w.usage||{},cur=tasks.filter(t=>t.worker===w.id&&t.start);
-            const model=s.model||w.model||'harness default';
-            const log=(w.dispatch?w.log:[]).concat(w.action.length?['action: '+w.action[w.action.length-1]]:[]);
-            return`<tr><td><strong>${esc(w.id)}</strong><div class="meta">${esc(w.role)}</div></td>
-              <td>${esc(w.harness)}<div class="meta">${w.dispatch?'dispatch':'interactive'}</div></td>
-              <td>${esc(model)}${s.session_runs!=null?'<div class="meta">session run '+(s.session_runs+1)+'</div>':''}</td>
-              <td>${state(w)}${w.last_event?'<div class="meta">event '+ago(w.last_event)+' ago</div>':''}</td>
-              <td>${ctx(w)}${w.handoff_at?'<div class="meta">note '+ago(w.handoff_at)+' ago</div>':''}</td>
-              <td>${cur.length?esc(cur[0].description)+'<div class="meta">'+esc(cur[0].uuid.slice(0,8))+'</div>':'-'}</td>
-              <td>${lastRun(w)}</td>
-              <td>${k(u.input_tokens)} in<div class="meta">${k(u.cached_input_tokens)} cached &middot; ${k(u.output_tokens)} out &middot; ${u.runs||0} runs</div></td>
-              <td>${buttons(w)}${log.length?'<div class="log">'+esc(log.join('\\n'))+'</div>':''}</td></tr>`
+
+        async function act(id, action) {
+          if (action !== 'start' && !confirm(action + ' ' + id + '? A running agent finishes its run first.')) return;
+          const headers = { 'Content-Type': 'application/json', 'X-Maf-Token': TOKEN };
+          const body = JSON.stringify({ worker: id, action: action });
+          const r = await fetch('/action', { method: 'POST', headers: headers, body: body })
+            .then(r => r.json()).catch(e => ({ error: e.message }));
+          if (r.error) alert(r.error);
+          refresh(true);
+        }
+
+        function state(w) {
+          const s = w.status || {};
+          if (!w.live) return b('stopped', 'danger');
+          if (!w.dispatch) return b('live', 'ok');
+          return s.running ? b('run ' + ago(s.run_started_at), 'info') : b('idle', 'ok');
+        }
+        function ctx(w) {
+          const s = w.status || {};
+          if (s.context_tokens == null) return '-';
+          const pct = s.context_window ? ' (' + Math.round(100 * s.context_tokens / s.context_window) + '%)' : '';
+          const over = s.context_limit && s.context_tokens >= s.context_limit;
+          return (over ? b('over limit', 'warn') + ' ' : '') + k(s.context_tokens) + pct;
+        }
+        function lastRun(w) {
+          const r = (w.status || {}).last_run;
+          if (!r) return '-';
+          const badge = b(r.success ? 'ok' : 'failed', r.success ? 'ok' : 'danger');
+          return badge + ' ' + ago(r.finished_at) + ' ago<div class="log">' + esc(r.detail) + '</div>';
+        }
+        function buttons(w) {
+          if (!w.dispatch && !w.live) return '<div class="log">cd ' + esc(w.dir) + ' &amp;&amp; maf start</div>';
+          const acts = w.dispatch ? (w.live ? ['stop', 'restart'] : ['start']) : ['stop'];
+          return acts.map(a => `<button class="act" onclick="act('${esc(w.id)}','${a}')">${a}</button>`).join('');
+        }
+        function logLines(w) {
+          const lines = (w.dispatch ? w.log : []).concat(w.action.length ? ['action: ' + w.action.at(-1)] : []);
+          return lines.length ? '<div class="log">' + esc(lines.join('\\n')) + '</div>' : '';
+        }
+        function tokens(w) {
+          const u = w.usage || {};
+          const rest = `${k(u.cached_input_tokens)} cached &middot; ${k(u.output_tokens)} out`
+            + ` &middot; ${u.runs || 0} runs`;
+          return k(u.input_tokens) + ' in' + meta(rest);
+        }
+        function taskCell(w, tasks) {
+          const cur = tasks.find(t => t.worker === w.id && t.start);
+          return cur ? esc(cur.description) + meta(esc(cur.uuid.slice(0, 8))) : '-';
+        }
+        function workerRow(w, tasks) {
+          const s = w.status || {};
+          const runs = s.session_runs != null ? meta('session run ' + (s.session_runs + 1)) : '';
+          const cells = [
+            `<strong>${esc(w.id)}</strong>` + meta(esc(w.role)),
+            esc(w.harness) + meta(w.dispatch ? 'dispatch' : 'interactive'),
+            esc(s.model || w.model || 'harness default') + runs,
+            state(w) + (w.last_event ? meta('event ' + ago(w.last_event) + ' ago') : ''),
+            ctx(w) + (w.handoff_at ? meta('note ' + ago(w.handoff_at) + ' ago') : ''),
+            taskCell(w, tasks), lastRun(w), tokens(w), buttons(w) + logLines(w)
+          ];
+          return '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
+        }
+        function renderWorkers(ws, tasks) {
+          const names = ['Worker', 'Harness', 'Model', 'State', 'Context', 'Task', 'Last run', 'Tokens', 'Actions'];
+          const head = '<tr>' + names.map(n => `<th>${n}</th>`).join('') + '</tr>';
+          const rows = ws.map(w => workerRow(w, tasks)).join('');
+          $('workers').innerHTML = ws.length ? '<table>' + head + rows + '</table>'
+            : muted('no workers yet. Run maf prepare or maf start.');
+        }
+
+        function taskAlerts(d) {
+          const t = d.tasks, alerts = [];
+          const add = (list, l, text) => { if ((list || []).length) alerts.push({ l: l, m: list.length + text }); };
+          add(t.stale, 'danger', ' claimed task(s) with expired lease — likely crashed worker');
+          add(t.orphaned, 'danger', ' task(s) assigned to roles nobody is running');
+          add(t.escalated, 'danger', ' task(s) escalated to the project manager — waiting for a decision');
+          add(t.in_review, 'warn', ' goal pull request(s) wait for your review on GitHub');
+          add(t.conflicts, 'warn', ' scope conflict(s) between pending tasks');
+          return alerts;
+        }
+        function otherAlerts(d) {
+          const alerts = [];
+          Object.entries(d.inboxes || {}).filter(([, msgs]) => msgs.length)
+            .forEach(([role, msgs]) => alerts.push({ l: 'warn', m: `${role} inbox: ${msgs.length} unread messages` }));
+          (d.locks || []).filter(l => l.stale).forEach(l =>
+            alerts.push({ l: 'danger', m: 'Stale lock: ' + l.name + ' held by ' + (l.worker || '?') + ', expired' }));
+          return alerts;
+        }
+        function workerAlerts(ws) {
+          const stopped = ws.filter(w => !w.live && w.dispatch)
+            .map(w => ({ l: 'danger', m: 'Dispatched worker ' + w.id + ' is stopped' }));
+          const run = w => (w.status || {}).last_run || {};
+          const failed = ws.filter(w => run(w).success === false)
+            .map(w => ({ l: 'warn', m: `Last run of ${w.id} failed: ${(run(w).detail || '').slice(0, 100)}` }));
+          return stopped.concat(failed);
+        }
+        function renderAlerts(alerts) {
+          const html = a => `<div class="alert ${a.l === 'warn' ? 'warn' : ''}">&#x26A0; ${esc(a.m)}</div>`;
+          $('alerts').innerHTML = alerts.map(html).join('');
+        }
+
+        function waiting(t, now) { return t.wait && new Date(t.wait) > now; }
+        function renderStats(d, tasks, now) {
+          const stale = d.tasks.stale || [];
+          const stats = [
+            { v: tasks.length, l: 'Pending' }, { v: tasks.filter(t => t.start).length, l: 'In Progress', c: 'info' },
+            { v: tasks.filter(t => !t.start && !waiting(t, now)).length, l: 'Backlog' },
+            { v: tasks.filter(t => waiting(t, now)).length, l: 'Waiting' },
+            { v: stale.length, l: 'Stale', c: stale.length ? 'danger' : '' },
+            { v: (d.declared_roles || []).length, l: 'Roles' }, { v: (d.workers || []).length, l: 'Workers' }
+          ];
+          const color = s => s.c ? ` style="color:var(--${s.c})"` : '';
+          const html = s => `<div class="stat"><div class="sv"${color(s)}>${s.v}</div>`
+            + `<div class="sl">${s.l}</div></div>`;
+          $('stats').innerHTML = stats.map(html).join('');
+        }
+        function renderGraph(g) {
+          if (!g) return $('graph').innerHTML = muted('graph age unknown');
+          const age = g.commits == null ? 'no age' : g.commits + ' commits since build';
+          $('graph').innerHTML = `<div class="row">${b(g.state, g.state === 'fresh' ? 'ok' : 'warn')} `
+            + `<span class="meta">${age}</span></div>`;
+        }
+
+        function taskRow(badge, t, detail) {
+          return `<div class="row">${badge} <strong>${esc(t.description)}</strong>` + meta(detail) + '</div>';
+        }
+        function claimedRow(t, staleIds) {
+          const badge = staleIds.has(t.uuid) ? b('stale', 'danger') : b('claimed', 'info');
+          const scope = t.scope ? ' &middot; ' + esc(t.scope) : '';
+          return taskRow(badge, t, `${esc(t.worker || '')} &middot; ${ago(t.start)} ago${scope}`);
+        }
+        function groupByRole(roles, tasks, now) {
+          const byRole = {};
+          const group = r => byRole[r] = byRole[r] || { c: [], bl: [], w: [] };
+          roles.forEach(group);
+          tasks.forEach(t => {
+            const g = group(t.role || 'unassigned');
+            (waiting(t, now) ? g.w : t.start ? g.c : g.bl).push(t);
+          });
+          return byRole;
+        }
+        function renderRoles(d, tasks, now) {
+          const roles = d.declared_roles || [];
+          const staleIds = new Set((d.tasks.stale || []).map(t => t.uuid));
+          $('roles').innerHTML = Object.entries(groupByRole(roles, tasks, now)).map(([role, g]) => {
+            const orphan = roles.length > 0 && role !== 'goal' && !roles.includes(role);
+            const rows = g.c.map(t => claimedRow(t, staleIds))
+              .concat(g.bl.map(t => taskRow(b('backlog', 'ok'), t, esc(t.scope || ''))))
+              .concat(g.w.map(t => taskRow(b('waiting', 'warn'), t, esc(t.scope || ''))));
+            return `<div class="card"><h3>${esc(role)}${orphan ? ' ' + b('no runner', 'danger') : ''}</h3>`
+              + (rows.join('') || muted('no tasks')) + '</div>';
           }).join('');
         }
-        function togglePause(){paused=!paused;document.getElementById('pbtn').textContent=paused?'Resume':'Pause';if(!paused)refresh()}
-        function ago(iso){const s=Math.round((Date.now()-new Date(iso))/1000);return s<60?s+'s':s<3600?Math.floor(s/60)+'m':Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m'}
-        function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
-        function b(t,l){return`<span class="b b-${l}">${t}</span>`}
-        function ac(a){return a==='done'?'ad':a==='claim'?'ac':a==='unclaim'?'au':a==='msg'||a==='broadcast'?'am':''}
 
-        function render(d){
-          INTERVAL=d.refresh_interval||5;
-          const ago_gen=ago(d.generated_at);
-          document.getElementById('proj').textContent=d.project+' — Flow Board';
-          document.getElementById('upd').textContent='Updated '+ago_gen+' | lease '+Math.round(d.lease_ttl/3600)+'h';
-
-          const stale=d.tasks.stale||[],orphaned=d.tasks.orphaned||[],conflicts=d.tasks.conflicts||[];
-          const alerts=[];
-          if(stale.length) alerts.push({l:'danger',m:stale.length+' claimed task(s) with expired lease — likely crashed worker'});
-          if(orphaned.length) alerts.push({l:'danger',m:orphaned.length+' task(s) assigned to roles nobody is running'});
-          const escalated=d.tasks.escalated||[];
-          if(escalated.length) alerts.push({l:'danger',m:escalated.length+' task(s) escalated to the project manager — waiting for a decision'});
-          const inReview=d.tasks.in_review||[];
-          if(inReview.length) alerts.push({l:'warn',m:inReview.length+' goal pull request(s) wait for your review on GitHub'});
-          if(conflicts.length) alerts.push({l:'warn',m:conflicts.length+' scope conflict(s) between pending tasks'});
-          Object.entries(d.inboxes||{}).forEach(([role,msgs])=>{if(msgs.length)alerts.push({l:'warn',m:role+' inbox: '+msgs.length+' unread message(s)'})});
-          (d.locks||[]).filter(l=>l.stale).forEach(l=>alerts.push({l:'danger',m:'Stale lock: '+esc(l.name)+' held by '+(l.worker||'?')+', expired'}));
-          document.getElementById('alerts').innerHTML=alerts.map(a=>`<div class="alert ${a.l==='warn'?'warn':''}">&#x26A0; ${esc(a.m)}</div>`).join('');
-
-          const tasks=d.tasks.all||[],now=new Date();
-          const claimed=tasks.filter(t=>t.start),backlog=tasks.filter(t=>!t.start&&!(t.wait&&new Date(t.wait)>now)),waiting=tasks.filter(t=>t.wait&&new Date(t.wait)>now);
-          document.getElementById('stats').innerHTML=[
-            {v:tasks.length,l:'Pending',c:''},{v:claimed.length,l:'In Progress',c:'info'},
-            {v:backlog.length,l:'Backlog',c:''},{v:waiting.length,l:'Waiting',c:''},
-            {v:stale.length,l:'Stale',c:stale.length?'danger':''},{v:(d.declared_roles||[]).length,l:'Roles',c:''},{v:(d.workers||[]).length,l:'Workers',c:''}
-          ].map(s=>`<div class="stat"><div class="sv"${s.c?' style="color:var(--'+s.c+')"':''}>${s.v}</div><div class="sl">${s.l}</div></div>`).join('');
-
-          const ws=d.workers||[];
-          const head='<tr><th>Worker</th><th>Harness</th><th>Model</th><th>State</th><th>Context</th><th>Task</th><th>Last run</th><th>Tokens</th><th>Actions</th></tr>';
-          document.getElementById('workers').innerHTML=ws.length?'<table>'+head+workerRows(ws,tasks)+'</table>':'<div class="muted">no workers yet. Run maf prepare or maf start.</div>';
-          ws.filter(w=>!w.live&&w.dispatch).forEach(w=>alerts.push({l:'danger',m:'Dispatched worker '+w.id+' is stopped'}));
-          ws.filter(w=>(w.status||{}).last_run&&!w.status.last_run.success).forEach(w=>alerts.push({l:'warn',m:'Last run of '+w.id+' failed: '+(w.status.last_run.detail||'').slice(0,100)}));
-          document.getElementById('alerts').innerHTML=alerts.map(a=>`<div class="alert ${a.l==='warn'?'warn':''}">&#x26A0; ${esc(a.m)}</div>`).join('');
-
-          const g=d.graph;
-          document.getElementById('graph').innerHTML=g?`<div class="row">${b(g.state,g.state==='fresh'?'ok':'warn')} <span class="meta">${g.commits==null?'no age':g.commits+' commits since build'}</span></div>`:'<div class="muted">graph age unknown</div>';
-
-          const roles=d.declared_roles||[];
-          const byRole={};
-          roles.forEach(r=>{byRole[r]={c:[],bl:[],w:[]}});
-          tasks.forEach(t=>{const r=t.role||'unassigned';if(!byRole[r])byRole[r]={c:[],bl:[],w:[]};(t.wait&&new Date(t.wait)>now?byRole[r].w:t.start?byRole[r].c:byRole[r].bl).push(t)});
-          const staleIds=new Set(stale.map(t=>t.uuid));
-          document.getElementById('roles').innerHTML=Object.entries(byRole).map(([role,g])=>{
-            const isOrph=roles.length>0&&role!=='goal'&&!roles.includes(role);
-            const rows=[
-              ...g.c.map(t=>`<div class="row">${staleIds.has(t.uuid)?b('stale','danger'):b('claimed','info')} <strong>${esc(t.description)}</strong><div class="meta">${esc(t.worker||'')} &middot; ${ago(t.start)} ago${t.scope?' &middot; '+esc(t.scope):''}</div></div>`),
-              ...g.bl.map(t=>`<div class="row">${b('backlog','ok')} <strong>${esc(t.description)}</strong><div class="meta">${t.scope?esc(t.scope):''}</div></div>`),
-              ...g.w.map(t=>`<div class="row">${b('waiting','warn')} <strong>${esc(t.description)}</strong><div class="meta">${t.scope?esc(t.scope):''}</div></div>`)
-            ];
-            return`<div class="card"><h3>${esc(role)}${isOrph?' '+b('no runner','danger'):''}</h3>${rows.join('')||'<div class="muted">no tasks</div>'}</div>`
-          }).join('');
-
-          const evts=(d.events||[]).slice().reverse().slice(0,25);
-          document.getElementById('events').innerHTML=evts.map(e=>`<div class="er"><span class="ets">${ago(e.ts)} ago</span><span class="ea ${ac(e.action)}">${esc(e.action)}</span><span>${esc(e.worker)} ${e.detail?'&mdash; '+esc(e.detail.slice(0,55)):''}</span></div>`).join('')||'<div class="muted">no events yet</div>';
-
-          const inboxes=Object.entries(d.inboxes||{});
-          document.getElementById('inboxes').innerHTML=inboxes.length?inboxes.map(([role,msgs])=>{
-            const head=`<div class="row"><span>${esc(role)}</span> ${msgs.length?b(msgs.length+' unread','warn'):b('clear','ok')}</div>`;
-            const body=msgs.map(m=>`<div class="row" style="padding-left:10px"><span class="meta">${esc(m.from||'?')}${m.at?' &middot; '+ago(m.at)+' ago':''}</span><div>${esc(m.preview)}</div></div>`).join('');
-            return head+body;
-          }).join(''):'<div class="muted">no inboxes</div>';
-
-          const lks=d.locks||[];
-          document.getElementById('locks').innerHTML=lks.length?lks.map(l=>`<div class="row"><span>${esc(l.name)}</span> ${l.stale?b('stale','danger'):b('held','info')} <span class="meta" style="margin-left:4px">${esc(l.worker||'')} &middot; expires ${ago(l.expires_at)}</span></div>`).join(''):'<div class="muted">no active locks</div>';
+        function renderEvents(events) {
+          const row = e => `<div class="er"><span class="ets">${ago(e.ts)} ago</span>`
+            + `<span class="ea ${ac(e.action)}">${esc(e.action)}</span>`
+            + `<span>${esc(e.worker)} ${e.detail ? '&mdash; ' + esc(e.detail.slice(0, 55)) : ''}</span></div>`;
+          const recent = (events || []).slice().reverse().slice(0, 25);
+          $('events').innerHTML = recent.map(row).join('') || muted('no events yet');
+        }
+        function renderInboxes(inboxes) {
+          const message = m => `<div class="row" style="padding-left:10px">`
+            + `<span class="meta">${esc(m.from || '?')}${m.at ? ' &middot; ' + ago(m.at) + ' ago' : ''}</span>`
+            + `<div>${esc(m.preview)}</div></div>`;
+          const box = ([role, msgs]) => `<div class="row"><span>${esc(role)}</span> `
+            + `${msgs.length ? b(msgs.length + ' unread', 'warn') : b('clear', 'ok')}</div>`
+            + msgs.map(message).join('');
+          const list = Object.entries(inboxes || {});
+          $('inboxes').innerHTML = list.length ? list.map(box).join('') : muted('no inboxes');
+        }
+        function renderLocks(locks) {
+          const badge = l => l.stale ? b('stale', 'danger') : b('held', 'info');
+          const row = l => `<div class="row"><span>${esc(l.name)}</span> ${badge(l)} `
+            + `<span class="meta" style="margin-left:4px">${esc(l.worker || '')} &middot; `
+            + `expires ${ago(l.expires_at)}</span></div>`;
+          $('locks').innerHTML = (locks || []).length ? locks.map(row).join('') : muted('no active locks');
         }
 
-        let timer=null;
-        async function refresh(now){
-          if(paused&&!now)return;
+        function render(d) {
+          INTERVAL = d.refresh_interval || 5;
+          $('proj').textContent = d.project + ' — Flow Board';
+          $('upd').textContent = 'Updated ' + ago(d.generated_at) + ' | lease ' + Math.round(d.lease_ttl / 3600) + 'h';
+          const tasks = d.tasks.all || [], now = new Date(), ws = d.workers || [];
+          renderAlerts(taskAlerts(d).concat(otherAlerts(d), workerAlerts(ws)));
+          renderStats(d, tasks, now);
+          renderWorkers(ws, tasks);
+          renderGraph(d.graph);
+          renderRoles(d, tasks, now);
+          renderEvents(d.events);
+          renderInboxes(d.inboxes);
+          renderLocks(d.locks);
+        }
+
+        async function refresh(now) {
+          if (paused && !now) return;
           clearTimeout(timer);
-          try{const d=await fetch('/data').then(r=>r.json());render(d)}
-          catch(e){document.getElementById('upd').textContent='Error: '+e.message}
-          timer=setTimeout(refresh,INTERVAL*1000);
+          try { render(await fetch('/data').then(r => r.json())); }
+          catch (e) { $('upd').textContent = 'Error: ' + e.message; }
+          timer = setTimeout(refresh, INTERVAL * 1000);
         }
         refresh();
       </script>
@@ -593,18 +670,21 @@ end
     end
 
     def run
-      problem = BoardCheck.new(@cfg).problem
-      abort "dashboard: #{problem}" if problem
-      server = build_server
-      server.mount_proc("/")     { |_, res| html(res) }
-      server.mount_proc("/data") { |_, res| json(res) }
-      server.mount_proc("/action") { |req, res| action(req, res) }
+      BoardCheck.new(@cfg).problem&.then { |problem| abort "dashboard: #{problem}" }
+      server = mount(build_server)
       trap("INT") { server.shutdown }
       puts "dashboard: http://localhost:#{@cfg.port}  (ctrl-c to stop)"
       server.start
     end
 
     private
+
+    def mount(server)
+      server.mount_proc("/")     { |req, res| local(req, res) { html(res) } }
+      server.mount_proc("/data") { |req, res| local(req, res) { json(res) } }
+      server.mount_proc("/action") { |req, res| action(req, res) }
+      server
+    end
 
     def build_server
       WEBrick::HTTPServer.new(BindAddress: "127.0.0.1",
@@ -619,21 +699,35 @@ end
     end
 
     def action(req, res)
-      res.content_type = "application/json"
       error = refusal(req) || @actions.run(*JSON.parse(req.body.to_s).values_at("worker", "action").map(&:to_s))
-      res.status = error ? 400 : 202
-      res.body = JSON.generate(error ? { error: error } : { ok: true })
+      answer(res, error ? 400 : 202, error ? { error: error } : { ok: true })
     rescue JSON::ParserError
-      res.status = 400
-      res.body = JSON.generate(error: "the body is not JSON")
+      answer(res, 400, error: "the body is not JSON")
+    end
+
+    def answer(res, status, data)
+      res.content_type = "application/json"
+      res.status = status
+      res.body = JSON.generate(data)
     end
 
     def refusal(req)
       return "use POST" unless req.request_method == "POST"
       return "wrong token" unless req["X-Maf-Token"] == @token
 
-      "wrong host" unless req.host.to_s.match?(/\A(localhost|127\.0\.0\.1)\z/)
+      "wrong host" unless local_host?(req)
     end
+
+    # DNS rebinding points a foreign name at 127.0.0.1. The Host header still
+    # names the foreign site, so the page and the board data stay private.
+    def local(req, res)
+      return yield if local_host?(req)
+
+      res.status = 403
+      res.body = "wrong host"
+    end
+
+    def local_host?(req) = req.host.to_s.match?(/\A(localhost|127\.0\.0\.1)\z/)
 
     def json(res)
       res.content_type = "application/json"

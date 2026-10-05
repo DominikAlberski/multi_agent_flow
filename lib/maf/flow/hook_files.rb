@@ -7,8 +7,7 @@ module Flow
       FileUtils.mkdir_p(File.dirname(dest))
       return if File.exist?(dest) && File.read(dest) == File.read(src)
 
-      FileUtils.cp(src, dest)
-      FileUtils.chmod("+x", dest)
+      FileUtils.install(src, dest, mode: 0o755)
       puts "  hook install: #{dest}"
     end
   end
