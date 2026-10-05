@@ -43,6 +43,13 @@ module Flow
   CLAUDE_ARCHITECT_RULE = "- Never call ScheduleWakeup with `stop:false` and no `prompt`. " \
                           "The call fails. Poll worker status through the task tool instead."
 
+  # The coordination contract that every role shares. It lives in the role
+  # prompt, not in the project's AGENTS.md: only a session that maf starts
+  # needs it, and the project keeps no trace of the tool.
+  CONTRACT = File.read(File.join(__dir__, "..", "..", "..", "assets", "agents-contract.md"))
+                 .lines.grep_v(/(>>>|<<<) multi-agent-flow/)
+                 .join.strip
+
   DECISIONS = "the decisions folder: `.agent/decisions/` if it exists, else `docs/decisions/`"
 
   # Lead roles cannot commit (ADR 0004). A worker commits their decision records.

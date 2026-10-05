@@ -22,7 +22,6 @@ module Check
     coord: File.join(ROOT, "assets", "coord"),
     taskrc: File.join(ROOT, "assets", "taskrc.append"),
     bootstrap: File.join(ROOT, "lib", "maf", "bootstrap.rb"),
-    gitignore: File.join(ROOT, "assets", "gitignore.append"),
     contract: File.join(ROOT, "assets", "agents-contract.md")
   }.freeze
 

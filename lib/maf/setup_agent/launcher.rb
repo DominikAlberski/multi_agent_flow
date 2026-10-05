@@ -22,20 +22,31 @@ module SetupAgent
       abort "setup_agent: '#{cmd.first}' not found on PATH."
     end
 
+    # FlowFiles finds the files of the flow in .maf/ of the main project. The
+    # project's own harness config stays as it is: each file of the flow is
+    # passed to the harness at the start.
+    module FlowFiles
+      def self.path(*parts) = File.join(Project.root, ".maf", *parts)
+      def self.flag(name, *parts) = File.exist?(path(*parts)) ? [name, path(*parts)] : []
+    end
+
+    # --settings adds the hooks of the flow, --mcp-config adds the graph server.
     module Claude
       def self.launch(role, _worker, model)
         prompt = "Read .maf/agents/claude/#{role}.md and follow it exactly. Start your work loop now."
-        cmd = ["claude"]
-        cmd += ["--model", model] if model
-        Launcher.exec_or_die(cmd + [prompt])
+        cmd = ["claude", *FlowFiles.flag("--settings", "claude", "settings.json"),
+               *FlowFiles.flag("--mcp-config", "mcp", "claude.json")]
+        Launcher.exec_or_die(cmd + (model ? ["--model", model] : []) + [prompt])
       end
     end
 
+    # opencode merges the file in OPENCODE_CONFIG with the project's opencode.json.
     module Opencode
       def self.launch(role, _worker, model)
+        config = FlowFiles.path("mcp", "opencode.json")
+        ENV["OPENCODE_CONFIG"] = config if File.exist?(config)
         cmd = ["opencode", ".", "--agent", role, "--prompt", "Start your work loop now."]
-        cmd += ["--model", model] if model
-        Launcher.exec_or_die(cmd)
+        Launcher.exec_or_die(cmd + (model ? ["--model", model] : []))
       end
     end
 

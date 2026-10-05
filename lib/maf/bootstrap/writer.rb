@@ -53,32 +53,12 @@ module Bootstrap
       true
     end
 
-    def append_marked(file, source)
-      FileUtils.touch(file)
-      File.open(file, "a") { |io| io.puts; io.write(@project.append_content(source)); io.puts }
-      true
-    end
-
-    def replace_marked(file, source)
-      File.write(file, MarkedBlock.new(File.read(file)).replace(@project.append_content(source)))
+    def write_exclude(_file, _source = nil)
+      LocalExclude.add(@project.target, *EXCLUDED)
       true
     end
 
     def merge_hook(file, source) = HookMerger.new(@project).merge(file, source)
-
-    # Drops the old contract block and any `@AGENTS.md` import: AGENTS.md
-    # gets its own contract, and a self-import is a loop.
-    def move_claude_md(file, _source = nil)
-      text = MarkedBlock.new(File.read(file)).remove.lines.reject { |line| line.strip == "@AGENTS.md" }
-      text = text.join.strip
-      append_text(@project.path("AGENTS.md"), text) unless text.empty?
-      FileUtils.rm(file)
-    end
-
-    def append_text(file, text)
-      old = File.exist?(file) ? File.read(file).rstrip : ""
-      File.write(file, [old, text].reject(&:empty?).join("\n\n") + "\n")
-    end
 
     def configure_claude_settings(file, _source = nil)
       @claude.configure(file)

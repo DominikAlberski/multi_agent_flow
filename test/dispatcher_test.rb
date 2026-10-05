@@ -924,6 +924,20 @@ class AdapterTest < Minitest::Test
   def harness(name) = Dispatcher::Harness::REGISTRY.fetch(name)
   def pairs(cmd) = cmd.each_cons(2).to_a
 
+  # The flow keeps its MCP config in .maf/mcp/, next to the coordination folder.
+  def test_a_dispatched_run_gets_the_mcp_config_of_the_flow
+    Dir.mktmpdir do |root|
+      mcp = File.join(root, "mcp")
+      FileUtils.mkdir_p(mcp)
+      %w[claude.json opencode.json].each { |name| File.write(File.join(mcp, name), "{}") }
+      cfg = config(coord_dir: File.join(root, "coordination"))
+
+      command = harness("claude").build_command(cfg, "go", nil)
+      assert_includes pairs(command), ["--mcp-config", File.join(mcp, "claude.json")]
+      assert_equal File.join(mcp, "opencode.json"), Dispatcher::Main.run_env(cfg)["OPENCODE_CONFIG"]
+    end
+  end
+
   def test_claude_command
     fresh = harness("claude").build_command(config(model: "haiku"), "go", nil)
     assert_equal %w[claude -p --output-format json], fresh.first(4)

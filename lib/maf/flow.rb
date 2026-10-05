@@ -57,6 +57,7 @@ module Flow
   end
 end
 
+require_relative "local_exclude"
 require_relative "flow/prompt_text"
 require_relative "flow/hermes_hook"
 require_relative "flow/roster"
