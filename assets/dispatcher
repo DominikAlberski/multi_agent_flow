@@ -657,6 +657,8 @@ module Dispatcher
 
     # Claude Code: `claude -p` prints one JSON object with session_id and
     # result. `--agent` loads .claude/agents/<role>.md as the session's role.
+    # `--mcp-config` takes many values. Put `--` before the prompt, or claude
+    # reads the prompt as one more config file and exits.
     module Claude
       extend Adapter
       STALE_SESSION = "No conversation found with session ID"
@@ -664,7 +666,7 @@ module Dispatcher
       def self.build_command(config, prompt, session_id)
         cmd = %w[claude -p --output-format json --permission-mode bypassPermissions --agent] + [config.role]
         cmd += ["--model", config.model] if config.model
-        cmd + FlowConfig.claude_mcp(config) + resume(session_id, "--resume") + [prompt]
+        cmd + FlowConfig.claude_mcp(config) + resume(session_id, "--resume") + ["--", prompt]
       end
 
       def self.result_event(output) = Events.last(output) { |event| event.key?("result") }

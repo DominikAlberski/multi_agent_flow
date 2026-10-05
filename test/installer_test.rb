@@ -726,6 +726,7 @@ class SetupAgentTest < Minitest::Test
       flow = File.join(File.realpath(dir), ".maf")
       expected = ["--settings", "#{flow}/claude/settings.json", "--mcp-config", "#{flow}/mcp/claude.json"]
       assert_equal expected, calls.first[1, 4]
+      assert_equal "--", calls.first[-2], "--mcp-config takes many values; -- keeps the prompt out"
     end
   end
 

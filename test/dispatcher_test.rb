@@ -934,6 +934,7 @@ class AdapterTest < Minitest::Test
 
       command = harness("claude").build_command(cfg, "go", nil)
       assert_includes pairs(command), ["--mcp-config", File.join(mcp, "claude.json")]
+      assert_equal ["--", "go"], command.last(2), "--mcp-config takes many values; -- keeps the prompt out"
       assert_equal File.join(mcp, "opencode.json"), Dispatcher::Main.run_env(cfg)["OPENCODE_CONFIG"]
     end
   end

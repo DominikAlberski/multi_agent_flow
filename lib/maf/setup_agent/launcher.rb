@@ -31,12 +31,13 @@ module SetupAgent
     end
 
     # --settings adds the hooks of the flow, --mcp-config adds the graph server.
+    # --mcp-config takes many values, so `--` ends the options before the prompt.
     module Claude
       def self.launch(role, _worker, model)
         prompt = "Read .maf/agents/claude/#{role}.md and follow it exactly. Start your work loop now."
         cmd = ["claude", *FlowFiles.flag("--settings", "claude", "settings.json"),
                *FlowFiles.flag("--mcp-config", "mcp", "claude.json")]
-        Launcher.exec_or_die(cmd + (model ? ["--model", model] : []) + [prompt])
+        Launcher.exec_or_die(cmd + (model ? ["--model", model] : []) + ["--", prompt])
       end
     end
 
