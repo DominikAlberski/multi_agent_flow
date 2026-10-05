@@ -181,11 +181,16 @@ module ContextWatch
       path = @input["transcript_path"].to_s
       return nil unless File.exist?(path)
 
-      same = @store.status["transcript"] == path
-      seen = same ? @store.status["seen_total"] || {} : {}
-      reading = Transcript.new(path, same ? @store.status["offset"].to_i : 0, seen).read
-      record(path, reading)
+      record(path, read_transcript(path))
       limit_output(@store.status["context_tokens"].to_i)
+    end
+
+    # A new transcript (after /clear) is read from its start.
+    def read_transcript(path)
+      status = @store.status
+      return Transcript.new(path, 0, {}).read unless status["transcript"] == path
+
+      Transcript.new(path, status["offset"].to_i, status["seen_total"] || {}).read
     end
 
     def record(path, reading)
@@ -232,13 +237,17 @@ module ContextWatch
   # A failed hook shows an error in each turn of the session. The watch is
   # optional, so an error is logged and the session goes on.
   def self.main(input, env)
-    return nil if !input.is_a?(Hash) || env["COORD_DISPATCHED"] || !env["COORD_DIR"] || !env["COORD_WORKER"]
-    return nil unless MafSession::Guard.new(env, input).authorized?
-
-    Hook.new(input, env).run
+    Hook.new(input, env).run if active?(input, env)
   rescue StandardError => e
     warn "context-watch: #{e.class}: #{e.message}"
     nil
+  end
+
+  # Only a registered maf start session runs the hook. The dispatcher owns dispatched agents.
+  def self.active?(input, env)
+    return false if !input.is_a?(Hash) || env["COORD_DISPATCHED"] || !env["COORD_DIR"] || !env["COORD_WORKER"]
+
+    MafSession::Guard.new(env, input).authorized?
   end
 end
 

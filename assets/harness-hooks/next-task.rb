@@ -9,7 +9,8 @@
 # are available, letting the session end normally.
 #
 # Claude Code (.claude/settings.json):
-#   {"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"ruby .maf/coordination/harness-hooks/next-task.rb"}]}]}}
+#   {"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command",
+#     "command":"ruby .maf/coordination/harness-hooks/next-task.rb"}]}]}}
 # Codex uses the project .codex/hooks.json file.
 #
 # Only a registered maf start session can read the board.

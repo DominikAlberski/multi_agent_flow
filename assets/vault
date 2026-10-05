@@ -201,16 +201,11 @@ module Vault
   end
 
   module Pid
+    # A corrupt or empty pid file reads as 0; Process.kill(0, 0) would signal
+    # this process's own group, so treat a non-positive pid as not running.
     def self.running?
-      return false unless File.exist?(PID_FILE)
-
-      pid = read
-      # A corrupt or empty pid file reads as 0; Process.kill(0, 0) would signal
-      # this process's own group, so treat a non-positive pid as not running.
-      return false if pid <= 0
-
-      Process.kill(0, pid)
-      true
+      pid = File.exist?(PID_FILE) ? read : 0
+      pid.positive? && Process.kill(0, pid) && true
     rescue Errno::ESRCH, Errno::ENOENT, Errno::EINVAL, RangeError
       false
     end

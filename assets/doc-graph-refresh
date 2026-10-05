@@ -130,12 +130,9 @@ module DocGraph
     end
 
     def self.holder_dead?(pid)
-      Process.kill(0, pid)
-      Time.now - File.mtime(path(LOCK)) > TTL
-    rescue Errno::ESRCH
-      true
-    rescue SystemCallError
-      false
+      Process.kill(0, pid) && Time.now - File.mtime(path(LOCK)) > TTL
+    rescue SystemCallError => e
+      e.is_a?(Errno::ESRCH)
     end
 
     def self.holder_pid
@@ -154,14 +151,13 @@ module DocGraph
       Log.write("refresh already running; marked pending")
     end
 
+    # The rename takes the list atomically. A new pending mark starts a new list.
     def self.take_pending
       taken = "#{path(PENDING)}.#{Process.pid}"
       File.rename(path(PENDING), taken)
-      File.readlines(taken, chomp: true).reject(&:empty?)
+      File.readlines(taken, chomp: true).reject(&:empty?).tap { FileUtils.rm_f(taken) }
     rescue Errno::ENOENT
       []
-    ensure
-      FileUtils.rm_f(taken) if taken
     end
 
     def self.pending? = File.exist?(path(PENDING))
@@ -174,12 +170,14 @@ module DocGraph
     RETRY_WAIT = 30
 
     def self.run(tree)
-      Dir.mktmpdir("doc-graph-refresh") do |tmp|
-        seed(tmp)
-        refresh(tmp, tree)
-      end
+      Dir.mktmpdir("doc-graph-refresh") { |tmp| seed_and_refresh(tmp, tree) }
     rescue StandardError => e
       Log.write("refresh failed: #{e.message}")
+    end
+
+    def self.seed_and_refresh(tmp, tree)
+      seed(tmp)
+      refresh(tmp, tree)
     end
 
     def self.seed(tmp)
@@ -205,8 +203,10 @@ module DocGraph
 
     def self.retry_wait = Integer(ENV.fetch("DOC_GRAPH_RETRY_WAIT", RETRY_WAIT))
 
+    EXTRACT_FLAGS = %w[--backend gemini --max-concurrency 1].freeze
+
     def self.extract_ok?(tmp, tree)
-      system({ "GRAPHIFY_OUT" => nil }, "graphify", "extract", tree, "--backend", "gemini", "--max-concurrency", "1", "--out", tmp) &&
+      system({ "GRAPHIFY_OUT" => nil }, "graphify", "extract", tree, *EXTRACT_FLAGS, "--out", tmp) &&
         File.exist?(File.join(tmp, GRAPH, "graph.json"))
     end
   end
@@ -235,7 +235,8 @@ module DocGraph
     def self.run
       graph_path = DocGraph.graph_path
       FileUtils.rm_rf(File.join(graph_path, "obsidian"))
-      Dir.chdir(DocGraph.main) { system({ "GRAPHIFY_OUT" => graph_path }, "graphify", "export", "obsidian", "--dir", OBSIDIAN) }
+      command = ["graphify", "export", "obsidian", "--dir", OBSIDIAN]
+      Dir.chdir(DocGraph.main) { system({ "GRAPHIFY_OUT" => graph_path }, *command) }
     end
   end
 
