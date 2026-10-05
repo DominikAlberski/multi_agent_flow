@@ -76,7 +76,9 @@ module Coord
       coord done ID [--force]              complete (refused while the task branch lacks the goal head,
                                            or while the verify command fails)
       coord annotate ID TEXT...
-      coord msg [--from A] TO TEXT...
+      coord msg [--from A] [--task ID] TO TEXT...
+                                           TO is a role or a worker; a worker's mail goes to its role inbox.
+                                           --task also saves the text as a note on the task.
       coord escalate [--task ID] TEXT...   report a problem you cannot fix to the project manager
                                            (copy to the architect)
       coord broadcast [--from A] [--to workers|leads|all] TEXT...
@@ -137,6 +139,12 @@ module Coord
     end
 
     def inbox_dir(role) = File.join(coord_dir, "inbox", role.to_s)
+
+    # Folders named <role>-<n>, written by older versions for one worker.
+    def worker_inbox_dirs(role)
+      pattern = /\A#{Regexp.escape(role.to_s)}-\d+\z/
+      Dir.glob(File.join(coord_dir, "inbox", "#{role}-*")).select { |dir| File.basename(dir).match?(pattern) }
+    end
     def message_hooks_dir = File.join(coord_dir, "message-hooks")
     def hook_path(role) = File.join(message_hooks_dir, "#{role}.sh")
     def locks_dir = File.join(coord_dir, "locks")
@@ -669,9 +677,11 @@ module Coord
       @from = default_from
     end
 
-    def send_message(to, from, text)
+    # A message for one worker goes to the inbox of its role. The header
+    # names the worker, so the reader knows who the message is for.
+    def send_message(to, from, text, worker: nil)
       path = new_message_path(to)
-      File.write(path, body(to, from, text))
+      File.write(path, body(to, from, text, worker))
       puts "msg -> #{path}"
       path
     end
@@ -686,6 +696,7 @@ module Coord
     # Paths of the agent's message files, oldest first. Shared with the
     # `--wait` poller so "is there mail yet" tests exactly what `inbox` reads.
     def files(role, all: false)
+      fold_worker_inboxes(role)
       dir = @paths.inbox_dir(role)
       Dir.glob(File.join(dir, all ? "**" : "", "*.md")).sort
     end
@@ -706,8 +717,22 @@ module Coord
       File.join(dir, "#{stamp}-#{Process.pid}.md")
     end
 
-    def body(to, from, text)
-      "# to: #{to}\n# from: #{from}\n# at: #{Time.now.utc.iso8601}\n\n#{text}\n"
+    def body(to, from, text, worker)
+      worker_line = worker ? "# for: #{worker}\n" : ""
+      "# to: #{to}\n#{worker_line}# from: #{from}\n# at: #{Time.now.utc.iso8601}\n\n#{text}\n"
+    end
+
+    # Older versions wrote a message for a worker to inbox/<worker>/. No
+    # session reads that folder. Move its unread messages to the role inbox.
+    def fold_worker_inboxes(role)
+      @paths.worker_inbox_dirs(role).each do |dir|
+        Dir.glob(File.join(dir, "*.md")).each { |file| move_to_role(file, role) }
+      end
+    end
+
+    def move_to_role(file, role)
+      FileUtils.mkdir_p(@paths.inbox_dir(role))
+      FileUtils.mv(file, File.join(@paths.inbox_dir(role), File.basename(file)))
     end
 
     def stamp
@@ -2097,10 +2122,34 @@ end
 
     def cmd_msg
       from = require_role!(@args.value_of("--from") || @role, "msg --from A, or export COORD_ROLE")
-      to = @args.require_arg("msg", "TO")
-      text = @args.require_text("msg")
-      deliver(to, from, text)
-      event_log.append("msg", @worker, "to #{to}: #{text}")
+      task = @args.value_of("--task")&.then { |id| find_task!(id) }
+      name = @args.require_arg("msg", "TO")
+      deliver_to(name, from, task_message(task, from, @args.require_text("msg")))
+    end
+
+    def deliver_to(name, from, text)
+      role, worker = recipient(name)
+      push(role, from, messages.send_message(role, from, text, worker: worker))
+      event_log.append("msg", @worker, "to #{name}: #{text}")
+    end
+
+    # A worker can stop before it reads its mail. The note on the task stays
+    # for the worker that continues the task.
+    def task_message(task, from, text)
+      return text unless task
+
+      tasks.annotate(task["uuid"], "MSG from #{from}: #{text}")
+      "Task #{task["uuid"]}: #{text}\nThis text is also a note on the task (coord show #{task["uuid"]})."
+    end
+
+    # Returns [role, worker]. A worker has no inbox of its own: its mail goes
+    # to its role inbox. A name that is no role and no worker is a typo.
+    def recipient(name)
+      roles = Roster.new(paths, tasks).roles | LEADS
+      return [name, nil] if roles.include?(name) || roles == LEADS
+
+      role = roles.find { |known| name.match?(/\A#{Regexp.escape(known)}-\d+\z/) }
+      role ? [role, name] : raise(Error, "unknown recipient '#{name}'. Use a role or a worker: #{roles.join(", ")}")
     end
 
     ESCALATE_PM = "project-manager"
