@@ -174,27 +174,28 @@ Expected output:
   - `.maf/agents/opencode/<role>.md`
   - `~/.hermes/skills/my-app-tester/SKILL.md`
 - New files in the project: the folder `.maf/` (with `bin/`, `coordination/`,
-  `agents/`, `config.json`, and `env.sh`), `AGENTS.md`, and `.gitignore`.
+  `agents/`, `claude/`, `mcp/`, `config.json`, and `env.sh`).
   The folders `.claude/agents/`, `.opencode/agents/`, and `.codex/prompts/`
   are symlinks into `.maf/agents/`.
-- If the project had a `CLAUDE.md` or `.claude/CLAUDE.md`, `maf add` moves its
-  text into `AGENTS.md` and deletes the file. Claude Code reads `AGENTS.md`
-  only when no `CLAUDE.md` exists.
+- maf does not change `AGENTS.md`, `CLAUDE.md`, `.gitignore`, `.mcp.json`,
+  `opencode.json`, or `.claude/settings.json`. These files belong to the project.
 
-### 6. Commit the installed files
+### 6. Nothing to commit
 
-Each agent works in its own git worktree. A worktree contains only committed
-files, so commit before starting any agent.
+maf is a tool, not a part of the project. It lists `.maf/` and each link and
+plugin that it creates in `.git/info/exclude`. That file is local to your
+clone, so `git status` shows no maf file and nothing goes into git.
 
-```sh
-cd "$PROJECT"
-git add .maf AGENTS.md .gitignore .claude .opencode .codex .mcp.json opencode.json
-git rm --cached -q --ignore-unmatch CLAUDE.md .claude/CLAUDE.md   # maf add moved it into AGENTS.md
-git commit -m "Add multi-agent flow"
-```
+The project keeps what the agents make: the code, the decisions in
+`docs/decisions/`, and `GLOSSARY.md`. If you remove maf, these stay.
 
-The `.gitignore` rules already exclude runtime state (task database, inboxes,
-sessions, handoff notes, logs).
+Each agent works in its own git worktree. `coord worktree` and `maf start`
+copy the flow files from the main project into each worktree.
+
+The project needs at least one commit, because a worktree starts from a commit.
+
+If an older maf version committed its files, run `maf untrack` one time (see
+"Remove maf files from git").
 
 ### 7. Verify
 
@@ -289,7 +290,6 @@ and server port, add a project hook:
 
 ```bash
 cp <multi_agent_flow>/assets/worktree-env.example.rb .maf/coordination/worktree-env.rb
-git add .maf/coordination/worktree-env.rb
 ```
 
 `coord worktree` runs the hook and adds its `export NAME=VALUE` lines to
@@ -304,7 +304,9 @@ Run the full suite with system tests under one lock:
 ### Keep interactive Claude Code agents awake
 
 An idle Claude Code session does not poll the board by itself. `maf add`
-adds two hooks to `.claude/settings.json`:
+writes the hooks of the flow to `.maf/claude/settings.json`. `maf start` passes the
+file with `claude --settings`. Claude Code runs these hooks next to the project's own
+hooks, and `.claude/settings.json` stays as it is:
 
 - `next-task.rb` registers the harness session ID on `SessionStart`.
   Its synchronous `Stop` hook continues a registered session when unclaimed tasks exist.
@@ -684,7 +686,8 @@ How it works:
 The architect starts these goals one after the other, or promotes an agreed term to the base branch at once.
 Without a project manager, the architect writes the terms.
 
-This flow does not depend on a skill and does not ship one. The rules are in the role prompts and in `AGENTS.md`.
+This flow does not depend on a skill and does not ship one. The rules are in the role prompts. Each role prompt
+ends with the coordination contract.
 
 ## Monitor progress
 
@@ -810,21 +813,20 @@ artifacts (see "Give the team work").
 
 `maf add` writes the graphify MCP server for each harness. The server runs
 `vault mcp`. In a worktree, `vault mcp` serves the graph of the main project.
+The project's own `.mcp.json` and `opencode.json` stay as they are.
 
-| Harness | Where | Written by maf |
+| Harness | Where | How the harness gets it |
 |---|---|---|
-| Claude Code | `.mcp.json` | yes |
-| opencode | `opencode.json` | yes |
-| Codex | `~/.codex/config.toml` (global) | no. `maf add` prints `codex mcp add ...`. |
-| Hermes | `~/.hermes/config.yaml` (global) | no. `maf add` prints `hermes mcp add ...`. |
+| Claude Code | `.maf/mcp/claude.json` | `maf start` and the dispatcher pass `--mcp-config` |
+| opencode | `.maf/mcp/opencode.json` | `maf start` and the dispatcher set `OPENCODE_CONFIG`. opencode merges it with `opencode.json`. |
+| Codex | `~/.codex/config.toml` (global) | `maf add` prints `codex mcp add ...`. |
+| Hermes | `~/.hermes/config.yaml` (global) | `maf add` prints `hermes mcp add ...`. |
 
-`maf add` merges into an existing file. It never replaces a graphify entry that
-it did not write. It leaves a file that is not valid JSON as it is.
-`maf uninstall` removes only the entry that `maf add` wrote.
+maf never replaces a graphify entry that it did not write. It leaves a file that
+is not valid JSON as it is.
 
-To turn the server off, set `"mcp": false` in `.maf/config.json`.
-Then remove the `graphify` entry from `.mcp.json` and `opencode.json`.
-With `"mcp": false`, `maf add` and `maf update` do not write the entry again.
+To turn the server off, set `"mcp": false` in `.maf/config.json`, and delete
+`.maf/mcp/`. With `"mcp": false`, `maf add` and `maf update` do not write it again.
 
 Open the `.maf/obsidian/` folder in Obsidian to see the code graph. To see
 `.maf/coordination/exports/board.md` as a kanban alongside the graph, open the project
@@ -962,23 +964,52 @@ The uninstaller removes:
 - Clean worktrees in `.maf/worktrees/`.
 - Generated role files in `.maf/agents/`, the symlinks `.claude/agents`,
   `.opencode/agents`, and `.codex/prompts`, and the project's Hermes skills.
-- The flow hooks in `.claude/settings.json` and `.codex/hooks.json`.
+- `.maf/claude/` and `.maf/mcp/` (the hooks and the MCP config of the flow).
+- The flow hooks in `.codex/hooks.json`.
 - The flow blocks in the `post-commit` and `post-merge` git hooks.
-- The marked blocks in `AGENTS.md` and `.gitignore`.
+- The flow paths in `.git/info/exclude`.
+- From an install of an older maf version: the flow hooks in `.claude/settings.json`,
+  the graphify entry in `.mcp.json` and `opencode.json`, and the marked blocks in
+  `AGENTS.md` and `.gitignore`.
 - `.maf/config.json`.
 - The folder `.maf/`, when nothing is left in it.
 
 The uninstaller keeps:
 
 - `.maf/graphify-out/` and `.maf/obsidian/`. A rebuild costs many agent runs. Delete them
-  by hand. `.gitignore` keeps their ignore rules.
+  by hand. `.git/info/exclude` keeps them out of git.
 - Files that do not carry the flow signature or marker, and text outside the
   marked blocks.
 - `worker/*` branches. Merge or delete them with `git branch -D`.
 - Worktrees with uncommitted changes. Add `--force` to remove them.
 - The guarded global Hermes hook. Other projects can use the hook.
 
-Commit the result.
+The project keeps the code, the decisions, and `GLOSSARY.md`. If an older
+maf version changed tracked files, commit the result.
+
+## Remove maf files from git
+
+An older maf version committed `.maf/`, the harness links, and its blocks in
+`AGENTS.md`, `.gitignore`, `.claude/settings.json`, `.mcp.json`, and `opencode.json`.
+Run this one time in such a project:
+
+```sh
+maf untrack --check   # preview
+maf untrack           # asks for confirmation; --yes skips the question
+```
+
+`maf untrack`:
+
+1. Removes `.maf/`, the harness links into `.maf/agents/`, the opencode plugin,
+   and a `.codex/hooks.json` with only flow hooks from git (`git rm --cached`).
+   The files stay on disk.
+2. Removes the flow blocks and entries from `AGENTS.md`, `.gitignore`,
+   `.claude/settings.json`, `.mcp.json`, and `opencode.json`. Your own text stays.
+3. Lists the flow paths in `.git/info/exclude`.
+4. Runs `maf update`, which writes `.maf/claude/settings.json` and `.maf/mcp/`.
+
+maf does not commit. Review the change with `git status`, then commit it.
+A `CLAUDE.md` that an older maf moved into `AGENTS.md` stays in `AGENTS.md`.
 
 ---
 
@@ -1056,12 +1087,12 @@ Do these steps in the project:
    maf migrate
    ```
 
-5. Check the result with `git status`. Git shows the old paths as deleted and
-   the new paths as new. Commit the move:
+5. Check the result with `git status`. Git shows the old paths as deleted.
+   Then run `maf untrack` (see "Remove maf files from git"), and commit:
 
    ```sh
-   git add -A
-   git commit -m "Move the flow into .maf"
+   maf untrack --yes
+   git commit -m "Remove the flow from git"
    ```
 
 6. In each shell, run `source .maf/env.sh`. Then run `coord status`.
@@ -1078,7 +1109,7 @@ Do these steps in the project:
   `.maf/coordination/workers.json`, and `.claude/settings.json`.
 - Regenerates the files of the current agents, as `maf update` does. This step
   updates the scripts, the role files, the harness symlinks, the git hooks, and
-  the marked blocks in `AGENTS.md` and `.gitignore`.
+  the local git excludes.
 - Never deletes a file. If the new path exists, the old file stays and the
   plan says `keep`.
 
@@ -1094,7 +1125,7 @@ nothing to move.
 
 ## Board rules
 
-The agent contract in `AGENTS.md` holds only the rules that agents act on.
+The coordination contract at the end of each role prompt holds only the rules that agents act on.
 This section holds the board details for the operator.
 
 - **Claim lease.** A claim with no activity for `COORD_LEASE_TTL` seconds (default 4 hours)

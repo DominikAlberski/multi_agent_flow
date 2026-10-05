@@ -146,7 +146,8 @@ Then run the same command without `--check`.
 1. Sets up the coordination layer.
 2. Writes a role file for each role, in the format of its harness.
 3. Writes a manifest at `$PROJECT/.maf/config.json`.
-4. Writes the graphify MCP server into `.mcp.json` (Claude Code) and `opencode.json` (opencode).
+4. Writes the graphify MCP server into `.maf/mcp/` for Claude Code and opencode.
+   `maf start` passes the file to the harness. The project's `.mcp.json` and `opencode.json` stay as they are.
    For Codex and Hermes, `maf add` prints a command. Run it to add the server.
    To turn the server off, set `"mcp": false` in `.maf/config.json`.
 
@@ -213,19 +214,14 @@ Check that each role file exists:
   project; Hermes skills are global, so this keeps two projects with the
   same role from overwriting each other's skill)
 
-## Step 6b - Commit the installed files
+## Step 6b - Do not commit the flow
 
-Worktrees contain only committed files. Commit before starting any agent.
+maf is a tool, not a part of the project. It lists `.maf/` and its links in
+`.git/info/exclude`, so `git status` shows no maf file. Do not commit them.
+The project needs at least one commit, because each worker worktree starts from a commit.
 
-```sh
-cd "$PROJECT"
-git add .maf AGENTS.md .gitignore .claude .opencode .codex .mcp.json opencode.json
-git rm --cached -q --ignore-unmatch CLAUDE.md .claude/CLAUDE.md   # maf add moved it into AGENTS.md
-git commit -m "Add multi-agent flow"
-```
-
-The `.gitignore` already excludes runtime state (task database, inboxes,
-sessions, logs).
+If `git ls-files .maf` lists files, an older maf version committed them. Run
+`maf untrack`, review `git status`, and ask the user to commit the result.
 
 ## Step 7 - Report to the user
 

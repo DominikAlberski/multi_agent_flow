@@ -12,6 +12,7 @@ require_relative "menu"
 require_relative "team"
 require_relative "team_command"
 require_relative "worker_control"
+require_relative "untrack"
 
 module Maf
   MANIFEST = ".maf/config.json"
@@ -49,6 +50,7 @@ module Maf
       "team" => "[set --max N --allow HARNESS[:MODEL]]   show the team, or set its budget",
       "uninstall" => "[--check] [--yes] [--force]             remove the flow from the project",
       "migrate" => "[--check] [--yes]                       move an old-layout install into .maf/",
+      "untrack" => "[--check] [--yes]                       remove the flow from git; the files stay (then commit)",
       "menu" => "                                        interactive mode (also: maf without a command)"
     }.freeze
 
@@ -105,6 +107,7 @@ module Maf
     def run_retire = Retire.new(SetupAgent::Project.root, @args.first || abort("usage: maf retire ROLE[_WORKER]")).run
     def run_uninstall = Uninstall::Runner.new(["--project", Dir.pwd, *@args]).run
     def run_menu = Menu.new.run
+    def run_untrack = Untrack.new(SetupAgent::Project.root, @args).run
     def run_migrate = Migrate::Runner.new(["--project", Dir.pwd, *@args]).run
 
     def run_agents
