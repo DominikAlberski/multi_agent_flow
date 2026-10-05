@@ -2,15 +2,16 @@
 
 module SetupAgent
   # Dispatch runs dispatcher in the worktree instead of an interactive
-  # session. The worktree's own copy of the dispatcher is used. The
-  # current Ruby runs it, so an old system Ruby on the shebang path never
-  # parses it.
+  # session. The dispatcher of the main checkout is used: maf update
+  # refreshes that copy, not the copy in a worktree. The current Ruby runs
+  # it, so an old system Ruby on the shebang path never parses it.
   module Dispatch
     DISPATCHER = ".maf/bin/dispatcher"
 
     def self.launch(args, model)
-      require_dispatcher!
-      cmd = [RbConfig.ruby, DISPATCHER, args.role, "--harness", args.harness]
+      dispatcher = File.join(Project.root, DISPATCHER)
+      require_dispatcher!(dispatcher)
+      cmd = [RbConfig.ruby, dispatcher, args.role, "--harness", args.harness]
       cmd += ["--model", model] if model
       cmd += args.dispatcher_args
       args.detach ? detach(cmd, args.worker) : Launcher.exec_or_die(cmd)
@@ -32,12 +33,10 @@ module SetupAgent
       Process.detach(pid) && pid
     end
 
-    # coord worktree copies .maf/bin of the main project into each worktree.
-    # A missing dispatcher means the main project has none either.
-    def self.require_dispatcher!
-      return if File.exist?(DISPATCHER)
+    def self.require_dispatcher!(dispatcher)
+      return if File.exist?(dispatcher)
 
-      abort "setup_agent: #{DISPATCHER} is missing in #{Dir.pwd}. Run maf update in the main project, then start again."
+      abort "setup_agent: #{dispatcher} is missing. Run maf update in the main project, then start again."
     end
   end
 end

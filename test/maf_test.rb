@@ -571,6 +571,21 @@ class MafTeamTest < Minitest::Test
     Process.kill("KILL", pid) rescue nil if pid
   end
 
+  # Regression: a worktree keeps the dispatcher copy from the day it was made.
+  # After maf update, the old copy wrote no worker status for the dashboard.
+  def test_dispatch_runs_the_dispatcher_of_the_main_checkout
+    maf("prepare", "opencode", "tester_2", "--interactive")
+    File.write(File.join(worktree("tester-2"), ".maf", "bin", "dispatcher"), "# stale copy\n")
+    out, status = maf("start", "opencode", "tester_2", "--dispatch", "--detach")
+    pid = workers.dig("tester-2", "pid")
+
+    assert_equal 0, status, out
+    command = IO.popen(["ps", "-o", "command=", "-p", pid.to_s], &:read)
+    assert_includes command, File.join(@project, ".maf", "bin", "dispatcher")
+  ensure
+    Process.kill("KILL", pid) rescue nil if pid
+  end
+
   def test_retire_removes_the_presence_file
     maf("prepare", "opencode", "architect_2", "--interactive")
     path = File.join(@project, ".maf/coordination", "presence", "architect-2.json")
