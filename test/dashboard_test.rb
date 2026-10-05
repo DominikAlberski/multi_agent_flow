@@ -54,22 +54,22 @@ def test_the_graph_age_is_nil_without_the_vault_script
 end
 
   def test_a_task_with_an_escalation_note_is_listed_as_escalated
-    reader = Dashboard::Collector.new(Dashboard::Config.new(["--coord", @coord]))
+    reader = Dashboard::TaskSummary.new(Dashboard::Config.new(["--coord", @coord]), [])
     open_task = { "uuid" => "a", "annotations" => [{ "description" => "ESCALATED: no ameba" }] }
     plain_task = { "uuid" => "b", "annotations" => [{ "description" => "STATUS: done" }] }
 
-    summary = reader.send(:task_summary, [open_task, plain_task])
+    summary = reader.of([open_task, plain_task])
 
     assert_equal ["a"], summary[:escalated].map { |t| t["uuid"] }
   end
 
   def test_a_goal_with_a_pull_request_is_listed_as_in_review
-    reader = Dashboard::Collector.new(Dashboard::Config.new(["--coord", @coord]))
+    reader = Dashboard::TaskSummary.new(Dashboard::Config.new(["--coord", @coord]), [])
     note = { "description" => "PR: https://github.com/o/r/pull/7" }
     goal = { "uuid" => "g", "role" => "goal", "annotations" => [note] }
     plain_goal = { "uuid" => "h", "role" => "goal" }
 
-    summary = reader.send(:task_summary, [goal, plain_goal])
+    summary = reader.of([goal, plain_goal])
 
     assert_equal ["g"], summary[:in_review].map { |t| t["uuid"] }
   end
