@@ -823,10 +823,11 @@ module Dispatcher
     end
   end
 
-  # Outcome decides what a finished run means. No report block keeps the old
-  # rule: exit 0 is success. A report block with status done is success.
-  # Status blocked or needs_review, and an invalid block, are no success. The
-  # session stays, so the next run resumes it.
+  # Outcome decides what a finished run means: :done, :waiting, or :failed.
+  # No report block keeps the old rule: exit 0 is done. Status done is done.
+  # Status blocked or needs_review is :waiting: the agent handled its input
+  # and now waits for someone else. An invalid block is :failed. The session
+  # stays, so the next run resumes it.
   class Outcome
     def initialize(session)
       @session = session
@@ -843,13 +844,13 @@ module Dispatcher
 
     def finished(text, block)
       Log.line("agent finished#{" (no report block)" unless block}: #{text.slice(0, 80)}")
-      true
+      :done
     end
 
     def unfinished(block)
       reason = block.error ? "an invalid report block: #{block.error}" : "status #{block.data["status"]}"
       Log.line("agent ended with #{reason}; next: #{block.data&.fetch("next", nil) || "-"}")
-      false
+      block.error ? :failed : :waiting
     end
 
     # Some models skip the handoff instruction. If no note exists, the agent's
@@ -878,9 +879,10 @@ module Dispatcher
            "session_runs" => runs, "model" => @config.model || read["model"])
     end
 
-    def finished(success, detail, model)
-      save({ "running" => false, "model" => model,
-             "last_run" => { "finished_at" => now, "success" => success, "detail" => detail.to_s[0, 300] } }.compact)
+    def finished(outcome, detail, model)
+      run = { "finished_at" => now, "success" => outcome == :done, "outcome" => outcome.to_s,
+              "detail" => detail.to_s[0, 300] }
+      save({ "running" => false, "model" => model, "last_run" => run }.compact)
     end
 
     private
@@ -916,7 +918,8 @@ module Dispatcher
       @status = WorkerStatus.new(config)
     end
 
-    def dispatch(prompt) = run(prompt).tap { |success| @status.finished(success, Log.last, @model) }
+    # Returns the outcome of the run: :done, :waiting, or :failed.
+    def dispatch(prompt) = run(prompt).tap { |outcome| @status.finished(outcome, Log.last, @model) }
 
     private
 
@@ -989,14 +992,14 @@ module Dispatcher
     end
 
     def conclude(block, result)
-      Outcome.new(@session).conclude(block, @harness.result_text(result.output).to_s) &&
-        Verify.pass?(@config, @env)
+      outcome = Outcome.new(@session).conclude(block, @harness.result_text(result.output).to_s)
+      outcome != :done || Verify.pass?(@config, @env) ? outcome : :failed
     end
 
     def failed(result)
       Log.line("agent #{failure_label(result.reason)}: #{result.output.lines.last(5).join.strip}")
       report_timeout if result.reason == :timeout
-      false
+      :failed
     end
 
     TIMEOUT_NOTICE = "Dispatcher run of %<worker>s timed out after %<seconds>ss. The claims stay. " \
@@ -1175,10 +1178,12 @@ module Dispatcher
       settle(messages, @runner.dispatch(Prompt.messages(messages, @config.role) + context))
     end
 
+    # A run that waits for someone else handled its messages, so they are read.
+    # Only a failed run returns them for another try.
     # Tasks still unclaimed after a message run count as dispatched, so the
     # next cycle backs off instead of starting another run for them.
-    def settle(messages, success)
-      success ? @mailbox.ack(messages) : @mailbox.release(messages)
+    def settle(messages, outcome)
+      outcome == :failed ? @mailbox.release(messages) : @mailbox.ack(messages)
       @watch.dispatched(@poller.unclaimed_task_ids) if @config.poll_tasks
       true
     end

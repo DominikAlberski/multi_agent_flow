@@ -480,10 +480,13 @@ The dispatcher asks each agent to end its final reply with a report block:
 ```
 
 - Status `done` is success. The dispatcher moves the messages to `read/`.
-- Status `blocked` or `needs_review` is no success. The dispatcher logs the
-  status and the `next` field. The session stays. The messages go back to the inbox.
+- Status `blocked` or `needs_review` means the run waits for someone else.
+  The dispatcher logs the status and the `next` field. The session stays.
+  The agent handled the messages, so the dispatcher moves them to `read/`.
+  The dashboard shows the run as `waiting`.
 - If the block is missing or invalid, the dispatcher resumes the session one
-  time with the error. If the block is still invalid, the run is no success.
+  time with the error. If the block is still invalid, the run failed. The
+  messages go back to the inbox.
 - If the block is still missing, the exit status decides, as before. A
   `--command` harness has no session, so the dispatcher does not resume it.
 
@@ -510,7 +513,8 @@ Choose signal texts that the harness does not echo from the prompt.
 
 The dispatcher does this automatically — no action required.
 
-**Messages.** All waiting messages go to one agent run. If a message fails 3
+**Messages.** All waiting messages go to one agent run. A run that fails returns
+the messages to the inbox. If a message fails 3
 runs, it moves to `inbox/<role>/failed/`. The retry count stays correct after a
 restart (stored in the file name: `.retry2.md`). Do not run `coord inbox` for a
 role that a dispatcher serves.
@@ -735,7 +739,7 @@ The Workers table has one row per worker from `.maf/coordination/workers.json`:
 | State | `stopped` when the process is gone. A dispatched worker shows `run Nm` during a run, else `idle`. |
 | Context | The context size of the session, with a % of the window for Codex. `over limit` past the context limit. |
 | Task | The task that the worker claimed. |
-| Last run | A dispatched worker: success or failure, and the last dispatcher message. |
+| Last run | A dispatched worker: `ok`, `waiting` (status blocked or needs_review), or `failed`, and the last dispatcher message. |
 | Tokens | Input, cached input, and output tokens, and the runs (dispatch) or turns (interactive). |
 | Actions | The buttons, and the last log lines of the dispatcher and of the last action. |
 
