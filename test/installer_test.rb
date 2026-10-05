@@ -369,6 +369,15 @@ class FlowTest < InstallerTestCase
     assert File.exist?(stored_agent_file)
   end
 
+  # opencode asked for each access to /tmp, the board, and git data.
+  def test_opencode_role_file_allows_the_directories_outside_the_worktree
+    flow("--agent", "opencode:tester")
+
+    content = File.read(File.join(@dir, ".maf", "agents", "opencode", "tester.md"))
+    assert_includes content, %("/tmp/*": allow)
+    assert_includes content, %("#{File.expand_path(@dir)}/.maf/*": allow)
+  end
+
   # Regression: TastingCompanion keeps its own agents in .claude/agents. The
   # harness then found no role file, and the startup prompt named a missing file.
   def test_a_harness_folder_with_foreign_files_gets_a_link_for_each_role_file
@@ -711,6 +720,19 @@ class SetupAgentTest < Minitest::Test
     yield
   ensure
     launcher.define_method(:exec_or_die, original)
+  end
+
+  # Codex asked for approval at each coord command: the board is outside the worktree.
+  def test_codex_launch_makes_the_board_writable
+    calls = []
+    Dir.mktmpdir do |dir|
+      FileUtils.mkdir_p(File.join(dir, ".codex", "prompts"))
+      File.write(File.join(dir, ".codex", "prompts", "tester.md"), "prompt")
+      with_exec_stub(->(cmd) { calls << cmd }) do
+        Dir.chdir(dir) { SetupAgent::Launcher::Codex.launch("tester", "tester-1", nil) }
+      end
+      assert_equal ["--add-dir", File.join(File.realpath(dir), ".maf", "coordination")], calls.first[1, 2]
+    end
   end
 
   # Worktrees live inside the project, under <project>/.maf/worktrees/<slug>.

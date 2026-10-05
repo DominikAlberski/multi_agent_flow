@@ -43,7 +43,8 @@ module Flow
       template = File.read(File.join(TEMPLATES, "#{harness}.md.erb"))
       ERB.new(template, trim_mode: "-").result_with_hash(
         role: role, title: data.fetch("title"), description: data.fetch("description"),
-        prompt: @prompts.build(harness, role, data), model: model, can_edit: data.fetch("can_edit")
+        prompt: @prompts.build(harness, role, data), model: model, can_edit: data.fetch("can_edit"),
+        project: File.expand_path(@options.project)
       )
     end
 

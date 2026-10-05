@@ -44,10 +44,15 @@ module SetupAgent
         prompt_file = ".codex/prompts/#{role}.md"
         abort "setup_agent: #{prompt_file} missing." unless File.exist?(prompt_file)
 
-        cmd = ["codex"]
+        cmd = ["codex", *writable_dirs]
         cmd += ["--model", model] if model
         Launcher.exec_or_die(cmd + [File.read(prompt_file)])
       end
+
+      # The worktree is the only writable root of the Codex sandbox. coord
+      # writes the board and the artifacts in .maf/coordination of the main
+      # project, so Codex would ask for approval at each coord command.
+      def self.writable_dirs = ["--add-dir", File.join(SetupAgent::Project.root, ".maf", "coordination")]
     end
   end
 end
