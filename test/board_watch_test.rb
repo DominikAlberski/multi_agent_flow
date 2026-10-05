@@ -22,7 +22,10 @@ module BoardWatchTestHelpers
     def alive? = (@checks -= 1) >= 0
   end
 
-  FakeBoard = Struct.new(:work)
+  # FakeBoard has messages of one age, in seconds.
+  FakeBoard = Struct.new(:work, :message_age) do
+    def settled?(work, batch) = !(work.unclaimed + work.claimed).empty? || message_age.to_i >= batch
+  end
   FakeSession = Struct.new(:running?)
 end
 
@@ -65,6 +68,24 @@ class BackoffTest < Minitest::Test
     @backoff.record(work(unclaimed: %w[a]))
 
     assert @backoff.due?(work(unclaimed: %w[b]))
+  end
+end
+
+class BoardSettledTest < Minitest::Test
+  include BoardWatchTestHelpers
+
+  def test_the_age_of_the_oldest_message_decides
+    Dir.mktmpdir("board-watch-settled") do |dir|
+      inbox = File.join(dir, "inbox", "architect")
+      FileUtils.mkdir_p(inbox)
+      File.write(File.join(inbox, "1.md"), "x")
+      board = BoardWatch::Board.new("coord", { "COORD_DIR" => dir, "COORD_ROLE" => "architect" })
+
+      refute board.settled?(work(messages: %w[1.md]), 120)
+      File.utime(Time.now - 200, Time.now - 200, File.join(inbox, "1.md"))
+      assert board.settled?(work(messages: %w[1.md]), 120)
+      assert board.settled?(work(unclaimed: %w[a]), 120)
+    end
   end
 end
 
@@ -129,9 +150,9 @@ class WatcherTest < Minitest::Test
 
   def teardown = FileUtils.remove_entry(@dir)
 
-  def watcher(board_work, running: false, checks: 3)
-    parts = BoardWatch::Parts.new(board: FakeBoard.new(board_work), session: FakeSession.new(running),
-                                  owner: FakeOwner.new(checks), backoff: @backoff)
+  def watcher(board_work, running: false, checks: 3, message_age: 0)
+    parts = BoardWatch::Parts.new(board: FakeBoard.new(board_work, message_age), session: FakeSession.new(running),
+                                  owner: FakeOwner.new(checks), backoff: @backoff, batch: 120)
     BoardWatch::Watcher.new(parts, 0)
   end
 
@@ -145,6 +166,15 @@ class WatcherTest < Minitest::Test
 
   def test_idle_agent_without_work_is_not_poked
     assert_nil watcher(work).wait_for_work
+  end
+
+  # Each done task sends one message. One turn must read the whole group.
+  def test_a_new_message_waits_for_the_rest_of_its_group
+    assert_nil watcher(work(messages: %w[m1]), message_age: 30).wait_for_work
+  end
+
+  def test_an_old_message_pokes
+    assert_equal %w[m1], watcher(work(messages: %w[m1]), message_age: 120).wait_for_work.messages
   end
 end
 

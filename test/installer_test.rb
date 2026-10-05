@@ -216,7 +216,7 @@ class BootstrapTest < InstallerTestCase
     async = watch.select { |hook| hook["asyncRewake"] }
     assert_equal [true], async.map { |hook| hook["asyncRewake"] }
     assert_equal ["ruby .maf/coordination/harness-hooks/board-watch.rb"], async.map { |hook| hook["command"] }
-    assert_equal 2, hooks["Stop"].size
+    assert_equal 3, hooks["Stop"].size
     assert File.exist?(File.join(@dir, ".maf/coordination", "harness-hooks", "board-watch.rb"))
     assert Dir.exist?(File.join(@dir, ".maf/coordination", "message-hooks"))
   end

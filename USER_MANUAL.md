@@ -324,6 +324,31 @@ The watcher does nothing for dispatched agents (`COORD_DISPATCHED=1`).
 To change the timing, set `BOARD_WATCH_INTERVAL` and
 `BOARD_WATCH_IDLE` (seconds) before you run `maf start`.
 
+Messages often come in a group: each done task sends one to the architect.
+The watcher wakes an agent for messages only when the oldest unread message is
+`BOARD_WATCH_BATCH` seconds old (default: 120). One turn then reads the whole group.
+A task wakes the agent at once.
+
+### Restart a long interactive session
+
+Each model call sends the whole session context again. A long session costs
+more on every call. The `context-watch.rb` hook watches interactive Claude Code
+and Codex sessions:
+
+1. At each stop, the hook reads the context size from the session transcript.
+2. If the context is over the limit, the hook asks the agent one time to write a
+   handoff note to `.maf/coordination/sessions/<worker>.handoff.md`.
+3. Then the hook shows: `Context: 162k tokens (limit 150k) ... Type /clear to restart.`
+4. Type `/clear`. The new session gets the handoff note as context.
+
+The default limit is 150000 tokens. Set `"team": {"context_limit": 200000}` in
+`.maf/config.json`, or `MAF_CONTEXT_LIMIT` before `maf start`.
+
+The hook also writes the model and the context size to
+`.maf/coordination/status/<worker>.json`, and adds the token usage of the session
+to `.maf/coordination/usage/<worker>.json`. For an interactive worker, `runs`
+counts the turns. The dispatcher writes the same status file for a dispatched worker.
+
 Codex and Hermes role files tell the agent to block in
 `coord next --wait --timeout 540` when it has no work. The command returns
 when a task or a message arrives. Each timeout costs one model call, so use

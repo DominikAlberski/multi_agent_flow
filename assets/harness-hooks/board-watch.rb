@@ -24,7 +24,8 @@
 #    "async":true,"asyncRewake":true,"timeout":604800}
 #
 # Required env: COORD_ROLE (set by maf start). COORD_DIR and TASKRC optional.
-# Env: BOARD_WATCH_INTERVAL (default 60), BOARD_WATCH_IDLE (default 120).
+# Env: BOARD_WATCH_INTERVAL (default 60), BOARD_WATCH_IDLE (default 120),
+# BOARD_WATCH_BATCH (default 120).
 # The script does nothing if COORD_DISPATCHED is set: the dispatcher owns
 # the loop for dispatched agents.
 #
@@ -66,6 +67,13 @@ module BoardWatch
       Work.new(task_ids("next", @env["COORD_ROLE"]), task_ids("next", "--mine"), messages)
     end
 
+    # Messages often come in a group: each done task sends one. A poke for
+    # messages only waits until the oldest message is BATCH seconds old, so
+    # one turn reads the whole group. Each turn sends the whole context again.
+    def settled?(work, batch)
+      !(work.unclaimed + work.claimed).empty? || oldest_message_age >= batch
+    end
+
     private
 
     def task_ids(*args)
@@ -73,9 +81,9 @@ module BoardWatch
       output.lines.map(&:strip).grep(UUID).map { |line| line[UUID] }
     end
 
-    def messages
-      Dir.glob(File.join(@env["COORD_DIR"], "inbox", @env["COORD_ROLE"], "*.md")).map { |p| File.basename(p) }
-    end
+    def messages = message_paths.map { |path| File.basename(path) }
+    def message_paths = Dir.glob(File.join(@env["COORD_DIR"], "inbox", @env["COORD_ROLE"], "*.md"))
+    def oldest_message_age = message_paths.map { |path| Time.now - File.mtime(path) }.max.to_i
   end
 
   # Session tells if the agent is running: Claude Code appends to the
@@ -174,7 +182,7 @@ module BoardWatch
     end
   end
 
-  Parts = Struct.new(:board, :session, :owner, :backoff, keyword_init: true)
+  Parts = Struct.new(:board, :session, :owner, :backoff, :batch, keyword_init: true)
 
   # Watcher sleeps one interval per check. It returns the work to poke
   # about, or nil if the owner process is gone.
@@ -196,7 +204,7 @@ module BoardWatch
       return nil if @parts.session.running?
 
       work = @parts.board.work
-      work if work.any? && @parts.backoff.due?(work)
+      work if work.any? && @parts.board.settled?(work, @parts.batch) && @parts.backoff.due?(work)
     end
   end
 
@@ -220,8 +228,9 @@ module BoardWatch
       return 0 unless active?
       return 0 if @input["hook_event_name"] == "SessionStart"
 
-      work = Board.new(coord, board_env).work
-      work.any? && backoff.due?(work) ? poke(work, $stdout) : 0
+      board = Board.new(coord, board_env)
+      work = board.work
+      work.any? && board.settled?(work, batch) && backoff.due?(work) ? poke(work, $stdout) : 0
     end
 
     private
@@ -234,6 +243,7 @@ module BoardWatch
     def lock = @lock ||= Lock.new(File.join(coord_dir, "locks", "board-watch-#{worker}.d"))
     def backoff = @backoff ||= Backoff.new(File.join(coord_dir, "sessions", "#{worker}.watch.json"), interval)
     def interval = seconds("BOARD_WATCH_INTERVAL", 60)
+    def batch = seconds("BOARD_WATCH_BATCH", 120)
     def seconds(name, default) = Integer(@env.fetch(name, default.to_s), exception: false) || default
 
     def coord
@@ -242,7 +252,8 @@ module BoardWatch
 
     def watcher
       session = Session.new(@input["transcript_path"], seconds("BOARD_WATCH_IDLE", 120))
-      parts = Parts.new(board: Board.new(coord, board_env), session: session, owner: Owner.new, backoff: backoff)
+      parts = Parts.new(board: Board.new(coord, board_env), session: session, owner: Owner.new, backoff: backoff,
+                        batch: batch)
       Watcher.new(parts, interval)
     end
 

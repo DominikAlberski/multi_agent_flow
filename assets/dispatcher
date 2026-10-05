@@ -120,7 +120,13 @@ module Dispatcher
                       keyword_init: true)
 
   module Log
+    class << self
+      # The last message. The worker status shows it as the result of a run.
+      attr_reader :last
+    end
+
     def self.line(message)
+      @last = message
       text = "[#{Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")}] dispatcher: #{message}"
       path = ENV["DISPATCHER_LOG"]
       path ? File.open(path, "a") { |file| file.puts(text) } : warn(text)
@@ -609,6 +615,7 @@ module Dispatcher
       def resume(session_id, *flag) = session_id ? [*flag, session_id] : []
       def present(value) = value.to_s.empty? ? nil : value
       def usage(_output) = nil
+      def model(_output) = nil
     end
 
     # Hermes: `hermes chat --oneshot`, JSONL output, skill preload.
@@ -649,6 +656,8 @@ module Dispatcher
       def self.result_text(output) = result_event(output)["result"]
       def self.session_id(output) = present(result_event(output)["session_id"])
       def self.usage(output) = TokenUsage.normalize(result_event(output)["usage"])
+      # The result names each model that the run used. The main model comes first.
+      def self.model(output) = result_event(output)["modelUsage"]&.keys&.first
     end
 
     # Codex: `codex exec` (or `codex exec resume ID`) with JSONL events. Codex
@@ -721,6 +730,7 @@ module Dispatcher
       def self.session_id(_output) = nil
       def self.result_text(_output) = nil
       def self.usage(_output) = nil
+      def self.model(_output) = nil
     end
 
     REGISTRY = { "hermes" => Hermes, "claude" => Claude, "codex" => Codex, "opencode" => Opencode }.freeze
@@ -826,6 +836,45 @@ module Dispatcher
     end
   end
 
+  # WorkerStatus writes .maf/coordination/status/<worker>.json. The dashboard
+  # shows it. NOTE: assets/harness-hooks/context-watch.rb writes the same file
+  # for an interactive session; both run standalone.
+  class WorkerStatus
+    def initialize(config)
+      @config = config
+      @path = File.join(config.coord_dir, "status", "#{config.worker}.json")
+    end
+
+    def started(session_id, runs)
+      save("mode" => "dispatch", "role" => @config.role, "harness" => @config.command ? "command" : @config.harness,
+           "pid" => Process.pid, "running" => true, "run_started_at" => now, "session_id" => session_id,
+           "session_runs" => runs, "model" => @config.model || read["model"])
+    end
+
+    def finished(success, detail, model)
+      save({ "running" => false, "model" => model,
+             "last_run" => { "finished_at" => now, "success" => success, "detail" => detail.to_s[0, 300] } }.compact)
+    end
+
+    private
+
+    def now = Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def read
+      File.exist?(@path) ? JSON.parse(File.read(@path)) : {}
+    rescue JSON::ParserError
+      {}
+    end
+
+    def save(data)
+      FileUtils.mkdir_p(File.dirname(@path))
+      File.write("#{@path}.tmp", JSON.generate(read.merge(data)))
+      File.rename("#{@path}.tmp", @path)
+    rescue SystemCallError => e
+      Log.line("worker status not saved: #{e.message}")
+    end
+  end
+
   # Runner runs one agent dispatch. It resumes the saved session only while
   # the LLM prompt cache is still warm (see --cache-window). A cold session
   # would resend the whole context at full price, so the dispatcher starts a
@@ -837,16 +886,20 @@ module Dispatcher
       @harness = harness
       @env = env
       @session = Session.new(config.coord_dir, config.worker)
+      @status = WorkerStatus.new(config)
     end
 
-    def dispatch(prompt)
+    def dispatch(prompt) = run(prompt).tap { |success| @status.finished(success, Log.last, @model) }
+
+    private
+
+    def run(prompt)
       session_id = warm_session_id
+      @status.started(session_id, @session.runs)
       result = attempt(prompt, session_id)
       result = retry_fresh(prompt) if session_id && @harness.stale_session?(result.output)
       report(result)
     end
-
-    private
 
     def warm_session_id
       id = @session.id
@@ -879,6 +932,7 @@ module Dispatcher
     def spawn(cmd)
       result = Spawn.run(cmd, env: @env, timeout: @config.timeout, limits: Limits.from(@config))
       TokenUsage.new(@config.coord_dir, @config.worker).add(@harness.usage(result.output))
+      @model = @harness.model(result.output) || @model
       result
     end
 

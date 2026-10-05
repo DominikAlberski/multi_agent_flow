@@ -370,6 +370,7 @@ class RunnerTest < Minitest::Test
     def self.session_id(output) = output[/session=(\S+)/, 1]
     def self.result_text(output) = output[/^reply: (.*)/m, 1] || "ok #{DONE}"
     def self.usage(output) = output[/tokens=(\d+)/, 1]&.then { |n| { "input_tokens" => n.to_i, "output_tokens" => 1 } }
+    def self.model(output) = output[/model=(\S+)/, 1]
   end
 
   DONE = '<report>{"status":"done","tests":"pass"}</report>'
@@ -557,6 +558,23 @@ class RunnerTest < Minitest::Test
   def test_token_usage_adds_up_per_worker
     2.times { capture_io { runner("echo tokens=10").dispatch("go") } }
     assert_equal({ "input_tokens" => 20, "output_tokens" => 2, "runs" => 2 }, usage_totals)
+  end
+
+  def worker_status = JSON.parse(File.read(File.join(@dir, "status", "backend-developer-bot.json")))
+
+  # The dashboard shows which model a worker runs and how its last run ended.
+  def test_a_run_writes_the_worker_status
+    capture_io { runner(%(echo session=s-1; echo model=claude-opus-5-5; printf 'reply: ok #{DONE}')).dispatch("go") }
+    status = worker_status
+    assert_equal ["dispatch", false, "claude-opus-5-5"], status.values_at("mode", "running", "model")
+    assert_equal true, status.dig("last_run", "success")
+    assert_includes status.dig("last_run", "detail"), "agent finished"
+  end
+
+  def test_a_failed_run_shows_the_failure_in_the_status
+    capture_io { runner("echo boom; exit 1").dispatch("go") }
+    assert_equal false, worker_status.dig("last_run", "success")
+    assert_includes worker_status.dig("last_run", "detail"), "boom"
   end
 
   def test_a_run_without_usage_writes_nothing
