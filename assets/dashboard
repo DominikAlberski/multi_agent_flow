@@ -368,7 +368,7 @@ end
           }).join(''):'<div class="muted">no workers yet. Run maf prepare or maf start.</div>';
 
           const tks=Object.entries(d.tokens||{});
-          document.getElementById('tokens').innerHTML=tks.length?tks.map(([w,u])=>`<div class="row"><strong>${esc(w)}</strong> <span class="meta">input ${u.input_tokens||0} &middot; output ${u.output_tokens||0} &middot; ${u.runs||0} runs</span></div>`).join(''):'<div class="muted">no token usage yet</div>';
+          document.getElementById('tokens').innerHTML=tks.length?tks.map(([w,u])=>`<div class="row"><strong>${esc(w)}</strong> <span class="meta">input ${u.input_tokens||0} &middot; cached ${u.cached_input_tokens||0} &middot; output ${u.output_tokens||0} &middot; ${u.runs||0} runs</span></div>`).join(''):'<div class="muted">no token usage yet</div>';
 
           const g=d.graph;
           document.getElementById('graph').innerHTML=g?`<div class="row">${b(g.state,g.state==='fresh'?'ok':'warn')} <span class="meta">${g.commits==null?'no age':g.commits+' commits since build'}</span></div>`:'<div class="muted">graph age unknown</div>';

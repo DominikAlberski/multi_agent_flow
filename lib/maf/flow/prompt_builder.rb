@@ -23,11 +23,13 @@ module Flow
       "#{intro(data)}\n\n#{duties_block(data)}\n\n#{format(WORKER_LOOP, role: role, no_task_instruction: no_task_line(harness))}"
     end
 
-    # Claude Code wakes an idle session with the board-watch hook. Other
-    # harnesses block in `coord next --wait`, which also returns on a message.
-    # The opencode board-watch plugin wakes opencode if the wait loop stops.
+    # Claude Code wakes an idle session with the board-watch hook, and opencode
+    # with the board-watch plugin. So these agents stop instead of waiting:
+    # each return of a wait costs one model call over the whole context.
+    # Codex and Hermes cannot be woken, so they block in `coord next --wait`.
+    # The dispatcher adds the report block rule to each dispatched prompt.
     def no_task_line(harness)
-      harness == "claude" ? NO_TASK_STOP : NO_TASK_WAIT
+      WAKE_HARNESSES.include?(harness) ? NO_TASK_STOP : NO_TASK_WAIT
     end
 
     def architect_prompt(harness, data)

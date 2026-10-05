@@ -950,7 +950,7 @@ module Coord
     def line(path)
       data = JSON.parse(File.read(path))
       "tokens #{File.basename(path, ".json")}: input=#{data["input_tokens"].to_i} " \
-        "output=#{data["output_tokens"].to_i} runs=#{data["runs"].to_i}"
+        "cached=#{data["cached_input_tokens"].to_i} output=#{data["output_tokens"].to_i} runs=#{data["runs"].to_i}"
     rescue JSON::ParserError
       nil
     end

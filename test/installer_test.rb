@@ -438,13 +438,14 @@ class FlowTest < InstallerTestCase
     refute_match(/COORD_AGENT|coord add --agent/, content)
   end
 
-  # The dispatcher reads the report block to decide if a dispatched run is done.
-  def test_role_files_ask_for_the_report_block_in_a_dispatched_run
+  # The dispatcher adds the report block rule to each dispatched prompt.
+  # The role files do not repeat it: each model call would send it again.
+  def test_role_files_leave_the_report_block_to_the_dispatcher
     out, status = flow("--agent", "claude:backend-developer", "--agent", "opencode:architect")
 
     assert_equal 0, status, out
     [File.join(@dir, ".claude", "agents", "backend-developer.md"), architect_file].each do |path|
-      assert_includes File.read(path), Flow::REPORT_FORMAT
+      refute_includes File.read(path), "<report>"
     end
   end
 
@@ -499,7 +500,18 @@ class FlowTest < InstallerTestCase
     refute_includes content, "coord next --wait"
   end
 
-  # Only Claude Code can wake an idle session. Other harnesses must block in
+  # The opencode board-watch plugin wakes an idle session. A wait loop would
+  # cost one model call at each timeout.
+  def test_opencode_worker_stops_and_the_plugin_wakes_it
+    out, status = flow("--agent", "opencode:backend-developer")
+
+    assert_equal 0, status, out
+    content = File.read(File.join(@dir, ".maf", "agents", "opencode", "backend-developer.md"))
+    assert_includes content, "The board watcher wakes you"
+    refute_includes content, "coord next --wait"
+  end
+
+  # Codex and Hermes cannot wake an idle session. They must block in
   # `coord next --wait`, which returns on a new task or a new message.
   def test_codex_worker_blocks_on_the_board_instead_of_stopping
     out, status = flow_with_home("--agent", "codex:backend-developer")

@@ -20,32 +20,28 @@ module Flow
     - Do not use subagents to verify your work.
   TEXT
 
-  # The dispatcher reads this block to decide if a dispatched run is done.
-  # NOTE: assets/dispatcher carries the same REPORT_FORMAT; both run standalone.
-  REPORT_FORMAT = '<report>{"status":"<done|blocked|needs_review>","tests":"<pass|fail>","next":"<next>"}</report>'
-  REPORT_RULE = <<~TEXT.strip
-    - If COORD_DISPATCHED is 1, end your final reply with one report block on its own line:
-      #{REPORT_FORMAT}
-      Use status done only when the work is complete. Use blocked or needs_review otherwise.
-  TEXT
-
-  NO_TASK_STOP = "- If no task and no message is available, stop. The board watcher wakes you when work arrives."
+  # Harnesses with a watcher that wakes an idle session.
+  WAKE_HARNESSES = %w[claude opencode].freeze
+  NO_TASK_STOP = "- If no task and no message is available, stop. The board watcher wakes you when work arrives.\n" \
+                 "  Do not wait in a loop: each return of a wait costs one model call."
   NO_TASK_WAIT = <<~TEXT.strip
     - If no task is available, run `coord next --wait --timeout 540`. It returns
       when a task or a message arrives. If it times out, run it again. Do not poll by hand.
   TEXT
 
-# Every role except the project manager reads the code graph before work.
-GRAPH_RULE = <<~TEXT.strip
-  - Query the shared knowledge graph before you plan or edit. It finds code and prior decisions faster than grep.
-    Run `vault age` first. Then run `graphify query "..." --graph "$COORD_DIR/../graphify-out/graph.json"`,
-    or use the graphify MCP tools. Never run `graphify export`.
-    Put one line in your report: "Graph: fresh", "Graph: stale", or "Graph: missing".
-TEXT
+  # Every role except the project manager reads the code graph before work.
+  # A query output stays in the context for each later call, so the budget is small.
+  GRAPH_RULE = <<~TEXT.strip
+    - Query the shared knowledge graph when you start a task or plan a goal, not before.
+      It finds code and prior decisions faster than grep. Run `vault age` first.
+      Then run `graphify query "..." --budget 800 --graph "$COORD_DIR/../graphify-out/graph.json"`,
+      or use the graphify MCP tools. Never run `graphify export`.
+      Put one line in the report of that task or plan: "Graph: fresh", "Graph: stale", or "Graph: missing".
+  TEXT
 
-# Only Claude Code has ScheduleWakeup. Other harnesses never see this rule.
-CLAUDE_ARCHITECT_RULE = "- Never call ScheduleWakeup with `stop:false` and no `prompt`. " \
-                        "The call fails. Poll worker status through the task tool instead."
+  # Only Claude Code has ScheduleWakeup. Other harnesses never see this rule.
+  CLAUDE_ARCHITECT_RULE = "- Never call ScheduleWakeup with `stop:false` and no `prompt`. " \
+                          "The call fails. Poll worker status through the task tool instead."
 
   DECISIONS = "the decisions folder: `.agent/decisions/` if it exists, else `docs/decisions/`"
 
@@ -92,7 +88,6 @@ CLAUDE_ARCHITECT_RULE = "- Never call ScheduleWakeup with `stop:false` and no `p
     #{GRAPH_RULE}
     #{STE_RULE}
     #{SUBAGENT_RULE}
-    #{REPORT_RULE}
   LOOP
 
   # Steps 2 to 9 are the same with and without a project manager.
@@ -159,7 +154,6 @@ CLAUDE_ARCHITECT_RULE = "- Never call ScheduleWakeup with `stop:false` and no `p
     - Take goals only from the project manager. Never take requests directly from the user.
     #{STE_RULE}
     #{SUBAGENT_RULE}
-    #{REPORT_RULE}
   LOOP
 
   ARCHITECT_LOOP_DIRECT = <<~LOOP
@@ -180,7 +174,6 @@ CLAUDE_ARCHITECT_RULE = "- Never call ScheduleWakeup with `stop:false` and no `p
     - Take requests from the user directly. This project has no project manager.
     #{STE_RULE}
     #{SUBAGENT_RULE}
-    #{REPORT_RULE}
   LOOP
 
   # The user can give the project manager a budget (`maf team set`) and let it
@@ -225,6 +218,5 @@ CLAUDE_ARCHITECT_RULE = "- Never call ScheduleWakeup with `stop:false` and no `p
     - If no report has arrived yet, tell the user and check again with `coord inbox project-manager`.
     #{STE_RULE}
     #{SUBAGENT_RULE}
-    #{REPORT_RULE}
   LOOP
 end

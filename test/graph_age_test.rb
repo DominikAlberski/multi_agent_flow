@@ -145,8 +145,9 @@ class GraphPromptTest < Minitest::Test
     %w[architect backend-developer tester reviewer].each do |role|
       text = role_file(role)
 
-      assert_includes text, "Query the shared knowledge graph before you plan or edit", role
+      assert_includes text, "Query the shared knowledge graph when you start a task or plan a goal", role
       assert_equal 1, text.scan("Graph: fresh").size, role
+      assert_includes text, "--budget 800", role
       refute_includes text, "If `graphify-out/` exists", role
     end
   end

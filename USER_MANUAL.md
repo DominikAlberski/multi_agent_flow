@@ -324,9 +324,10 @@ The watcher does nothing for dispatched agents (`COORD_DISPATCHED=1`).
 To change the timing, set `BOARD_WATCH_INTERVAL` and
 `BOARD_WATCH_IDLE` (seconds) before you run `maf start`.
 
-Codex and opencode role files tell the agent to block in
+Codex and Hermes role files tell the agent to block in
 `coord next --wait --timeout 540` when it has no work. The command returns
-when a task or a message arrives.
+when a task or a message arrives. Each timeout costs one model call, so use
+`--dispatch` for idle Codex and Hermes agents.
 Codex uses project hooks in `.codex/hooks.json` for `SessionStart` and `Stop`.
 The stop hook can continue a registered session but cannot wake an idle session when new work arrives.
 Use `--dispatch` to run Codex agents unattended.
@@ -338,7 +339,8 @@ Review the new project hook definitions when Codex requests hook trust.
 
 ### Keep interactive opencode agents awake
 
-An opencode agent can end its turn and leave the wait loop. `maf add` installs
+An opencode agent stops when it has no work. It does not wait in a loop:
+each return of a wait costs one model call over the whole context. `maf add` installs
 the plugin `.opencode/plugins/board-watch.js` for projects with opencode
 agents. The plugin uses these rules:
 
@@ -475,9 +477,12 @@ runs, it moves to `inbox/<role>/failed/`. The retry count stays correct after a
 restart (stored in the file name: `.retry2.md`). Do not run `coord inbox` for a
 role that a dispatcher serves.
 
-**Tasks.** The dispatcher does not retry the same unclaimed tasks every minute.
+**Tasks.** The dispatcher claims one unclaimed task for its worker before the run.
+The run works on that task only. If another worker took every task first, no run
+starts. So two workers of one role never pay for a run without work.
+The dispatcher does not retry the same unclaimed tasks every minute.
 The wait between runs doubles after each run, up to 1 hour. A new or changed
-task starts a run immediately.
+task starts a run immediately. A message run never claims a task.
 
 **Prompt cache.** LLM providers cache a conversation for a limited time after the
 last request. Claude Code uses a 1-hour cache.
@@ -488,18 +493,24 @@ last request. Claude Code uses a 1-hour cache.
 - If the last run is older, the dispatcher starts a fresh session. The fresh
   session gets a short handoff note (at most 300 words), not the full old context.
   The log shows: `idle Nm, past the cache window; starting fresh with the handoff note`.
-- Each run ends with the handoff note in `.maf/coordination/sessions/<worker>.handoff.md`.
-  The agent writes it while the cache is still warm.
+- Each resume sends the whole old context again, on every model call of the run.
+  After `--max-session-runs` runs (default: 5) in one session, the dispatcher starts
+  a fresh session with the handoff note. `--max-session-runs 0` turns the limit off.
+- A run that changed the state of the work ends with a new handoff note in
+  `.maf/coordination/sessions/<worker>.handoff.md`. The agent writes it while the
+  cache is still warm. A run that changed nothing keeps the old note.
 
-**Prefetch.** Each dispatch prompt holds the output of `coord next ROLE` and
-`git log --oneline -10`, each cut to 2000 characters. The agent needs fewer tool
-calls to see the board. Lead roles get only the git log. If a command fails,
+**Prefetch.** A task run prompt holds the task spec (`coord show ID`) and
+`git log --oneline -10`, each cut to 2000 characters. A message run prompt holds
+only the git log. The agent needs fewer tool calls to start. If a command fails,
 the log shows `prefetch failed` and the prompt goes out without that part.
 
 **Token usage.** After each run, the dispatcher adds the token usage of the run
-to `.maf/coordination/usage/<worker>.json`. Claude Code, Hermes, and Codex report the
-usage. opencode and `--command` harnesses do not. `coord status` and the
-dashboard show the totals. A run never fails because of missing usage data.
+to `.maf/coordination/usage/<worker>.json`. `input_tokens` counts every input token.
+`cached_input_tokens` counts the cache reads, which cost a fraction of the input price.
+Claude Code, Hermes, and Codex report the usage. opencode and `--command` harnesses
+do not. `coord status` and the dashboard show the totals. A run never fails because
+of missing usage data.
 
 Set `--cache-window` to your provider's cache time minus a margin. For a
 30-minute cache: `--cache-window 1500`. To never resume: `--cache-window 0`.
@@ -725,12 +736,10 @@ The graph holds code knowledge. It helps the architect plan and the developer
 find code. It does not carry the plan and spec exchange. That exchange uses
 artifacts (see "Give the team work").
 
-- **Rule.** Each role queries the graph before the work. If the graph is
-  missing or stale, the role says so in its report.
-- **Prefetch.** The dispatcher runs `graphify query` with the title and scope of
-  the first unclaimed task. It adds the first 2000 characters to the dispatch
-  prompt. A lead role gets no query. The dispatcher skips the query without
-  `graphify` or without a graph.
+- **Rule.** Each role queries the graph when it starts a task or plans a goal,
+  with `--budget 800`. The query output stays in the context for each later
+  model call, so a small budget saves tokens. If the graph is missing or stale,
+  the role says so in the report of that task or plan.
 - **Age.** The graph age is the number of commits since the graph was built.
   The graph is stale when a commit after the build changed a source or
   markdown file. Show the age with `vault age`, `vault status`, `coord status`,
@@ -768,8 +777,8 @@ root as the Obsidian vault.
 `coord msg` and `coord broadcast` fire a per-role hook at
 `.maf/coordination/message-hooks/<role>.sh` when a message is delivered. The hook is a plain
 shell script. If there is no hook, `coord` only writes the inbox file.
-An agent does not need a hook to get a message. The board watcher (Claude Code)
-and `coord next --wait` (other harnesses) wake the agent on an unread message.
+An agent does not need a hook to get a message. The board watcher (Claude Code
+and opencode) and `coord next --wait` (Codex and Hermes) wake the agent on an unread message.
 
 ```sh
 # .maf/coordination/message-hooks/backend-developer.sh

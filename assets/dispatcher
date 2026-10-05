@@ -15,7 +15,7 @@
 #                     [--skill NAME | --no-skill] [--interval S] [--max-turns N]
 #                     [--timeout S] [--idle-timeout S] [--grace S]
 #                     [--completion-signal TEXT] [--abort-signal TEXT]
-#                     [--cache-window S] [--no-poll-tasks]
+#                     [--cache-window S] [--max-session-runs N] [--no-poll-tasks]
 #                     [--once] [--verbose]
 #
 #   dispatcher tester                            # hermes (default)
@@ -54,6 +54,10 @@
 #   --cache-window S   Resume a session only if its last run ended less than
 #                      S seconds ago (default: 3300, 55 minutes). 0 means
 #                      never resume.
+#   --max-session-runs N  Start a fresh session after N runs in one session
+#                      (default: 5). Each resume sends the whole old context
+#                      again, so a long session costs more on every call.
+#                      0 means no limit.
 #   --no-poll-tasks    Dispatch on inbox messages only.
 #   --once             Run one poll cycle, then exit (tests, cron).
 #   --verbose          Log idle cycles too.
@@ -64,18 +68,21 @@
 # the agent once. On success the messages move to read/. On failure they go
 # back to the inbox, and after MAX_ATTEMPTS failures to failed/.
 #
-# Tasks: when `coord next ROLE` lists unclaimed tasks, the dispatcher runs the
-# agent once. If the same task set is still unclaimed afterwards, it waits
-# with a doubling backoff (capped at MAX_BACKOFF) before it tries again. A
-# changed task set dispatches at once.
+# Tasks: when `coord next ROLE` lists unclaimed tasks, the dispatcher claims
+# one task for its worker and runs the agent on that task only. The claim is
+# atomic, so a run never starts for a task that another worker took. If the
+# same task set is still unclaimed afterwards, it waits with a doubling
+# backoff (capped at MAX_BACKOFF) before it tries again. A changed task set
+# dispatches at once.
 #
 # Sessions and the prompt cache: the session ID is saved to
 # .maf/coordination/sessions/<worker>.session and resumed on the next run, so the
 # agent keeps its context without staying alive. LLM providers cache the
 # session prefix for a limited time after the last request (1 hour for
 # Claude Code). A resume after that time resends the whole context at full
-# price. So the dispatcher resumes only inside --cache-window. Outside it,
-# the dispatcher starts a fresh session. Every run ends by writing a short
+# price. So the dispatcher resumes only inside --cache-window, and for at
+# most --max-session-runs runs. Otherwise the dispatcher starts a fresh
+# session. A run that changed the state of the work ends by writing a short
 # handoff note to .maf/coordination/sessions/<worker>.handoff.md, and a fresh
 # session starts with that note. If the harness reports an unknown session,
 # the dispatcher also starts fresh. Other failures keep the session.
@@ -109,7 +116,8 @@ module Dispatcher
 
   Config = Struct.new(:role, :harness, :command, :model, :skill, :no_skill, :interval, :max_turns,
                       :timeout, :idle_timeout, :grace, :completion_signal, :abort_signal,
-                      :cache_window, :once, :poll_tasks, :worker, :coord_dir, :verbose, keyword_init: true)
+                      :cache_window, :max_session_runs, :once, :poll_tasks, :worker, :coord_dir, :verbose,
+                      keyword_init: true)
 
   module Log
     def self.line(message)
@@ -200,20 +208,22 @@ module Dispatcher
       @handoff_path = File.join(dir, "#{worker}.handoff.md")
     end
 
-    def id
-      value = File.exist?(@path) ? File.read(@path).strip : ""
-      value.empty? ? nil : value
-    end
+    def id = lines.first.to_s.empty? ? nil : lines.first
+
+    # The second line counts the runs of the session. Each resume adds the old
+    # context again, so --max-session-runs caps the count.
+    def runs = lines[1].to_i
 
     def save(session_id)
+      count = session_id == id ? runs + 1 : 1
       FileUtils.mkdir_p(File.dirname(@path))
-      File.write(@path, session_id)
+      File.write(@path, "#{session_id}\n#{count}\n")
     end
 
+    def lines = File.exist?(@path) ? File.read(@path).split("\n").map(&:strip) : []
     def clear = FileUtils.rm_f(@path)
     def idle_seconds = File.exist?(@path) ? Time.now - File.mtime(@path) : Float::INFINITY
     def handoff = File.exist?(@handoff_path) ? File.read(@handoff_path).strip : ""
-    def handoff_written_since?(time) = File.exist?(@handoff_path) && File.mtime(@handoff_path) >= time
     def write_handoff(text) = FileUtils.mkdir_p(File.dirname(@handoff_path)) && File.write(@handoff_path, text)
   end
 
@@ -287,62 +297,22 @@ module Dispatcher
     end
   end
 
-  # GraphQuery asks the shared knowledge graph about the first unclaimed task.
-  # The query is the task title and scope. It is skipped, without a log line,
-  # when graphify is not on PATH or the graph does not exist.
-  module GraphQuery
-    LABEL = "graphify query (first task)"
-
-    def self.command(board_text)
-      return nil unless graph_ready?
-
-      query = query_text(board_text)
-      query && -> { run(query) }
-    end
-
-    def self.graph_path = File.join(Project.root, ".maf", "graphify-out", "graph.json")
-
-    def self.graph_ready?
-      on_path = ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).any? { |d| File.executable?(File.join(d, "graphify")) }
-      on_path && File.exist?(graph_path)
-    rescue SystemCallError
-      false
-    end
-
-    # coord next prints: id, title, scope, separated by tabs. The text of an
-    # empty board has no id, so it gives no query.
-    def self.query_text(board_text)
-      id, title, scope = board_text.to_s.lines.first.to_s.strip.split("\t")
-      title && id.match?(/\A[0-9a-f-]{36}\z/) ? [title, scope].compact.join(" ") : nil
-    end
-
-    def self.run(query)
-      output = IO.popen(["graphify", "query", query, "--graph", graph_path], err: File::NULL, &:read)
-      $?.success? && !output.strip.empty? ? output : nil
-    rescue SystemCallError
-      nil
-    end
-  end
-
-  # Prefetch adds live context to a dispatch prompt: the output of
-  # `coord next ROLE`, of `git log --oneline -10`, and of a graph query for the
-  # first task. Each part is cut to LIMIT characters. A failed command is
-  # logged and left out. Lead roles own no tasks, so they get no `coord next`
-  # part and no graph query.
+  # Prefetch adds live context to a dispatch prompt: the spec of the task the
+  # run works on (`coord show ID`) and `git log --oneline -10`. Each part is
+  # cut to LIMIT characters. A failed command is logged and left out. A run
+  # without a task (a message run) gets only the git log. The agent queries
+  # the knowledge graph itself, with a question that fits the task.
   module Prefetch
     LIMIT = 2000
 
-    def self.context(poller, role)
-      sections = commands(poller, role).filter_map { |label, run| section(label, run) }
+    def self.context(poller, task_id = nil)
+      sections = commands(poller, task_id).filter_map { |label, run| section(label, run) }
       sections.empty? ? "" : "\nLive context at dispatch time:\n\n#{sections.join("\n")}"
     end
 
-    def self.commands(poller, role)
-      return { "git log --oneline -10" => -> { git_log } } if LEADS.include?(role)
-
-      board_text = poller.next_output
-      { "coord next #{role}" => -> { board_text }, GraphQuery::LABEL => GraphQuery.command(board_text),
-        "git log --oneline -10" => -> { git_log } }.compact
+    def self.commands(poller, task_id)
+      log = { "git log --oneline -10" => -> { git_log } }
+      task_id ? { "coord show #{task_id}" => -> { poller.show(task_id) } }.merge(log) : log
     end
 
     def self.section(label, run)
@@ -361,33 +331,37 @@ module Dispatcher
     end
   end
 
-  # Poller lists the role's unclaimed task IDs via `coord next`.
+  # Poller reads the role's tasks through coord.
   class Poller
+    TASK_ID = /^([0-9a-f-]{36})\b/
+
     def initialize(env, role)
       @env = env
       @role = role
     end
 
-    def unclaimed_task_ids = next_output.to_s.scan(/^([0-9a-f-]{36})\b/).flatten
+    def unclaimed_task_ids = next_output.to_s.scan(TASK_ID).flatten
 
     # The tasks that this worker claimed and did not finish.
-    def claimed_task_ids
-      output = IO.popen(@env, CoordCall.command + ["next", @role, "--mine"], err: File::NULL, &:read)
-      $?.success? ? output.scan(/^([0-9a-f-]{36})\b/).flatten : []
-    rescue Errno::ENOENT
-      []
-    end
+    def claimed_task_ids = read("next", @role, "--mine").to_s.scan(TASK_ID).flatten
+
+    # The first task that this worker can claim, or nil. `coord claim` is
+    # atomic, so two workers never get one task, and a run always has work.
+    def claim_first(ids) = ids.find { |id| coord("claim", id) }
 
     def coord(*args) = CoordCall.run(@env, *args)
+    def next_output = read("next", @role)
+    def show(id) = read("show", id)
 
-    # The output of `coord next ROLE`, or nil when the command fails.
-    def next_output
-      output = IO.popen(@env, CoordCall.command + ["next", @role], err: File::NULL, &:read)
+    private
+
+    # The output of a coord command, or nil when the command fails.
+    def read(*args)
+      output = IO.popen(@env, CoordCall.command + args, err: File::NULL, &:read)
       $?.success? ? output : nil
     rescue Errno::ENOENT
       nil
     end
-
   end
 
   # CoordCall runs coord with this Ruby, so an old system Ruby on the
@@ -585,15 +559,26 @@ module Dispatcher
   # the worker in .maf/coordination/usage/<worker>.json. Claude Code, Hermes, and
   # Codex report usage. A run without usage data adds nothing. A usage error
   # never fails a run.
+  #
+  # input_tokens counts every input token, cache reads included.
+  # cached_input_tokens counts the cache reads, which cost a fraction of the
+  # input price. Claude Code reports cache reads and cache writes outside its
+  # input_tokens, so they are added. Codex reports them inside.
   class TokenUsage
-    KEYS = { "input_tokens" => %w[input_tokens prompt_tokens],
-             "output_tokens" => %w[output_tokens completion_tokens] }.freeze
-
     def self.normalize(data)
       return nil unless data.is_a?(Hash)
 
-      KEYS.transform_values { |names| data.values_at(*names).compact.first.to_i }
+      { "input_tokens" => input(data),
+        "cached_input_tokens" => int(data, "cached_input_tokens", "cache_read_input_tokens"),
+        "output_tokens" => int(data, "output_tokens", "completion_tokens") }
     end
+
+    def self.input(data)
+      int(data, "input_tokens", "prompt_tokens") + int(data, "cache_read_input_tokens") +
+        int(data, "cache_creation_input_tokens")
+    end
+
+    def self.int(data, *names) = data.values_at(*names).compact.first.to_i
 
     def self.sum(list) = list.empty? ? nil : list.reduce { |total, usage| total.merge(usage) { |_, a, b| a + b } }
 
@@ -806,9 +791,8 @@ module Dispatcher
   # Status blocked or needs_review, and an invalid block, are no success. The
   # session stays, so the next run resumes it.
   class Outcome
-    def initialize(session, started_at)
+    def initialize(session)
       @session = session
-      @started_at = started_at
     end
 
     def conclude(block, text)
@@ -831,11 +815,12 @@ module Dispatcher
       false
     end
 
-    # Some models skip the handoff instruction. Then the agent's final reply
-    # becomes the note, so a later fresh session still gets some context.
+    # Some models skip the handoff instruction. If no note exists, the agent's
+    # final reply becomes the note, so a later fresh session still gets some
+    # context. An existing note stays: a run that changed nothing keeps it.
     def keep_handoff(text)
       note = text.gsub(ReportBlock::PATTERN, "").strip
-      return if note.empty? || @session.handoff_written_since?(@started_at)
+      return if note.empty? || !@session.handoff.empty?
 
       @session.write_handoff(note)
     end
@@ -865,20 +850,27 @@ module Dispatcher
 
     def warm_session_id
       id = @session.id
-      return id unless id && @session.idle_seconds > @config.cache_window
+      return id unless id && (cold? || full?)
 
       expire(id)
     end
 
+    def cold? = @session.idle_seconds > @config.cache_window
+    def full? = @config.max_session_runs.to_i.positive? && @session.runs >= @config.max_session_runs
+
     def expire(id)
-      minutes = (@session.idle_seconds / 60).round
-      Log.line("session #{id} idle #{minutes}m, past the cache window; starting fresh with the handoff note")
+      Log.line("session #{id} #{expire_reason}; starting fresh with the handoff note")
       @session.clear
       nil
     end
 
+    def expire_reason
+      return "has #{@session.runs} runs, the --max-session-runs limit" unless cold?
+
+      "idle #{(@session.idle_seconds / 60).round}m, past the cache window"
+    end
+
     def attempt(prompt, session_id)
-      @started_at = Time.now
       Log.line("dispatching #{@config.role} (session: #{session_id || "new"})")
       text = Prompt.with_handoff(prompt, @session, session_id) + Prompt.signals(@config)
       spawn(@harness.build_command(@config, text, session_id))
@@ -915,7 +907,7 @@ module Dispatcher
     end
 
     def conclude(block, result)
-      Outcome.new(@session, @started_at).conclude(block, @harness.result_text(result.output).to_s) &&
+      Outcome.new(@session).conclude(block, @harness.result_text(result.output).to_s) &&
         Verify.pass?(@config, @env)
     end
 
@@ -947,36 +939,44 @@ module Dispatcher
   # specific to a dispatched run.
   module Prompt
     ONE_SHOT = <<~TEXT
-      You run as role %<role>s in one-shot mode. Follow the multi-agent coordination rules in AGENTS.md.
-      Do not use --wait: nobody is waiting on this session. Run coord next, claim a task, do the work,
-      annotate it, and finish it with coord done. When no task is left, stop.
+      You run as role %<role>s in one-shot mode. Follow your role file and the coordination rules in AGENTS.md.
+      Do not use --wait: nobody is waiting on this session.
     TEXT
 
-    LEAD_ONE_SHOT = <<~TEXT
-      You run as role %<role>s in one-shot mode. Follow your role file and the coordination rules in AGENTS.md.
-      You are a lead role. Never claim a task. Do not use --wait: nobody is waiting on this session.
-      Handle the messages above. When every message is handled, stop.
-    TEXT
+    # The dispatcher claims each task. A worker that claims a task itself can
+    # take the task of a run that starts next.
+    MESSAGE_END = "Handle the messages above. Do not claim a task: the dispatcher claims tasks for you.\n" \
+                  "When every message is handled, stop.\n"
+    LEAD_END = "You are a lead role. Never claim a task. Handle the messages above.\n" \
+               "When every message is handled, stop.\n"
 
     def self.messages(messages, role)
       bodies = messages.map { |message| "--- message from #{message.from} ---\n#{message.text}\n" }
-      rules = LEADS.include?(role) ? LEAD_ONE_SHOT : ONE_SHOT
-      "The dispatcher took these messages from your inbox:\n\n#{bodies.join("\n")}\n#{format(rules, role: role)}"
+      ending = LEADS.include?(role) ? LEAD_END : MESSAGE_END
+      "The dispatcher took these messages from your inbox:\n\n#{bodies.join("\n")}\n#{rules(role)}#{ending}"
     end
 
-    def self.tasks(role) = "Unclaimed tasks exist for your role.\n\n#{format(ONE_SHOT, role: role)}"
+    TASK = <<~TEXT
+      The dispatcher claimed task %<id>s for you. Skip the claim step of your work loop.
+      Do this task only. Finish it with coord done. Then stop. Do not claim another task.
+    TEXT
+
+    def self.task(role, id) = "#{format(TASK, id: id)}#{rules(role)}"
 
     RESUME = <<~TEXT
       You hold claimed tasks that a previous run did not finish: %<ids>s.
       For each task, run coord show <id> first. If the status is not pending, or the worker is not you, skip the task.
       Otherwise continue the task on its task branch. Finish it with coord done.
+      Do not claim another task. When these tasks are done, stop.
     TEXT
 
-    def self.resume(role, ids) = "#{format(RESUME, ids: ids.join(", "))}\n#{format(ONE_SHOT, role: role)}"
+    def self.resume(role, ids) = "#{format(RESUME, ids: ids.join(", "))}#{rules(role)}"
+    def self.rules(role) = format(ONE_SHOT, role: role)
 
     HANDOFF = <<~TEXT
-      Before you stop, overwrite %<path>s with a handoff note for your next session.
+      If this run changed the state of your work, overwrite %<path>s with a handoff note for your next session.
       Write at most 300 words: current state, decisions, open questions, and the next step.
+      If this run changed nothing, leave the file as it is.
     TEXT
 
     # A fresh session starts with the previous session's handoff note. A
@@ -1059,8 +1059,8 @@ module Dispatcher
       Log.line("stopped (interrupted)")
     end
 
-    # At most one agent run per cycle: the message prompt already tells the
-    # agent to work through `coord next`.
+    # At most one agent run per cycle. A message run comes first. The next
+    # cycle claims a task.
     def cycle
       Presence.write(@config)
       @chores.run
@@ -1070,7 +1070,7 @@ module Dispatcher
 
     private
 
-    def context = Prefetch.context(@poller, @config.role)
+    def context(task_id = nil) = Prefetch.context(@poller, task_id)
     def timing_label = "interval=#{@config.interval}s cache_window=#{@config.cache_window}s"
     def harness_label = @config.command ? "command=#{@config.command.inspect}" : "harness=#{@config.harness}"
 
@@ -1099,17 +1099,23 @@ module Dispatcher
       ids = @poller.claimed_task_ids
       return false unless @resume.due?(ids)
 
-      @runner.dispatch(Prompt.resume(@config.role, ids) + context)
+      @runner.dispatch(Prompt.resume(@config.role, ids) + context(ids.first))
       @resume.dispatched(ids)
       true
     end
 
+    # The claim comes first, so the run never starts without work.
     def dispatch_tasks
       ids = @poller.unclaimed_task_ids
       return false unless @watch.due?(ids)
 
-      @runner.dispatch(Prompt.tasks(@config.role) + context)
+      id = @poller.claim_first(ids)
       @watch.dispatched(ids)
+      id && run_task(id)
+    end
+
+    def run_task(id)
+      @runner.dispatch(Prompt.task(@config.role, id) + context(id))
       true
     end
   end
@@ -1120,13 +1126,14 @@ module Dispatcher
                "--model M" => [:model, String], "--skill NAME" => [:skill, String],
                "--interval S" => [:interval, Integer], "--max-turns N" => [:max_turns, Integer],
                "--timeout S" => [:timeout, Integer], "--cache-window S" => [:cache_window, Integer],
+               "--max-session-runs N" => [:max_session_runs, Integer],
                "--idle-timeout S" => [:idle_timeout, Integer], "--grace S" => [:grace, Integer],
                "--completion-signal TEXT" => [:completion_signal, String],
                "--abort-signal TEXT" => [:abort_signal, String] }.freeze
     SWITCHES = { "--no-skill" => [:no_skill, true], "--no-poll-tasks" => [:poll_tasks, false],
                  "--once" => [:once, true], "--verbose" => [:verbose, true] }.freeze
     DEFAULTS = { harness: "hermes", interval: 60, max_turns: 50, idle_timeout: 0, grace: Spawn::GRACE,
-                 cache_window: 3300, poll_tasks: true,
+                 cache_window: 3300, max_session_runs: 5, poll_tasks: true,
                  no_skill: false, once: false, verbose: false }.freeze
 
     DEFAULT_TIMEOUT = 1500
@@ -1154,8 +1161,8 @@ module Dispatcher
     end
 
     def self.validate_limits(config)
-      limits = [config.idle_timeout, config.grace]
-      abort "dispatcher: --idle-timeout and --grace must be 0 or more" if limits.any?(&:negative?)
+      limits = [config.idle_timeout, config.grace, config.max_session_runs]
+      abort "dispatcher: --idle-timeout, --grace, and --max-session-runs must be 0 or more" if limits.any?(&:negative?)
       config
     end
 

@@ -201,7 +201,8 @@ watcher, with its pid in `.maf/coordination/vault.pid` and its output in
 `graphify-mcp` stdio binary that a client spawns, not a background flag. If
 `graphify` was not installed yet, run `vault` by hand once it is.
 
-- Each role queries the graph before the work (MCP, or `graphify query "..." --graph "$COORD_DIR/../graphify-out/graph.json"`).
+- Each role queries the graph when it starts a task or plans a goal (MCP, or
+  `graphify query "..." --budget 800 --graph "$COORD_DIR/../graphify-out/graph.json"`).
   A missing or stale graph goes into the report. `vault age` shows the graph age:
   the commits since the build. `coord status` and the dashboard show it too.
 - `maf add` writes the MCP server into `.mcp.json` (Claude Code) and `opencode.json`
@@ -238,8 +239,9 @@ Restart workers with `maf start` after the update.
    `docs/decisions/`); append, never rewrite. `.maf/obsidian/` is
    regenerated graphify output, not a durable store.
 5. Report via `coord annotate`; coordinate via `coord msg`.
-6. Worker roles: if no task is available, use `coord next --wait` instead of
-   polling by hand. Lead roles (project manager, architect) never claim a task;
+6. Worker roles: if no task is available, Claude Code and opencode agents stop.
+   The board watcher wakes them. Codex and Hermes agents use `coord next --wait`
+   instead of polling by hand. Lead roles (project manager, architect) never claim a task;
    they wait with `coord inbox --wait`.
 7. Before `coord done`, merge the goal branch into the task branch and rerun
    the task tests. `coord done` refuses a task branch without the goal head.
