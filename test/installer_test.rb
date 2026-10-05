@@ -216,7 +216,7 @@ class BootstrapTest < InstallerTestCase
     async = watch.select { |hook| hook["asyncRewake"] }
     assert_equal [true], async.map { |hook| hook["asyncRewake"] }
     assert_equal ["ruby .maf/coordination/harness-hooks/board-watch.rb"], async.map { |hook| hook["command"] }
-    assert_equal 2, hooks["Stop"].size
+    assert_equal 3, hooks["Stop"].size
     assert File.exist?(File.join(@dir, ".maf/coordination", "harness-hooks", "board-watch.rb"))
     assert Dir.exist?(File.join(@dir, ".maf/coordination", "message-hooks"))
   end
@@ -369,6 +369,15 @@ class FlowTest < InstallerTestCase
     assert File.exist?(stored_agent_file)
   end
 
+  # opencode asked for each access to /tmp, the board, and git data.
+  def test_opencode_role_file_allows_the_directories_outside_the_worktree
+    flow("--agent", "opencode:tester")
+
+    content = File.read(File.join(@dir, ".maf", "agents", "opencode", "tester.md"))
+    assert_includes content, %("/tmp/*": allow)
+    assert_includes content, %("#{File.expand_path(@dir)}/.maf/*": allow)
+  end
+
   # Regression: TastingCompanion keeps its own agents in .claude/agents. The
   # harness then found no role file, and the startup prompt named a missing file.
   def test_a_harness_folder_with_foreign_files_gets_a_link_for_each_role_file
@@ -438,13 +447,14 @@ class FlowTest < InstallerTestCase
     refute_match(/COORD_AGENT|coord add --agent/, content)
   end
 
-  # The dispatcher reads the report block to decide if a dispatched run is done.
-  def test_role_files_ask_for_the_report_block_in_a_dispatched_run
+  # The dispatcher adds the report block rule to each dispatched prompt.
+  # The role files do not repeat it: each model call would send it again.
+  def test_role_files_leave_the_report_block_to_the_dispatcher
     out, status = flow("--agent", "claude:backend-developer", "--agent", "opencode:architect")
 
     assert_equal 0, status, out
     [File.join(@dir, ".claude", "agents", "backend-developer.md"), architect_file].each do |path|
-      assert_includes File.read(path), Flow::REPORT_FORMAT
+      refute_includes File.read(path), "<report>"
     end
   end
 
@@ -499,7 +509,18 @@ class FlowTest < InstallerTestCase
     refute_includes content, "coord next --wait"
   end
 
-  # Only Claude Code can wake an idle session. Other harnesses must block in
+  # The opencode board-watch plugin wakes an idle session. A wait loop would
+  # cost one model call at each timeout.
+  def test_opencode_worker_stops_and_the_plugin_wakes_it
+    out, status = flow("--agent", "opencode:backend-developer")
+
+    assert_equal 0, status, out
+    content = File.read(File.join(@dir, ".maf", "agents", "opencode", "backend-developer.md"))
+    assert_includes content, "The board watcher wakes you"
+    refute_includes content, "coord next --wait"
+  end
+
+  # Codex and Hermes cannot wake an idle session. They must block in
   # `coord next --wait`, which returns on a new task or a new message.
   def test_codex_worker_blocks_on_the_board_instead_of_stopping
     out, status = flow_with_home("--agent", "codex:backend-developer")
@@ -699,6 +720,19 @@ class SetupAgentTest < Minitest::Test
     yield
   ensure
     launcher.define_method(:exec_or_die, original)
+  end
+
+  # Codex asked for approval at each coord command: the board is outside the worktree.
+  def test_codex_launch_makes_the_board_writable
+    calls = []
+    Dir.mktmpdir do |dir|
+      FileUtils.mkdir_p(File.join(dir, ".codex", "prompts"))
+      File.write(File.join(dir, ".codex", "prompts", "tester.md"), "prompt")
+      with_exec_stub(->(cmd) { calls << cmd }) do
+        Dir.chdir(dir) { SetupAgent::Launcher::Codex.launch("tester", "tester-1", nil) }
+      end
+      assert_equal ["--add-dir", File.join(File.realpath(dir), ".maf", "coordination")], calls.first[1, 2]
+    end
   end
 
   # Worktrees live inside the project, under <project>/.maf/worktrees/<slug>.

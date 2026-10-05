@@ -30,7 +30,7 @@ class CodexProjectHooksTest < HookConfigCase
   def test_preserves_other_hooks_and_is_idempotent
     write("hooks" => { "Stop" => [{ "hooks" => [foreign_hook] }] }, "description" => "User hooks")
     2.times { Flow::CodexHooks.new(@dir).install }
-    assert_equal 2, read.dig("hooks", "Stop").size
+    assert_equal 3, read.dig("hooks", "Stop").size
     assert_equal foreign_hook, read.dig("hooks", "Stop", 0, "hooks", 0)
     assert_equal "User hooks", read.fetch("description")
   end

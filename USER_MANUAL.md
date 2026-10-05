@@ -262,6 +262,8 @@ maf team set --max 6 --allow claude --allow opencode:deepseek-v4-flash
 Then it adds workers itself, for example
 `maf prepare opencode backend-developer_1 --dispatch`. With `--dispatch`,
 `maf prepare` starts the dispatcher in the background. You run no commands.
+`maf prepare` dispatches the architect by default: the architect never talks to you,
+and a dispatched session stays small. Add `--interactive` for an architect in a terminal.
 
 - `maf team` shows the budget, each worker, its state, and the tasks by role.
 - `maf prepare` refuses a harness or a model outside the budget, and a worker
@@ -327,9 +329,35 @@ The watcher does nothing for dispatched agents (`COORD_DISPATCHED=1`).
 To change the timing, set `BOARD_WATCH_INTERVAL` and
 `BOARD_WATCH_IDLE` (seconds) before you run `maf start`.
 
-Codex and opencode role files tell the agent to block in
+Messages often come in a group: each done task sends one to the architect.
+The watcher wakes an agent for messages only when the oldest unread message is
+`BOARD_WATCH_BATCH` seconds old (default: 120). One turn then reads the whole group.
+A task wakes the agent at once.
+
+### Restart a long interactive session
+
+Each model call sends the whole session context again. A long session costs
+more on every call. The `context-watch.rb` hook watches interactive Claude Code
+and Codex sessions:
+
+1. At each stop, the hook reads the context size from the session transcript.
+2. If the context is over the limit, the hook asks the agent one time to write a
+   handoff note to `.maf/coordination/sessions/<worker>.handoff.md`.
+3. Then the hook shows: `Context: 162k tokens (limit 150k) ... Type /clear to restart.`
+4. Type `/clear`. The new session reads the role file again and gets the handoff note.
+
+The default limit is 150000 tokens. Set `"team": {"context_limit": 200000}` in
+`.maf/config.json`, or `MAF_CONTEXT_LIMIT` before `maf start`.
+
+The hook also writes the model and the context size to
+`.maf/coordination/status/<worker>.json`, and adds the token usage of the session
+to `.maf/coordination/usage/<worker>.json`. For an interactive worker, `runs`
+counts the turns. The dispatcher writes the same status file for a dispatched worker.
+
+Codex and Hermes role files tell the agent to block in
 `coord next --wait --timeout 540` when it has no work. The command returns
-when a task or a message arrives.
+when a task or a message arrives. Each timeout costs one model call, so use
+`--dispatch` for idle Codex and Hermes agents.
 Codex uses project hooks in `.codex/hooks.json` for `SessionStart` and `Stop`.
 The stop hook can continue a registered session but cannot wake an idle session when new work arrives.
 Use `--dispatch` to run Codex agents unattended.
@@ -341,7 +369,8 @@ Review the new project hook definitions when Codex requests hook trust.
 
 ### Keep interactive opencode agents awake
 
-An opencode agent can end its turn and leave the wait loop. `maf add` installs
+An opencode agent stops when it has no work. It does not wait in a loop:
+each return of a wait costs one model call over the whole context. `maf add` installs
 the plugin `.opencode/plugins/board-watch.js` for projects with opencode
 agents. The plugin uses these rules:
 
@@ -478,9 +507,12 @@ runs, it moves to `inbox/<role>/failed/`. The retry count stays correct after a
 restart (stored in the file name: `.retry2.md`). Do not run `coord inbox` for a
 role that a dispatcher serves.
 
-**Tasks.** The dispatcher does not retry the same unclaimed tasks every minute.
+**Tasks.** The dispatcher claims one unclaimed task for its worker before the run.
+The run works on that task only. If another worker took every task first, no run
+starts. So two workers of one role never pay for a run without work.
+The dispatcher does not retry the same unclaimed tasks every minute.
 The wait between runs doubles after each run, up to 1 hour. A new or changed
-task starts a run immediately.
+task starts a run immediately. A message run never claims a task.
 
 **Prompt cache.** LLM providers cache a conversation for a limited time after the
 last request. Claude Code uses a 1-hour cache.
@@ -491,18 +523,24 @@ last request. Claude Code uses a 1-hour cache.
 - If the last run is older, the dispatcher starts a fresh session. The fresh
   session gets a short handoff note (at most 300 words), not the full old context.
   The log shows: `idle Nm, past the cache window; starting fresh with the handoff note`.
-- Each run ends with the handoff note in `.maf/coordination/sessions/<worker>.handoff.md`.
-  The agent writes it while the cache is still warm.
+- Each resume sends the whole old context again, on every model call of the run.
+  After `--max-session-runs` runs (default: 5) in one session, the dispatcher starts
+  a fresh session with the handoff note. `--max-session-runs 0` turns the limit off.
+- A run that changed the state of the work ends with a new handoff note in
+  `.maf/coordination/sessions/<worker>.handoff.md`. The agent writes it while the
+  cache is still warm. A run that changed nothing keeps the old note.
 
-**Prefetch.** Each dispatch prompt holds the output of `coord next ROLE` and
-`git log --oneline -10`, each cut to 2000 characters. The agent needs fewer tool
-calls to see the board. Lead roles get only the git log. If a command fails,
+**Prefetch.** A task run prompt holds the task spec (`coord show ID`) and
+`git log --oneline -10`, each cut to 2000 characters. A message run prompt holds
+only the git log. The agent needs fewer tool calls to start. If a command fails,
 the log shows `prefetch failed` and the prompt goes out without that part.
 
 **Token usage.** After each run, the dispatcher adds the token usage of the run
-to `.maf/coordination/usage/<worker>.json`. Claude Code, Hermes, and Codex report the
-usage. opencode and `--command` harnesses do not. `coord status` and the
-dashboard show the totals. A run never fails because of missing usage data.
+to `.maf/coordination/usage/<worker>.json`. `input_tokens` counts every input token.
+`cached_input_tokens` counts the cache reads, which cost a fraction of the input price.
+Claude Code, Hermes, and Codex report the usage. opencode and `--command` harnesses
+do not. `coord status` and the dashboard show the totals. A run never fails because
+of missing usage data.
 
 Set `--cache-window` to your provider's cache time minus a margin. For a
 30-minute cache: `--cache-window 1500`. To never resume: `--cache-window 0`.
@@ -675,14 +713,44 @@ watch -n 10 coord board
 `dashboard` starts a local server at `http://localhost:4567`. The page
 auto-refreshes every 5 seconds. It shows everything `coord status` shows, plus
 signals the kanban cannot: expired-lease claims (crashed workers), unread inbox
-messages, stale locks, orphaned tasks, and scope conflicts. The Workers panel lists
-each worker from `.maf/coordination/workers.json` with its harness, role, current task,
-and last event. Each declared role has a card, also without tasks.
+messages, stale locks, orphaned tasks, and scope conflicts. Each declared role has a
+card, also without tasks.
+
+The Workers table has one row per worker from `.maf/coordination/workers.json`:
+
+| Column | Source |
+|---|---|
+| Harness | The registry: the harness, and the mode (dispatch or interactive). |
+| Model | The model that the last run or turn used. Without status data: the model of the registry. |
+| State | `stopped` when the process is gone. A dispatched worker shows `run Nm` during a run, else `idle`. |
+| Context | The context size of the session, with a % of the window for Codex. `over limit` past the context limit. |
+| Task | The task that the worker claimed. |
+| Last run | A dispatched worker: success or failure, and the last dispatcher message. |
+| Tokens | Input, cached input, and output tokens, and the runs (dispatch) or turns (interactive). |
+| Actions | The buttons, and the last log lines of the dispatcher and of the last action. |
+
+The status comes from `.maf/coordination/status/<worker>.json`. The dispatcher and the
+`context-watch.rb` hook write it.
+
+Actions run `maf worker ACTION WORKER` in the background, in the project root:
+
+- A dispatched worker has `start`, `stop`, and `restart`. A stop waits until a running
+  agent finishes its run.
+- An interactive worker has `stop`. maf stops the session only when it is idle. The
+  row then shows the start command: `cd <worktree> && maf start`.
+- One action per worker runs at a time. The output goes to
+  `.maf/coordination/sessions/<worker>.control.log`.
+
+The server listens on 127.0.0.1 only. An action needs a token that changes at each
+server start, and a localhost Host header. So another web site cannot start an action.
 
 ```sh
-dashboard           # default port 4567
-dashboard --port N  # custom port
+dashboard             # default port 4567
+dashboard --port N    # custom port
+dashboard --maf PATH  # the maf command for actions (default: maf on PATH)
 ```
+
+From a terminal, use the same command: `maf worker status|stop|start|restart ROLE[_WORKER]`.
 
 ---
 
@@ -728,12 +796,10 @@ The graph holds code knowledge. It helps the architect plan and the developer
 find code. It does not carry the plan and spec exchange. That exchange uses
 artifacts (see "Give the team work").
 
-- **Rule.** Each role queries the graph before the work. If the graph is
-  missing or stale, the role says so in its report.
-- **Prefetch.** The dispatcher runs `graphify query` with the title and scope of
-  the first unclaimed task. It adds the first 2000 characters to the dispatch
-  prompt. A lead role gets no query. The dispatcher skips the query without
-  `graphify` or without a graph.
+- **Rule.** Each role queries the graph when it starts a task or plans a goal,
+  with `--budget 800`. The query output stays in the context for each later
+  model call, so a small budget saves tokens. If the graph is missing or stale,
+  the role says so in the report of that task or plan.
 - **Age.** The graph age is the number of commits since the graph was built.
   The graph is stale when a commit after the build changed a source or
   markdown file. Show the age with `vault age`, `vault status`, `coord status`,
@@ -771,8 +837,8 @@ root as the Obsidian vault.
 `coord msg` and `coord broadcast` fire a per-role hook at
 `.maf/coordination/message-hooks/<role>.sh` when a message is delivered. The hook is a plain
 shell script. If there is no hook, `coord` only writes the inbox file.
-An agent does not need a hook to get a message. The board watcher (Claude Code)
-and `coord next --wait` (other harnesses) wake the agent on an unread message.
+An agent does not need a hook to get a message. The board watcher (Claude Code
+and opencode) and `coord next --wait` (Codex and Hermes) wake the agent on an unread message.
 
 ```sh
 # .maf/coordination/message-hooks/backend-developer.sh
@@ -1026,12 +1092,44 @@ nothing to move.
 
 ---
 
+## Board rules
+
+The agent contract in `AGENTS.md` holds only the rules that agents act on.
+This section holds the board details for the operator.
+
+- **Claim lease.** A claim with no activity for `COORD_LEASE_TTL` seconds (default 4 hours)
+  is free again. `coord next` and `coord claim` then treat the task as unclaimed.
+- **Claim steal.** `coord claim` refuses an active claim of another worker.
+  `coord claim --force` takes the task. The prior holder gets a message that names the new holder.
+- **Scope check.** `coord add` warns on stderr when a new scope overlaps a pending task.
+  `coord conflicts` lists all overlaps. The check is a path-prefix heuristic.
+  It understands `dir/**` and exact paths. It does not understand `{}` alternation or mid-path globs.
+- **Broadcast reach.** `coord broadcast` reaches each role that owns a pending task or is listed
+  in `.maf/config.json`, except the sender. `--to` selects `workers` (default), `leads`, or `all`.
+- **Read messages.** `coord inbox` moves a read message to `.maf/coordination/inbox/<agent>/read/`.
+  `--peek` keeps the message unread. `--all` includes read messages.
+- **Presence.** `maf start` records the session pid in `.maf/coordination/presence/`.
+  A dispatcher records its own pid. A worker is live while its pid runs.
+  If a receiver role has no live worker and no message hook, `coord msg` prints a warning.
+  The message waits until a session for that role starts.
+- **Read-only roles.** A role with `can_edit: false` gets a read-only tool grant where the harness supports one.
+- **Vault.** `vault` controls the graphify watcher. `vault status` and `vault stop` report or stop the watcher.
+  `vault export` regenerates the Obsidian vault one time. Agents never run `graphify export`.
+  The separate `graphify-mcp` process (`vault mcp`) serves MCP, not the watcher.
+- **Bounded contexts.** Add a `GLOSSARY-MAP.md` only if the project has more than one bounded context.
+- **Containerized agents.** An agent in a container (for example `coi`) needs `.maf/coordination/`,
+  `coord`, and `.maf/coordination/taskrc` mounted from the host.
+  Without a shared file system, the agent does not share state with the host or other agents.
+
+---
+
 ## Command reference
 
 | Command | What it does |
 |---|---|
-| `maf prepare HARNESS ROLE[_WORKER] [--replace W]` | Prepare a worker: role file, worktree, registry. Prints the two start commands. |
+| `maf prepare HARNESS ROLE[_WORKER] [--dispatch] [--interactive] [--replace W]` | Prepare a worker: role file, worktree, registry. Prints the two start commands. `--dispatch` starts the dispatcher instead. The architect is dispatched unless `--interactive` is given. |
 | `maf retire ROLE[_WORKER]` | Remove a worker. Stops its background dispatcher. Its claimed tasks return to the pool. |
+| `maf worker ACTION ROLE[_WORKER]` | Control one worker. ACTION is status, stop, start, or restart. Each action is idempotent. A dispatched worker starts again in the background. An idle interactive session stops; maf prints its start command. |
 | `maf team` | Show the budget, the workers, and the tasks by role. |
 | `maf team set --max N --allow HARNESS[:MODEL]` | Set the team budget in `.maf/config.json`. |
 | `maf start ... --dispatch --detach` | Start a dispatcher in the background. |

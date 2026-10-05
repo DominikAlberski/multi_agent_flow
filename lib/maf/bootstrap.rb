@@ -35,6 +35,7 @@ module Bootstrap
   NEXT_TASK_HERMES_SIGNATURE = "next-task-hermes.sh - on_session_end hook for Hermes Agent."
   BOARD_WATCH_SIGNATURE = "board-watch.rb - background board watcher for Claude Code sessions."
   SESSION_GUARD_SIGNATURE = "session-guard.rb - authorize hooks for a registered MAF session."
+  CONTEXT_WATCH_SIGNATURE = "context-watch.rb - status, usage, and context limit hook"
   OPENCODE_BOARD_WATCH_SIGNATURE = "board-watch-opencode.js - opencode plugin that wakes an idle session"
   OPENCODE_PLUGIN = File.join(".opencode", "plugins", "board-watch.js")
   COMMIT_GUARD_SIGNATURE = "commit-guard - git pre-commit hook for the multi-agent flow."
@@ -46,6 +47,9 @@ module Bootstrap
   CLAUDE_HOOKS = [
     ["SessionStart", { "type" => "command", "command" => "ruby .maf/coordination/harness-hooks/next-task.rb" }],
     ["Stop", { "type" => "command", "command" => "ruby .maf/coordination/harness-hooks/next-task.rb" }],
+    *%w[SessionStart Stop].map do |event|
+      [event, { "type" => "command", "command" => "ruby .maf/coordination/harness-hooks/context-watch.rb" }]
+    end,
     *%w[SessionStart Stop].map do |event|
       [event, { "type" => "command", "command" => "ruby .maf/coordination/harness-hooks/board-watch.rb",
                 "async" => true, "asyncRewake" => true, "timeout" => 604_800 }]

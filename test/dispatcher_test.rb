@@ -20,7 +20,8 @@ load File.expand_path("../assets/dispatcher", __dir__)
 module DispatcherTestHelpers
   def config(**overrides)
     defaults = { role: "backend-developer", harness: "hermes", interval: 60, max_turns: 50, timeout: 300,
-                 cache_window: 3300, coord_dir: @dir, worker: "backend-developer-bot", poll_tasks: true }
+                 cache_window: 3300, max_session_runs: 5, coord_dir: @dir, worker: "backend-developer-bot",
+                 poll_tasks: true }
     Dispatcher::Config.new(**defaults, **overrides)
   end
 
@@ -67,6 +68,17 @@ class SessionTest < Minitest::Test
     session.save("x")
     File.utime(Time.now - 7200, Time.now - 7200, session.path)
     assert_in_delta 7200, session.idle_seconds, 5
+  end
+
+  def test_counts_the_runs_of_one_session
+    3.times { session.save("x") }
+    assert_equal 3, session.runs
+  end
+
+  def test_a_new_session_id_restarts_the_count
+    2.times { session.save("x") }
+    session.save("y")
+    assert_equal ["y", 1], [session.id, session.runs]
   end
 
   def test_ignores_empty_session_file
@@ -358,6 +370,7 @@ class RunnerTest < Minitest::Test
     def self.session_id(output) = output[/session=(\S+)/, 1]
     def self.result_text(output) = output[/^reply: (.*)/m, 1] || "ok #{DONE}"
     def self.usage(output) = output[/tokens=(\d+)/, 1]&.then { |n| { "input_tokens" => n.to_i, "output_tokens" => 1 } }
+    def self.model(output) = output[/model=(\S+)/, 1]
   end
 
   DONE = '<report>{"status":"done","tests":"pass"}</report>'
@@ -429,6 +442,29 @@ class RunnerTest < Minitest::Test
     FileUtils.mkdir_p(File.dirname(session.handoff_path))
     capture_io { runner("echo agent-note > #{session.handoff_path}").dispatch("go") }
     assert_equal "agent-note", session.handoff
+  end
+
+  # Each resume sends the whole old context again. A full session starts fresh.
+  def test_a_session_at_the_run_limit_starts_fresh
+    5.times { session.save("s-1") }
+    _out, err = capture_io { runner(record_call).dispatch("go") }
+    assert_equal [""], File.readlines(@calls, chomp: true)
+    assert_includes err, "has 5 runs, the --max-session-runs limit"
+  end
+
+  def test_a_zero_run_limit_never_caps_the_session
+    9.times { session.save("s-1") }
+    runner = Dispatcher::Runner.new(config(command: record_call, timeout: 5, max_session_runs: 0), FakeHarness, {})
+    capture_io { runner.dispatch("go") }
+    assert_equal ["s-1"], File.readlines(@calls, chomp: true)
+  end
+
+  # A run that changed nothing must not replace the note with "no tasks".
+  def test_the_final_reply_never_replaces_an_existing_note
+    FileUtils.mkdir_p(File.dirname(session.handoff_path))
+    File.write(session.handoff_path, "real state")
+    capture_io { runner(reply("No tasks available. #{DONE}")).dispatch("go") }
+    assert_equal "real state", session.handoff
   end
 
   def test_zero_window_never_resumes
@@ -524,6 +560,23 @@ class RunnerTest < Minitest::Test
     assert_equal({ "input_tokens" => 20, "output_tokens" => 2, "runs" => 2 }, usage_totals)
   end
 
+  def worker_status = JSON.parse(File.read(File.join(@dir, "status", "backend-developer-bot.json")))
+
+  # The dashboard shows which model a worker runs and how its last run ended.
+  def test_a_run_writes_the_worker_status
+    capture_io { runner(%(echo session=s-1; echo model=claude-opus-5-5; printf 'reply: ok #{DONE}')).dispatch("go") }
+    status = worker_status
+    assert_equal ["dispatch", false, "claude-opus-5-5"], status.values_at("mode", "running", "model")
+    assert_equal true, status.dig("last_run", "success")
+    assert_includes status.dig("last_run", "detail"), "agent finished"
+  end
+
+  def test_a_failed_run_shows_the_failure_in_the_status
+    capture_io { runner("echo boom; exit 1").dispatch("go") }
+    assert_equal false, worker_status.dig("last_run", "success")
+    assert_includes worker_status.dig("last_run", "detail"), "boom"
+  end
+
   def test_a_run_without_usage_writes_nothing
     capture_io { assert runner("echo plain").dispatch("go") }
     refute File.exist?(File.join(@dir, "usage"))
@@ -578,10 +631,12 @@ class MainTest < Minitest::Test
     assert_equal 2, inbox("read").size
   end
 
-  FakePoller = Struct.new(:ids, :claimed) do
+  # FakePoller claims every task except the ones in taken.
+  FakePoller = Struct.new(:ids, :claimed, :taken) do
     def unclaimed_task_ids = ids
     def claimed_task_ids = claimed || []
-    def next_output = ids.join("\n")
+    def claim_first(list) = list.find { |id| !(taken || []).include?(id) }
+    def show(id) = "uuid: #{id}\ndescription: fix login"
   end
 
   # A message run already tells the agent to work through `coord next`, so a
@@ -608,36 +663,49 @@ class MainTest < Minitest::Test
     refute_includes prompt, "Unclaimed tasks exist"
   end
 
-  FakeBoard = Struct.new(:text) do
-    def unclaimed_task_ids = []
-    def claimed_task_ids = []
-    def next_output = text
-  end
-
-  def prompt_of_one_run(board)
-    write_message("backend-developer", "1.md", "architect", "first")
+  def task_cycle(poller)
     calls = File.join(@dir, "calls")
-    main = Dispatcher::Main.new(config(command: "echo %{prompt} >> #{calls}", poll_tasks: false, timeout: 5))
-    main.instance_variable_set(:@poller, board)
+    main = Dispatcher::Main.new(config(command: "echo %{prompt} >> #{calls}", timeout: 5))
+    main.instance_variable_set(:@poller, poller)
     _out, err = capture_io { main.cycle }
-    [File.read(calls), err]
+    [File.exist?(calls) ? File.read(calls) : nil, err]
   end
 
-  def test_prompt_gets_the_board_and_the_git_log
-    prompt, = prompt_of_one_run(FakeBoard.new("abc\tfix login\n"))
-    assert_includes prompt, "$ coord next backend-developer\nabc\tfix login"
+  # Regression: a third of the runs of a reviewer pool found no work, because
+  # another worker took the task first. The dispatcher claims before the run.
+  def test_a_task_run_starts_only_after_a_claim
+    prompt, = task_cycle(FakePoller.new(%w[t1 t2], [], ["t1"]))
+    assert_includes prompt, "The dispatcher claimed task t2 for you."
+    assert_includes prompt, "Do not claim another task."
+  end
+
+  def test_no_run_when_another_worker_took_every_task
+    prompt, = task_cycle(FakePoller.new(["t1"], [], ["t1"]))
+    assert_nil prompt
+  end
+
+  def test_a_task_run_gets_the_task_spec_and_the_git_log
+    prompt, = task_cycle(FakePoller.new(["t1"]))
+    assert_includes prompt, "$ coord show t1\nuuid: t1\ndescription: fix login"
     assert_includes prompt, "$ git log --oneline -10\n"
   end
 
   def test_prefetch_text_is_bounded
-    prompt, = prompt_of_one_run(FakeBoard.new("x" * 5000))
-    assert_includes prompt, "[cut at #{Dispatcher::Prefetch::LIMIT} characters]"
-    refute_includes prompt, "x" * (Dispatcher::Prefetch::LIMIT + 1)
+    text = Dispatcher::Prefetch.section("x", -> { "x" * 5000 })
+    assert_includes text, "[cut at #{Dispatcher::Prefetch::LIMIT} characters]"
+    refute_includes text, "x" * (Dispatcher::Prefetch::LIMIT + 1)
+  end
+
+  def test_a_message_run_gets_only_the_git_log
+    write_message("backend-developer", "1.md", "architect", "first")
+    prompt, = task_cycle(FakePoller.new([]))
+    assert_includes prompt, "$ git log --oneline -10\n"
+    refute_includes prompt, "$ coord"
   end
 
   def test_a_failed_prefetch_is_logged_and_the_run_goes_on
-    prompt, err = Dir.chdir(@dir) { prompt_of_one_run(FakeBoard.new(nil)) }
-    assert_includes err, "prefetch failed: coord next backend-developer"
+    write_message("backend-developer", "1.md", "architect", "first")
+    prompt, err = Dir.chdir(@dir) { task_cycle(FakePoller.new([])) }
     assert_includes err, "prefetch failed: git log --oneline -10"
     assert_includes prompt, "The dispatcher took these messages"
     assert_equal 1, inbox("read").size
@@ -726,8 +794,16 @@ class PromptTest < Minitest::Test
     assert_equal "", Dispatcher::Prompt.signals(Dispatcher::Config.new)
   end
 
-  def test_tasks_prompt_names_the_role
-    assert_includes Dispatcher::Prompt.tasks("tester"), "role tester"
+  def test_task_prompt_names_the_role_and_the_task
+    prompt = Dispatcher::Prompt.task("tester", "t1")
+    assert_includes prompt, "role tester"
+    assert_includes prompt, "claimed task t1"
+  end
+
+  # The dispatcher claims each task. A message run must not take one.
+  def test_messages_prompt_for_a_worker_forbids_a_claim
+    prompt = Dispatcher::Prompt.messages([Dispatcher::Message.new("p", "architect", "x")], "tester")
+    assert_includes prompt, "Do not claim a task"
   end
 
   # A lead role owns no task. The prompt must not tell it to claim one.
@@ -885,7 +961,8 @@ class AdapterTest < Minitest::Test
 
   def test_claude_usage_comes_from_the_result_event
     output = %({"result":"ok","session_id":"s","usage":{"input_tokens":12,"output_tokens":3,"cache_read_input_tokens":9}}\n)
-    assert_equal({ "input_tokens" => 12, "output_tokens" => 3 }, harness("claude").usage(output))
+    expected = { "input_tokens" => 21, "cached_input_tokens" => 9, "output_tokens" => 3 }
+    assert_equal(expected, harness("claude").usage(output))
   end
 
   def test_codex_usage_adds_up_the_turns
@@ -893,12 +970,14 @@ class AdapterTest < Minitest::Test
       {"type":"turn.completed","usage":{"input_tokens":5,"cached_input_tokens":1,"output_tokens":2}}
       {"type":"turn.completed","usage":{"input_tokens":7,"output_tokens":4}}
     OUT
-    assert_equal({ "input_tokens" => 12, "output_tokens" => 6 }, harness("codex").usage(output))
+    expected = { "input_tokens" => 12, "cached_input_tokens" => 1, "output_tokens" => 6 }
+    assert_equal(expected, harness("codex").usage(output))
   end
 
   def test_hermes_usage_comes_from_the_result_event
     output = %({"type":"result","session_id":"s","usage":{"prompt_tokens":8,"completion_tokens":2}}\n)
-    assert_equal({ "input_tokens" => 8, "output_tokens" => 2 }, harness("hermes").usage(output))
+    expected = { "input_tokens" => 8, "cached_input_tokens" => 0, "output_tokens" => 2 }
+    assert_equal(expected, harness("hermes").usage(output))
   end
 
   def test_absent_usage_is_nil
@@ -959,6 +1038,17 @@ class PollerTest < Minitest::Test
   def test_no_tasks_gives_no_ids
     assert_empty poller.unclaimed_task_ids
   end
+
+  # Two workers of one role race for one task. Only the first gets a run.
+  def test_claim_first_gives_a_task_to_one_worker_only
+    id = capture_io do
+      Coord::CLI.new(["add", "--role", "backend-developer", "--scope", "t/**", "--title", "Fix"], env: @env).run
+    end.first.strip
+    other = Dispatcher::Poller.new(@env.merge("COORD_WORKER" => "backend-2"), "backend-developer")
+
+    assert_equal id, poller.claim_first([id])
+    assert_nil other.claim_first([id])
+  end
 end
 
 # `maf retire` sends TERM to a detached dispatcher. The dispatcher must end
@@ -1013,93 +1103,6 @@ class ReportBlockTest < Minitest::Test
   # The prompt shows the format with placeholders. An echoed prompt must not pass.
   def test_the_format_example_is_invalid
     refute_nil parse(Dispatcher::ReportBlock::REPORT_FORMAT).error
-  end
-end
-
-# GraphQuery needs a git project with a graph and a graphify on PATH. The
-# tests use a fake graphify script, so the real tool is not needed.
-class GraphQueryTest < Minitest::Test
-  Board = Struct.new(:text) { def next_output = text }
-  UUID = "0b7e5c1a-2f4d-4e8a-9c3b-6d1f0a2b3c4d"
-
-  def setup
-    skip "git not installed" unless system("git", "--version", out: File::NULL)
-    @dir = File.realpath(Dir.mktmpdir("dispatcher-graph-test"))
-    system("git", "-C", @dir, "init", "-q", exception: true)
-    @bin = File.join(@dir, "fakebin")
-    FileUtils.mkdir_p(@bin)
-    @path = ENV["PATH"]
-  end
-
-  def teardown
-    ENV["PATH"] = @path
-    FileUtils.remove_entry(@dir)
-  end
-
-  def graph = File.join(@dir, ".maf", "graphify-out", "graph.json")
-
-  def build_graph = FileUtils.mkdir_p(File.dirname(graph)) && File.write(graph, "{}")
-
-  def fake_graphify(body)
-    File.write(File.join(@bin, "graphify"), "#!/bin/sh\n#{body}\n")
-    FileUtils.chmod(0o755, File.join(@bin, "graphify"))
-    ENV["PATH"] = "#{@bin}:#{@path}"
-  end
-
-  def commands(role = "tester", text = "#{UUID}\tfix login\tapp/auth\n")
-    Dir.chdir(@dir) { Dispatcher::Prefetch.commands(Board.new(text), role) }
-  end
-
-  def test_the_query_holds_the_title_and_the_scope
-    build_graph
-    fake_graphify('echo "args: $@"')
-
-    out = Dir.chdir(@dir) { commands.fetch(Dispatcher::GraphQuery::LABEL).call }
-
-    assert_includes out, "query fix login app/auth --graph #{graph}"
-  end
-
-  def test_no_query_without_the_graph
-    fake_graphify("echo x")
-
-    refute commands.key?(Dispatcher::GraphQuery::LABEL)
-  end
-
-  def test_no_query_without_graphify_on_path
-    build_graph
-    ENV["PATH"] = @bin
-
-    refute commands.key?(Dispatcher::GraphQuery::LABEL)
-  end
-
-  def test_a_lead_role_gets_no_query
-    build_graph
-    fake_graphify("echo x")
-
-    refute commands("architect").key?(Dispatcher::GraphQuery::LABEL)
-  end
-
-  def test_no_query_without_a_task
-    build_graph
-    fake_graphify("echo x")
-
-    refute commands("tester", "no unclaimed tasks for tester\n").key?(Dispatcher::GraphQuery::LABEL)
-  end
-
-  def test_a_failed_query_is_left_out
-    build_graph
-    fake_graphify("exit 1")
-
-    assert_nil Dir.chdir(@dir) { commands.fetch(Dispatcher::GraphQuery::LABEL).call }
-  end
-
-  def test_the_graph_text_is_bounded
-    build_graph
-    fake_graphify("ruby -e 'print %q(y) * 5000'")
-
-    text = Dir.chdir(@dir) { Dispatcher::Prefetch.section(Dispatcher::GraphQuery::LABEL, commands.fetch(Dispatcher::GraphQuery::LABEL)) }
-
-    assert_includes text, "[cut at #{Dispatcher::Prefetch::LIMIT} characters]"
   end
 end
 

@@ -10,7 +10,7 @@ module Uninstall
     private
 
     def ours?(hook)
-      hook["command"] == Flow::CodexHooks::COMMAND
+      Flow::CodexHooks::COMMANDS.include?(hook["command"])
     end
   end
 end

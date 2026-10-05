@@ -605,11 +605,11 @@ end
 
   def test_status_shows_the_token_totals_per_worker
     FileUtils.mkdir_p(File.join(@dir, ".maf/coordination", "usage"))
-    usage = { "input_tokens" => 120, "output_tokens" => 30, "runs" => 2 }
+    usage = { "input_tokens" => 120, "cached_input_tokens" => 90, "output_tokens" => 30, "runs" => 2 }
     File.write(File.join(@dir, ".maf/coordination", "usage", "tester-bot.json"), JSON.generate(usage))
     out, = capture_io { Coord::CLI.new(["status"], env: @env).run }
 
-    assert_includes out, "tokens tester-bot: input=120 output=30 runs=2"
+    assert_includes out, "tokens tester-bot: input=120 cached=90 output=30 runs=2"
   end
 
 def write_vault(body)

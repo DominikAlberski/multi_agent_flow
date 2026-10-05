@@ -17,6 +17,7 @@ require "fileutils"
 require "time"
 require "optparse"
 require "rbconfig"
+require "securerandom"
 begin
   require "webrick"
 rescue LoadError
@@ -32,16 +33,18 @@ module Dashboard
   DEFAULT_LEASE    = 4 * 3600
 
   class Config
-    attr_reader :port, :coord_dir, :interval
+    attr_reader :port, :coord_dir, :interval, :maf
 
     def initialize(argv)
       @port     = DEFAULT_PORT
       @coord_dir = DEFAULT_COORD
       @interval  = DEFAULT_INTERVAL
+      @maf       = "maf"
       OptionParser.new do |o|
         o.on("--port N", Integer)    { |v| @port = v }
         o.on("--coord DIR")          { |v| @coord_dir = v }
         o.on("--interval S", Integer) { |v| @interval = v }
+        o.on("--maf PATH")           { |v| @maf = v }
       end.parse!(argv)
     end
 
@@ -113,6 +116,96 @@ class GraphReader
   end
 end
 
+  # WorkerReader puts every fact about one worker in one record: the registry
+  # entry (.maf/coordination/workers.json), presence, the status that the
+  # dispatcher or the context-watch hook writes, token usage, the last log
+  # lines, and the result of the last dashboard action.
+  class WorkerReader
+    PS_ENV = { "TZ" => "UTC", "LC_ALL" => "C" }.freeze
+    LOG_LINES = 5
+
+    def initialize(cfg)
+      @cfg = cfg
+    end
+
+    def read(id, entry)
+      entry.merge("id" => id, "live" => live?(file("presence", id)), "status" => file("status", id),
+                  "usage" => file("usage", id), "log" => tail("#{id}.log"), "action" => tail("#{id}.control.log"),
+                  "handoff_at" => mtime(File.join(sessions, "#{id}.handoff.md")))
+    end
+
+    private
+
+    def sessions = File.join(@cfg.coord_dir, "sessions")
+
+    def file(dir, id)
+      path = File.join(@cfg.coord_dir, dir, "#{id}.json")
+      File.exist?(path) ? JSON.parse(File.read(path)) : {}
+    rescue JSON::ParserError
+      {}
+    end
+
+    # A pid can belong to a new process. The recorded start time tells them apart.
+    def live?(presence)
+      pid = presence["pid"].to_i
+      pid.positive? && alive?(pid) && [nil, "", started_at(pid)].include?(presence["started"])
+    end
+
+    def alive?(pid)
+      Process.kill(0, pid) && true
+    rescue Errno::ESRCH
+      false
+    rescue Errno::EPERM
+      true
+    end
+
+    def started_at(pid) = IO.popen(PS_ENV, ["ps", "-o", "lstart=", "-p", pid.to_s], err: File::NULL, &:read).strip
+
+    def tail(name)
+      path = File.join(sessions, name)
+      File.exist?(path) ? File.readlines(path).last(LOG_LINES).map(&:chomp) : []
+    end
+
+    def mtime(path) = File.exist?(path) ? File.mtime(path).utc.iso8601 : nil
+  end
+
+  # ActionRunner runs `maf worker ACTION ID` in the background. A stop can
+  # wait for a running agent, so the request does not wait for the command.
+  # The output goes to sessions/<id>.control.log, which the page shows.
+  class ActionRunner
+    ACTIONS = %w[start stop restart].freeze
+
+    def initialize(cfg)
+      @cfg = cfg
+    end
+
+    # Returns an error text, or nil when the command started.
+    def run(id, action)
+      return "unknown action #{action}" unless ACTIONS.include?(action)
+      return "unknown worker #{id}" unless registered?(id)
+
+      spawn_maf(id, action)
+    end
+
+    private
+
+    def registered?(id)
+      JSON.parse(File.read(@cfg.workers_path)).key?(id)
+    rescue Errno::ENOENT, JSON::ParserError
+      false
+    end
+
+    def spawn_maf(id, action)
+      log = File.join(@cfg.coord_dir, "sessions", "#{id}.control.log")
+      FileUtils.mkdir_p(File.dirname(log))
+      File.write(log, "[#{Time.now.utc.iso8601}] maf worker #{action} #{id}\n", mode: "a")
+      pid = spawn(@cfg.maf, "worker", action, id, chdir: @cfg.root, in: File::NULL, out: [log, "a"], err: %i[child out])
+      Process.detach(pid) && nil
+    rescue SystemCallError => e
+      "maf did not start: #{e.message}. Put maf on PATH or pass --maf PATH."
+    end
+  end
+
   class Collector
     def initialize(cfg)
       @cfg = cfg
@@ -148,7 +241,9 @@ end
     # `maf start` set up. The last event shows when the worker last acted.
     def workers
       last = recent_events(500).to_h { |event| [event[:worker], event[:ts]] }
-      JSON.parse(File.read(@cfg.workers_path)).map { |id, entry| entry.merge("id" => id, "last_event" => last[id]) }
+      reader = WorkerReader.new(@cfg)
+      registry = JSON.parse(File.read(@cfg.workers_path))
+      registry.map { |id, entry| reader.read(id, entry).merge("last_event" => last[id]) }
     rescue Errno::ENOENT, JSON::ParserError
       []
     end
@@ -305,6 +400,14 @@ end
         .ea{font-weight:600;min-width:62px}
         .ac{color:var(--info)}.ad{color:var(--ok)}.au{color:var(--warn)}.am{color:#a78bfa}
         @media(max-width:600px){.two{grid-template-columns:1fr}}
+        table{width:100%;border-collapse:collapse;font-size:12px}
+        th{text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase;font-weight:600;
+          padding:4px 6px;border-bottom:1px solid var(--border)}
+        td{padding:6px;border-bottom:1px solid var(--border);vertical-align:top}
+        .act{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px 8px;
+          border-radius:4px;cursor:pointer;font-size:11px;margin:0 2px 2px 0}
+        .act:hover{border-color:var(--info)}
+        .log{white-space:pre-wrap;color:var(--muted);font-size:10px;max-width:420px}
       </style>
     </head>
     <body>
@@ -316,7 +419,6 @@ end
       <div id="alerts" class="alerts"></div>
       <div id="stats" class="stats"></div>
       <div class="card" style="margin-bottom:10px"><h3>Workers</h3><div id="workers"></div></div>
-      <div class="card" style="margin-bottom:10px"><h3>Tokens</h3><div id="tokens"></div></div>
       <div class="card" style="margin-bottom:10px"><h3>Knowledge graph</h3><div id="graph"></div></div>
       <div id="roles" class="grid"></div>
       <div class="two">
@@ -327,7 +429,51 @@ end
         </div>
       </div>
       <script>
-        let paused=false,INTERVAL=5;
+        let paused=false,INTERVAL=5;const TOKEN='__TOKEN__';
+        function k(n){return n==null?'-':n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?Math.round(n/1e3)+'k':String(n)}
+        async function act(id,action){
+          if(action!=='start'&&!confirm(action+' '+id+'? A running agent finishes its run first.'))return;
+          const r=await fetch('/action',{method:'POST',headers:{'Content-Type':'application/json','X-Maf-Token':TOKEN},
+            body:JSON.stringify({worker:id,action:action})}).then(r=>r.json()).catch(e=>({error:e.message}));
+          if(r.error)alert(r.error);refresh(true);
+        }
+        function state(w){
+          const s=w.status||{};
+          if(!w.live)return b('stopped','danger');
+          if(w.dispatch)return s.running?b('run '+ago(s.run_started_at),'info'):b('idle','ok');
+          return b('live','ok');
+        }
+        function ctx(w){
+          const s=w.status||{};if(s.context_tokens==null)return'-';
+          const pct=s.context_window?' ('+Math.round(100*s.context_tokens/s.context_window)+'%)':'';
+          const over=s.context_limit&&s.context_tokens>=s.context_limit;
+          return(over?b('over limit','warn')+' ':'')+k(s.context_tokens)+pct;
+        }
+        function lastRun(w){
+          const r=(w.status||{}).last_run;if(!r)return'-';
+          return b(r.success?'ok':'failed',r.success?'ok':'danger')+' '+ago(r.finished_at)+' ago<div class="log">'+esc(r.detail)+'</div>';
+        }
+        function buttons(w){
+          if(!w.dispatch&&!w.live)return'<div class="log">cd '+esc(w.dir)+' &amp;&amp; maf start</div>';
+          const acts=w.dispatch?(w.live?['stop','restart']:['start']):['stop'];
+          return acts.map(a=>`<button class="act" onclick="act('${esc(w.id)}','${a}')">${a}</button>`).join('');
+        }
+        function workerRows(ws,tasks){
+          return ws.map(w=>{
+            const s=w.status||{},u=w.usage||{},cur=tasks.filter(t=>t.worker===w.id&&t.start);
+            const model=s.model||w.model||'harness default';
+            const log=(w.dispatch?w.log:[]).concat(w.action.length?['action: '+w.action[w.action.length-1]]:[]);
+            return`<tr><td><strong>${esc(w.id)}</strong><div class="meta">${esc(w.role)}</div></td>
+              <td>${esc(w.harness)}<div class="meta">${w.dispatch?'dispatch':'interactive'}</div></td>
+              <td>${esc(model)}${s.session_runs!=null?'<div class="meta">session run '+(s.session_runs+1)+'</div>':''}</td>
+              <td>${state(w)}${w.last_event?'<div class="meta">event '+ago(w.last_event)+' ago</div>':''}</td>
+              <td>${ctx(w)}${w.handoff_at?'<div class="meta">note '+ago(w.handoff_at)+' ago</div>':''}</td>
+              <td>${cur.length?esc(cur[0].description)+'<div class="meta">'+esc(cur[0].uuid.slice(0,8))+'</div>':'-'}</td>
+              <td>${lastRun(w)}</td>
+              <td>${k(u.input_tokens)} in<div class="meta">${k(u.cached_input_tokens)} cached &middot; ${k(u.output_tokens)} out &middot; ${u.runs||0} runs</div></td>
+              <td>${buttons(w)}${log.length?'<div class="log">'+esc(log.join('\\n'))+'</div>':''}</td></tr>`
+          }).join('');
+        }
         function togglePause(){paused=!paused;document.getElementById('pbtn').textContent=paused?'Resume':'Pause';if(!paused)refresh()}
         function ago(iso){const s=Math.round((Date.now()-new Date(iso))/1000);return s<60?s+'s':s<3600?Math.floor(s/60)+'m':Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m'}
         function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
@@ -362,13 +508,11 @@ end
           ].map(s=>`<div class="stat"><div class="sv"${s.c?' style="color:var(--'+s.c+')"':''}>${s.v}</div><div class="sl">${s.l}</div></div>`).join('');
 
           const ws=d.workers||[];
-          document.getElementById('workers').innerHTML=ws.length?ws.map(w=>{
-            const cur=tasks.filter(t=>t.worker===w.id&&t.start);
-            return`<div class="row">${cur.length?b('working','info'):b('idle','ok')} <strong>${esc(w.id)}</strong> ${esc(w.harness)}${w.dispatch?' (dispatch)':''}<div class="meta">${esc(w.role)}${w.last_event?' &middot; last event '+ago(w.last_event)+' ago':''}${cur.length?' &middot; '+esc(cur[0].description):''}</div></div>`
-          }).join(''):'<div class="muted">no workers yet. Run maf prepare or maf start.</div>';
-
-          const tks=Object.entries(d.tokens||{});
-          document.getElementById('tokens').innerHTML=tks.length?tks.map(([w,u])=>`<div class="row"><strong>${esc(w)}</strong> <span class="meta">input ${u.input_tokens||0} &middot; output ${u.output_tokens||0} &middot; ${u.runs||0} runs</span></div>`).join(''):'<div class="muted">no token usage yet</div>';
+          const head='<tr><th>Worker</th><th>Harness</th><th>Model</th><th>State</th><th>Context</th><th>Task</th><th>Last run</th><th>Tokens</th><th>Actions</th></tr>';
+          document.getElementById('workers').innerHTML=ws.length?'<table>'+head+workerRows(ws,tasks)+'</table>':'<div class="muted">no workers yet. Run maf prepare or maf start.</div>';
+          ws.filter(w=>!w.live&&w.dispatch).forEach(w=>alerts.push({l:'danger',m:'Dispatched worker '+w.id+' is stopped'}));
+          ws.filter(w=>(w.status||{}).last_run&&!w.status.last_run.success).forEach(w=>alerts.push({l:'warn',m:'Last run of '+w.id+' failed: '+(w.status.last_run.detail||'').slice(0,100)}));
+          document.getElementById('alerts').innerHTML=alerts.map(a=>`<div class="alert ${a.l==='warn'?'warn':''}">&#x26A0; ${esc(a.m)}</div>`).join('');
 
           const g=d.graph;
           document.getElementById('graph').innerHTML=g?`<div class="row">${b(g.state,g.state==='fresh'?'ok':'warn')} <span class="meta">${g.commits==null?'no age':g.commits+' commits since build'}</span></div>`:'<div class="muted">graph age unknown</div>';
@@ -402,11 +546,13 @@ end
           document.getElementById('locks').innerHTML=lks.length?lks.map(l=>`<div class="row"><span>${esc(l.name)}</span> ${l.stale?b('stale','danger'):b('held','info')} <span class="meta" style="margin-left:4px">${esc(l.worker||'')} &middot; expires ${ago(l.expires_at)}</span></div>`).join(''):'<div class="muted">no active locks</div>';
         }
 
-        async function refresh(){
-          if(paused)return;
+        let timer=null;
+        async function refresh(now){
+          if(paused&&!now)return;
+          clearTimeout(timer);
           try{const d=await fetch('/data').then(r=>r.json());render(d)}
           catch(e){document.getElementById('upd').textContent='Error: '+e.message}
-          setTimeout(refresh,INTERVAL*1000);
+          timer=setTimeout(refresh,INTERVAL*1000);
         }
         refresh();
       </script>
@@ -435,10 +581,15 @@ end
     end
   end
 
+  # Server serves the page, the data, and the worker actions. An action needs
+  # the token of this server run, which only the page knows, and a localhost
+  # Host header. So another web site in the browser cannot start an action.
   class Server
     def initialize(cfg)
       @cfg       = cfg
       @collector = Collector.new(cfg)
+      @actions   = ActionRunner.new(cfg)
+      @token     = SecureRandom.hex(16)
     end
 
     def run
@@ -447,6 +598,7 @@ end
       server = build_server
       server.mount_proc("/")     { |_, res| html(res) }
       server.mount_proc("/data") { |_, res| json(res) }
+      server.mount_proc("/action") { |req, res| action(req, res) }
       trap("INT") { server.shutdown }
       puts "dashboard: http://localhost:#{@cfg.port}  (ctrl-c to stop)"
       server.start
@@ -463,7 +615,24 @@ end
 
     def html(res)
       res.content_type = "text/html; charset=utf-8"
-      res.body = PAGE_HTML
+      res.body = PAGE_HTML.sub("__TOKEN__", @token)
+    end
+
+    def action(req, res)
+      res.content_type = "application/json"
+      error = refusal(req) || @actions.run(*JSON.parse(req.body.to_s).values_at("worker", "action").map(&:to_s))
+      res.status = error ? 400 : 202
+      res.body = JSON.generate(error ? { error: error } : { ok: true })
+    rescue JSON::ParserError
+      res.status = 400
+      res.body = JSON.generate(error: "the body is not JSON")
+    end
+
+    def refusal(req)
+      return "use POST" unless req.request_method == "POST"
+      return "wrong token" unless req["X-Maf-Token"] == @token
+
+      "wrong host" unless req.host.to_s.match?(/\A(localhost|127\.0\.0\.1)\z/)
     end
 
     def json(res)

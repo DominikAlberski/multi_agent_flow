@@ -13,6 +13,7 @@ require "tmpdir"
 require "fileutils"
 require "json"
 require "rbconfig"
+require_relative "../lib/maf/team"
 require "yaml"
 
 MAF = File.expand_path("../bin/maf", __dir__)
@@ -409,7 +410,7 @@ class MafTeamTest < Minitest::Test
   end
 
   def test_start_without_arguments_starts_the_prepared_worker
-    maf("prepare", "opencode", "architect_2")
+    maf("prepare", "opencode", "architect_2", "--interactive")
     out, status = maf("start", dir: worktree("architect-2"))
 
     assert_equal 0, status, out
@@ -429,8 +430,16 @@ class MafTeamTest < Minitest::Test
     assert_equal worktree("architect-1"), workers.dig("architect-1", "dir")
   end
 
+  # The architect never talks to the user, so maf prepare dispatches it.
+  def test_prepare_dispatches_the_architect_unless_interactive
+    assert_includes Maf::Prepare.mode_args(%w[claude architect]), "--dispatch"
+    refute_includes Maf::Prepare.mode_args(%w[claude architect --interactive]), "--dispatch"
+    refute_includes Maf::Prepare.mode_args(%w[claude architect --interactive]), "--interactive"
+    refute_includes Maf::Prepare.mode_args(%w[claude tester_2]), "--dispatch"
+  end
+
   def test_prepare_with_replace_retires_the_old_worker
-    maf("prepare", "opencode", "architect_2")
+    maf("prepare", "opencode", "architect_2", "--interactive")
     out, status = maf("prepare", "opencode", "tester_2", "--replace", "architect_2")
 
     assert_equal 0, status, out
@@ -440,7 +449,7 @@ class MafTeamTest < Minitest::Test
   end
 
   def test_retire_refuses_a_worker_that_still_runs
-    maf("prepare", "opencode", "architect_2")
+    maf("prepare", "opencode", "architect_2", "--interactive")
     pid = spawn("sleep", "30", chdir: worktree("architect-2"))
     out, status = maf("retire", "architect_2")
 
@@ -451,7 +460,7 @@ class MafTeamTest < Minitest::Test
   end
 
   def test_retire_refuses_uncommitted_work
-    maf("prepare", "opencode", "architect_2")
+    maf("prepare", "opencode", "architect_2", "--interactive")
     File.write(File.join(worktree("architect-2"), "work.rb"), "x = 1\n")
     out, status = maf("retire", "architect_2")
 
@@ -518,7 +527,7 @@ class MafTeamTest < Minitest::Test
 
   def test_prepare_refuses_a_worker_over_the_limit
     maf("team", "set", "--max", "1")
-    maf("prepare", "opencode", "architect_2")
+    maf("prepare", "opencode", "architect_2", "--interactive")
     out, status = maf("prepare", "opencode", "tester_1")
 
     refute_equal 0, status
@@ -527,7 +536,7 @@ class MafTeamTest < Minitest::Test
 
   def test_replace_frees_a_slot_inside_the_limit
     maf("team", "set", "--max", "1")
-    maf("prepare", "opencode", "architect_2")
+    maf("prepare", "opencode", "architect_2", "--interactive")
     out, status = maf("prepare", "opencode", "tester_1", "--replace", "architect_2")
 
     assert_equal 0, status, out
@@ -548,7 +557,7 @@ class MafTeamTest < Minitest::Test
   end
 
   def test_retire_removes_the_presence_file
-    maf("prepare", "opencode", "architect_2")
+    maf("prepare", "opencode", "architect_2", "--interactive")
     path = File.join(@project, ".maf/coordination", "presence", "architect-2.json")
     FileUtils.mkdir_p(File.dirname(path))
     File.write(path, JSON.generate("worker" => "architect-2", "pid" => Process.pid))
@@ -560,7 +569,7 @@ class MafTeamTest < Minitest::Test
 
   def test_retire_returns_claimed_tasks_to_the_pool
     skip "Taskwarrior ('task') not installed" unless system("task", "--version", out: File::NULL)
-    maf("prepare", "opencode", "architect_2")
+    maf("prepare", "opencode", "architect_2", "--interactive")
     id = coord("add", "--role", "architect", "--scope", "docs/**", "--title", "plan").strip
     coord("claim", id, env: { "COORD_ROLE" => "architect", "COORD_WORKER" => "architect-2" })
     out, status = maf("retire", "architect_2")

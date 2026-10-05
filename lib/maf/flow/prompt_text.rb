@@ -20,27 +20,34 @@ module Flow
     - Do not use subagents to verify your work.
   TEXT
 
-  # The dispatcher reads this block to decide if a dispatched run is done.
-  # NOTE: assets/dispatcher carries the same REPORT_FORMAT; both run standalone.
-  REPORT_FORMAT = '<report>{"status":"<done|blocked|needs_review>","tests":"<pass|fail>","next":"<next>"}</report>'
-  REPORT_RULE = <<~TEXT.strip
-    - If COORD_DISPATCHED is 1, end your final reply with one report block on its own line:
-      #{REPORT_FORMAT}
-      Use status done only when the work is complete. Use blocked or needs_review otherwise.
-  TEXT
-
-  NO_TASK_STOP = "- If no task and no message is available, stop. The board watcher wakes you when work arrives."
+  # Harnesses with a watcher that wakes an idle session.
+  WAKE_HARNESSES = %w[claude opencode].freeze
+  NO_TASK_STOP = "- If no task and no message is available, stop. The board watcher wakes you when work arrives.\n" \
+                 "  Do not wait in a loop: each return of a wait costs one model call."
   NO_TASK_WAIT = <<~TEXT.strip
     - If no task is available, run `coord next --wait --timeout 540`. It returns
       when a task or a message arrives. If it times out, run it again. Do not poll by hand.
   TEXT
 
+  # Every role except the project manager reads the code graph before work.
+  # A query output stays in the context for each later call, so the budget is small.
+  GRAPH_RULE = <<~TEXT.strip
+    - Query the shared knowledge graph when you start a task or plan a goal, not before.
+      It finds code and prior decisions faster than grep. Run `vault age` first.
+      Then run `graphify query "..." --budget 800 --graph "$COORD_DIR/../graphify-out/graph.json"`,
+      or use the graphify MCP tools. Never run `graphify export`.
+      Put one line in the report of that task or plan: "Graph: fresh", "Graph: stale", or "Graph: missing".
+  TEXT
+
+  # Only Claude Code has ScheduleWakeup. Other harnesses never see this rule.
+  CLAUDE_ARCHITECT_RULE = "- Never call ScheduleWakeup with `stop:false` and no `prompt`. " \
+                          "The call fails. Poll worker status through the task tool instead."
+
   DECISIONS = "the decisions folder: `.agent/decisions/` if it exists, else `docs/decisions/`"
 
   # Lead roles cannot commit (ADR 0004). A worker commits their decision records.
-  ARCHITECT_DECISIONS = "Record decisions in #{DECISIONS}. You cannot commit. " \
-                        "Create a task for a worker that can edit files. Put the decision text in the task. " \
-                        "That worker commits it on the goal branch."
+  ARCHITECT_DECISIONS = "Record decisions in #{DECISIONS}. " \
+                        "Create a task for a worker that can edit files. Put the decision text in the task."
   PM_DECISIONS = "Write each decision to `$COORD_DIR/artifacts/<goal>/decision-<name>.md`. You cannot commit. " \
                  "Send the path to the architect. The architect has a worker commit it in #{DECISIONS}."
 
@@ -72,15 +79,15 @@ module Flow
     - Before you continue a claimed task after a pause, run `coord show <id>`. If the status is not pending,
       or the worker is not you, stop work on that task. `coord reap` releases the claims of stalled workers.
     - Finish the whole task. Report done only when each acceptance criterion passes.
-    - If you cannot finish, do the parts you can. Keep the claim. Annotate the
-      blocker and the missing parts. Message the architect. Stop. Do not retry
-      a failing approach.
+    - If you cannot finish, do the parts you can. Keep the claim, so another worker
+      does not hit the same blocker. Annotate the blocker and the missing parts.
+      Message the architect. Stop. Do not retry a failing approach.
     %{no_task_instruction}
     - Record durable knowledge in the shared vault or #{DECISIONS}.
     - Never write ad-hoc verification scripts. The test suite is the verification.
+    #{GRAPH_RULE}
     #{STE_RULE}
     #{SUBAGENT_RULE}
-    #{REPORT_RULE}
   LOOP
 
   # Steps 2 to 9 are the same with and without a project manager.
@@ -120,10 +127,11 @@ module Flow
     - Start each goal from the base branch. Never start a goal from another goal branch.
     - Take the `ollama` lock only if you run a local model yourself.
     - Hand work between stages with artifacts: `$COORD_DIR/artifacts/<goal>/<name>.md`. Never use a path inside a worktree.
-    - Do not commit. For a durable artifact (an approved spec, an ADR), create a task for a worker that can edit files.
-      That worker commits the artifact on the goal branch.
+    - Do not commit. For a durable artifact (an approved spec, an ADR, `GLOSSARY.md`), create a task
+      for a worker that can edit files. That worker commits the artifact on the goal branch.
     - Create tasks in stage order. Do not create the task of the next stage until the gate of the current stage passes.
       A task that does not exist cannot be claimed.
+    #{GRAPH_RULE}
   TEXT
 
   # The architect takes goals from the project manager when that role exists,
@@ -146,7 +154,6 @@ module Flow
     - Take goals only from the project manager. Never take requests directly from the user.
     #{STE_RULE}
     #{SUBAGENT_RULE}
-    #{REPORT_RULE}
   LOOP
 
   ARCHITECT_LOOP_DIRECT = <<~LOOP
@@ -167,7 +174,6 @@ module Flow
     - Take requests from the user directly. This project has no project manager.
     #{STE_RULE}
     #{SUBAGENT_RULE}
-    #{REPORT_RULE}
   LOOP
 
   # The user can give the project manager a budget (`maf team set`) and let it
@@ -191,7 +197,7 @@ module Flow
     Work loop:
     1. Read the user's request. Interview the user, as the duties describe.
     2. Turn the request into one goal. Create the goal at the start of the interview: `coord goal add --title "<outcome>"`.
-       The command prints the goal id and creates the goal branch.
+       The command prints the goal id and creates the goal branch. The glossary draft path needs the goal id.
     3. When the interview ends, hand the goal to the architect:
          coord msg --from project-manager architect "GOAL <goal-id>: <goal>"
     4. Check status with `coord goal list` and `coord goal show <goal-id>`.
@@ -208,11 +214,9 @@ module Flow
       Give the user the two commands that `maf prepare` prints: `cd <worktree>` and `maf start`.
       If `maf` reports that the old worker still runs, ask the user to stop that session. Then run the command again.
     #{TEAM_RULES}
-    - Run goals in parallel only if the goals change different parts of the code.
     - Send goals to the architect only. Never dispatch work to other roles directly.
     - If no report has arrived yet, tell the user and check again with `coord inbox project-manager`.
     #{STE_RULE}
     #{SUBAGENT_RULE}
-    #{REPORT_RULE}
   LOOP
 end

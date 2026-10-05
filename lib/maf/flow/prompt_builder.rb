@@ -12,7 +12,7 @@ module Flow
     def build(harness, role, data)
       case role
       when "project-manager" then project_manager_prompt(data)
-      when "architect" then architect_prompt(data)
+      when "architect" then architect_prompt(harness, data)
       else worker_prompt(harness, role, data)
       end
     end
@@ -23,18 +23,23 @@ module Flow
       "#{intro(data)}\n\n#{duties_block(data)}\n\n#{format(WORKER_LOOP, role: role, no_task_instruction: no_task_line(harness))}"
     end
 
-    # Claude Code wakes an idle session with the board-watch hook. Other
-    # harnesses block in `coord next --wait`, which also returns on a message.
-    # The opencode board-watch plugin wakes opencode if the wait loop stops.
+    # Claude Code wakes an idle session with the board-watch hook, and opencode
+    # with the board-watch plugin. So these agents stop instead of waiting:
+    # each return of a wait costs one model call over the whole context.
+    # Codex and Hermes cannot be woken, so they block in `coord next --wait`.
+    # The dispatcher adds the report block rule to each dispatched prompt.
     def no_task_line(harness)
-      harness == "claude" ? NO_TASK_STOP : NO_TASK_WAIT
+      WAKE_HARNESSES.include?(harness) ? NO_TASK_STOP : NO_TASK_WAIT
     end
 
-    def architect_prompt(data)
+    def architect_prompt(harness, data)
       loop_text = project_manager? ? ARCHITECT_LOOP_PM : ARCHITECT_LOOP_DIRECT
       "#{intro(data)} You do not implement code yourself.\n\n#{duties_block(data)}\n\n" \
-        "#{format(loop_text, roles: dispatch_roles_text)}#{workflow_block}"
+        "#{format(loop_text, roles: dispatch_roles_text)}#{claude_rule(harness)}#{workflow_block}"
     end
+
+    # The loop text ends with a newline, so the rule lands as the last rule line.
+    def claude_rule(harness) = harness == "claude" ? "#{CLAUDE_ARCHITECT_RULE}\n" : ""
 
     # The workflow goes into the orchestrator prompt only. Workers stay workflow-blind.
     def workflow_block = @workflow ? "\n\n#{@workflow}" : ""

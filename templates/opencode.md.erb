@@ -9,6 +9,13 @@ temperature: 0.1
 permission:
   edit: <%= can_edit ? "allow" : "deny" %>
   bash: allow
+  # Worktrees live inside the project. The board, the artifacts, and git
+  # data are outside the worktree, so opencode would ask for each access.
+  external_directory:
+    "/tmp/*": allow
+    "/private/tmp/*": allow
+    "<%= project %>/.maf/*": allow
+    "<%= project %>/.git/*": allow
   task:
     "*": deny
     explore: allow

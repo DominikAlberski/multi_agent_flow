@@ -268,7 +268,17 @@ class DomainDocsPromptTest < RolesWorkflowTestCase
 
     assert_includes contract, "### Domain documentation"
     assert_includes contract, "The file does not exist until the first term resolves."
-    assert_includes contract, "Two goals that add terms conflict at merge time."
+  end
+
+  def test_the_architect_serializes_the_goals_that_add_terms
+    assert_includes role_file("architect"), "Two goals that add terms conflict at merge time."
+  end
+
+  def test_only_a_claude_architect_gets_the_schedule_wakeup_rule
+    refute_includes role_file("architect"), "ScheduleWakeup"
+    maf("add", "claude:architect", "--no-bootstrap")
+
+    assert_includes File.read(path(".maf", "agents", "claude", "architect.md")), "ScheduleWakeup"
   end
 
   def test_no_skill_text_or_dependency_is_shipped

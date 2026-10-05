@@ -6,7 +6,7 @@ module SetupAgent
   # Refresh owned hooks before the harness starts in an existing worktree.
   module RuntimeHooks
     def self.install(dir, harness)
-      %w[next-task.rb board-watch.rb session-guard.rb].each { |name| copy(dir, name) }
+      %w[next-task.rb board-watch.rb session-guard.rb context-watch.rb].each { |name| copy(dir, name) }
       configure(dir, harness)
       copy(dir, "board-watch-opencode.js", ".opencode/plugins/board-watch.js") if harness == "opencode"
     end
