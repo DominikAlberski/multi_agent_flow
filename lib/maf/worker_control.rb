@@ -23,8 +23,10 @@ module Maf
     # record the same text in the presence file.
     def self.started_at(pid) = IO.popen(PS_ENV, ["ps", "-o", "lstart=", "-p", pid.to_s], &:read).strip
 
-    def initialize(root, spec)
+    # force stops an interactive session also when maf cannot tell if it is idle.
+    def initialize(root, spec, force: false)
       @root = root
+      @force = force
       @worker = Workers.id(spec)
       @entry = Workers.at(root).find(@worker) || abort("maf: no worker #{@worker}")
     end
@@ -66,6 +68,7 @@ module Maf
     # A session in a turn would lose its work. The hook writes the transcript in each turn.
     def stop_session
       abort "maf: #{@worker} is in a turn. Try again when the session is idle." if busy?
+      abort "maf: maf cannot tell if #{@worker} is idle. Stop it in its terminal, or add --force." if unknown?
 
       Process.kill("TERM", pid)
       RunningProcesses.wait_for_exit(pid, timeout: 10)
@@ -89,10 +92,11 @@ module Maf
       recorded.empty? || recorded == self.class.started_at(pid)
     end
 
-    def busy?
-      transcript = read(File.join(coord_dir, "status", "#{@worker}.json"))["transcript"].to_s
-      File.exist?(transcript) && Time.now - File.mtime(transcript) < IDLE
-    end
+    # The context-watch hook records the transcript of Claude Code and Codex
+    # sessions. opencode has no such hook, so its idle state is unknown.
+    def transcript = read(File.join(coord_dir, "status", "#{@worker}.json"))["transcript"].to_s
+    def busy? = File.exist?(transcript) && Time.now - File.mtime(transcript) < IDLE
+    def unknown? = !@force && !File.exist?(transcript)
 
     def read(path)
       File.exist?(path) ? JSON.parse(File.read(path)) : {}
@@ -102,20 +106,27 @@ module Maf
   end
 
   # ControlLock runs one control action per worker at a time. A second click
-  # in the dashboard does not start a second dispatcher.
+  # in the dashboard does not start a second dispatcher. The longest action
+  # waits MAF_STOP_TIMEOUT seconds for a run, so an older lock is from a
+  # killed command or a reboot. It is taken over.
   class ControlLock
     def initialize(dir) = @dir = dir
 
     def hold(&block)
-      FileUtils.mkdir_p(File.dirname(@dir))
-      Dir.mkdir(@dir)
-    rescue Errno::EEXIST
-      abort "maf: another action for this worker runs. Try again later."
-    else
+      take || abort("maf: another action for this worker runs. Try again later.")
       run(&block)
     end
 
     private
+
+    def take
+      FileUtils.mkdir_p(File.dirname(@dir))
+      Dir.mkdir(@dir) && true
+    rescue Errno::EEXIST
+      stale? && FileUtils.rm_rf(@dir) && retry
+    end
+
+    def stale? = Time.now - File.mtime(@dir) > Integer(ENV.fetch("MAF_STOP_TIMEOUT", "1800")) + 60
 
     def run
       yield

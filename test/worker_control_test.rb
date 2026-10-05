@@ -46,7 +46,9 @@ class WorkerControlTest < Minitest::Test
     File.write(File.join(@coord, dir, "architect-1.json"), JSON.generate(data))
   end
 
-  def control(action) = capture_io { Maf::WorkerControl.new(@root, "architect_1").run(action) }
+  def control(action, force: false)
+    capture_io { Maf::WorkerControl.new(@root, "architect_1", force: force).run(action) }
+  end
 
   def test_stop_of_a_stopped_worker_does_nothing
     register(dispatch: true)
@@ -82,9 +84,28 @@ class WorkerControlTest < Minitest::Test
     assert Maf::RunningProcesses.alive?(pid)
   end
 
+  def idle_transcript
+    transcript = File.join(@root, "t.jsonl")
+    File.write(transcript, "{}")
+    File.utime(Time.now - 120, Time.now - 120, transcript)
+    write("status", "transcript" => transcript)
+  end
+
+  # opencode has no transcript in the status. maf cannot tell if it is idle.
+  def test_an_interactive_worker_with_an_unknown_state_needs_force
+    register(dispatch: false)
+    pid = spawn_worker
+
+    assert_raises(SystemExit) { control("stop") }
+    assert Maf::RunningProcesses.alive?(pid)
+    control("stop", force: true)
+    refute Maf::RunningProcesses.alive?(pid)
+  end
+
   def test_an_idle_interactive_worker_stops_and_gets_the_start_command
     register(dispatch: false)
     pid = spawn_worker
+    idle_transcript
     out, = control("restart")
 
     refute Maf::RunningProcesses.alive?(pid)
@@ -105,6 +126,17 @@ class WorkerControlTest < Minitest::Test
     FileUtils.mkdir_p(File.join(@coord, "locks", "control-architect-1.d"))
 
     assert_raises(SystemExit) { control("stop") }
+  end
+
+  # A killed command or a reboot leaves the lock behind.
+  def test_an_old_lock_is_taken_over
+    register(dispatch: true)
+    lock = File.join(@coord, "locks", "control-architect-1.d")
+    FileUtils.mkdir_p(lock)
+    File.utime(Time.now - 7200, Time.now - 7200, lock)
+    out, = control("status")
+
+    assert_includes out, "stopped"
   end
 
   def test_the_lock_is_released_after_an_action

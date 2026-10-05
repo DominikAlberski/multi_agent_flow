@@ -944,10 +944,11 @@ module Dispatcher
 
     # A missing or invalid report block resumes the session with the error,
     # at most REPORT_RETRIES times. A harness without a session gets no retry.
+    # The retry is part of the same run, so it does not count as a session run.
     def report(result, retries = REPORT_RETRIES)
       return failed(result) unless result.success
 
-      @harness.session_id(result.output)&.then { |id| @session.save(id) }
+      @harness.session_id(result.output)&.then { |id| @session.save(id) } if retries == REPORT_RETRIES
       block = ReportBlock.parse(@harness.result_text(result.output) || result.output)
       retry_report?(block, retries) ? report(ask_for_report(block), retries - 1) : conclude(block, result)
     end

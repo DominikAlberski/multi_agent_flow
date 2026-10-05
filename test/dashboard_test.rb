@@ -74,13 +74,12 @@ end
     assert_equal ["g"], summary[:in_review].map { |t| t["uuid"] }
   end
 
-  def test_token_usage_per_worker
+  def test_a_broken_usage_file_counts_as_no_usage
+    File.write(File.join(@coord, "workers.json"), JSON.generate("tester-bot" => { "role" => "tester" }))
     FileUtils.mkdir_p(File.join(@coord, "usage"))
-    File.write(File.join(@coord, "usage", "tester-bot.json"), JSON.generate("input_tokens" => 5, "runs" => 1))
-    File.write(File.join(@coord, "usage", "broken.json"), "{")
-    tokens = Dashboard::Collector.new(Dashboard::Config.new(["--coord", @coord])).collect[:tokens]
+    File.write(File.join(@coord, "usage", "tester-bot.json"), "{")
 
-    assert_equal({ "tester-bot" => { "input_tokens" => 5, "runs" => 1 }, "broken" => {} }, tokens)
+    assert_equal({}, workers.first["usage"])
   end
 
   def test_no_registry_means_no_workers
@@ -193,5 +192,16 @@ class DashboardWorkerTest < Minitest::Test
     assert_equal "wrong token", server.send(:refusal, Request.new("POST", {}, "localhost"))
     assert_equal "wrong host", server.send(:refusal, Request.new("POST", { "X-Maf-Token" => token }, "evil.example"))
     assert_nil server.send(:refusal, Request.new("POST", { "X-Maf-Token" => token }, "127.0.0.1"))
+  end
+
+  Response = Struct.new(:status, :body)
+
+  def test_the_page_and_the_data_need_a_local_host
+    server = Dashboard::Server.new(cfg)
+    foreign = Response.new(200, nil)
+    server.send(:local, Request.new("GET", {}, "evil.example"), foreign) { flunk "served a foreign host" }
+
+    assert_equal 403, foreign.status
+    assert_equal :served, server.send(:local, Request.new("GET", {}, "localhost"), Response.new) { :served }
   end
 end

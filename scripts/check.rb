@@ -50,10 +50,14 @@ module Check
 
   # Standalone scripts repeat the lead role list and the read-only Hermes
   # toolsets. Each file must carry the same literal.
+  PRESENCE_READERS = %w[assets/coord assets/dispatcher assets/dashboard lib/maf/worker_control.rb].freeze
   SHARED_LITERALS = {
     "LEADS = %w[project-manager architect].freeze" => %w[assets/coord assets/dispatcher lib/maf/flow.rb],
     %(READ_ONLY_TOOLSETS = "terminal,web,skills,todo,memory,session_search,clarify") =>
-      %w[assets/dispatcher lib/maf/flow.rb]
+      %w[assets/dispatcher lib/maf/flow.rb],
+    # A presence record holds the process start time. Each reader must format it the same way.
+    %(PS_ENV = { "TZ" => "UTC", "LC_ALL" => "C" }.freeze) => PRESENCE_READERS,
+    %(["ps", "-o", "lstart=", "-p") => PRESENCE_READERS
   }.freeze
 
   module_function

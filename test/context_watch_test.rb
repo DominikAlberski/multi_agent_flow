@@ -120,4 +120,20 @@ class ContextWatchTest < Minitest::Test
     fields = status.values_at("model", "context_tokens", "context_window", "harness")
     assert_equal ["gpt-6.1-sol", 150, 258_400, "codex"], fields
   end
+
+  # An error must not reach Claude Code: a failed hook shows an error in each turn.
+  def test_an_error_in_the_hook_is_logged_and_gives_no_output
+    guard = MafSession::Guard
+    guard.alias_method(:original_authorized?, :authorized?)
+    guard.define_method(:authorized?) { true }
+    File.write(@transcript, claude_line("m1", 400))
+    FileUtils.mkdir_p(File.dirname(@coord))
+    File.write(@coord, "a file, not a folder")
+    input = { "hook_event_name" => "Stop", "transcript_path" => @transcript }
+
+    _out, err = capture_io { assert_nil ContextWatch.main(input, @env) }
+    assert_includes err, "context-watch:"
+  ensure
+    guard.alias_method(:authorized?, :original_authorized?)
+  end
 end

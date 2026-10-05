@@ -228,15 +228,26 @@ module ContextWatch
   end
 end
 
+module ContextWatch
+  # A failed hook shows an error in each turn of the session. The watch is
+  # optional, so an error is logged and the session goes on.
+  def self.main(input, env)
+    return nil if !input.is_a?(Hash) || env["COORD_DISPATCHED"] || !env["COORD_DIR"] || !env["COORD_WORKER"]
+    return nil unless MafSession::Guard.new(env, input).authorized?
+
+    Hook.new(input, env).run
+  rescue StandardError => e
+    warn "context-watch: #{e.class}: #{e.message}"
+    nil
+  end
+end
+
 if $PROGRAM_NAME == __FILE__
   input = begin
     JSON.parse($stdin.read)
   rescue JSON::ParserError
     {}
   end
-  exit 0 if !input.is_a?(Hash) || ENV["COORD_DISPATCHED"] || !ENV["COORD_DIR"] || !ENV["COORD_WORKER"]
-  exit 0 unless MafSession::Guard.new(ENV, input).authorized?
-
-  output = ContextWatch::Hook.new(input, ENV).run
+  output = ContextWatch.main(input, ENV)
   $stdout.print(JSON.generate(output)) if output
 end
