@@ -1,0 +1,116 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# test/worker_control_test.rb - tests for maf worker stop|start|restart.
+#
+# Run: ruby test/worker_control_test.rb
+#
+# A sleeping child process plays the worker. Its presence record holds its
+# pid and its start time, as coord and the dispatcher write them.
+require "minitest/autorun"
+require "tmpdir"
+require "json"
+require "fileutils"
+require_relative "../lib/maf/setup_agent"
+require_relative "../lib/maf/worker_control"
+
+class WorkerControlTest < Minitest::Test
+  def setup
+    @root = Dir.mktmpdir("worker-control-test")
+    @coord = File.join(@root, ".maf", "coordination")
+    @pids = []
+  end
+
+  def teardown
+    @pids.each { |pid| Process.kill("KILL", pid) rescue nil }
+    FileUtils.remove_entry(@root)
+  end
+
+  def register(dispatch:)
+    entry = { "role" => "architect", "worker_id" => "1", "harness" => "claude", "dispatch" => dispatch,
+              "dir" => File.join(@root, ".maf", "worktrees", "architect-1") }
+    Maf::Workers.at(@root).add("architect-1", entry)
+  end
+
+  def spawn_worker
+    pid = spawn(RbConfig.ruby, "-e", "trap('TERM') { exit }; sleep 60")
+    Process.detach(pid)
+    @pids << pid
+    sleep 0.2
+    write("presence", "pid" => pid, "started" => Maf::WorkerControl.started_at(pid))
+    pid
+  end
+
+  def write(dir, data)
+    FileUtils.mkdir_p(File.join(@coord, dir))
+    File.write(File.join(@coord, dir, "architect-1.json"), JSON.generate(data))
+  end
+
+  def control(action) = capture_io { Maf::WorkerControl.new(@root, "architect_1").run(action) }
+
+  def test_stop_of_a_stopped_worker_does_nothing
+    register(dispatch: true)
+    out, = control("stop")
+
+    assert_includes out, "already stopped"
+  end
+
+  def test_start_of_a_live_worker_does_nothing
+    register(dispatch: true)
+    pid = spawn_worker
+    out, = control("start")
+
+    assert_includes out, "already runs (pid #{pid})"
+  end
+
+  def test_stop_ends_a_dispatcher
+    register(dispatch: true)
+    pid = spawn_worker
+    control("stop")
+
+    refute Maf::RunningProcesses.alive?(pid)
+  end
+
+  def test_an_interactive_worker_in_a_turn_is_not_stopped
+    register(dispatch: false)
+    pid = spawn_worker
+    transcript = File.join(@root, "t.jsonl")
+    File.write(transcript, "{}")
+    write("status", "transcript" => transcript)
+
+    assert_raises(SystemExit) { control("stop") }
+    assert Maf::RunningProcesses.alive?(pid)
+  end
+
+  def test_an_idle_interactive_worker_stops_and_gets_the_start_command
+    register(dispatch: false)
+    pid = spawn_worker
+    out, = control("restart")
+
+    refute Maf::RunningProcesses.alive?(pid)
+    assert_includes out, "maf start"
+  end
+
+  # A pid of a dead worker can belong to a new process later.
+  def test_a_reused_pid_is_not_the_worker
+    register(dispatch: true)
+    write("presence", "pid" => Process.pid, "started" => "Mon Jan  1 00:00:00 2001")
+    out, = control("status")
+
+    assert_includes out, "stopped"
+  end
+
+  def test_a_second_action_at_the_same_time_is_refused
+    register(dispatch: true)
+    FileUtils.mkdir_p(File.join(@coord, "locks", "control-architect-1.d"))
+
+    assert_raises(SystemExit) { control("stop") }
+  end
+
+  def test_the_lock_is_released_after_an_action
+    register(dispatch: true)
+    control("status")
+
+    refute Dir.exist?(File.join(@coord, "locks", "control-architect-1.d"))
+  end
+end

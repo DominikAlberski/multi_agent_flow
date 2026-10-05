@@ -11,6 +11,7 @@ require_relative "setup_agent"
 require_relative "menu"
 require_relative "team"
 require_relative "team_command"
+require_relative "worker_control"
 
 module Maf
   MANIFEST = ".maf/config.json"
@@ -43,6 +44,7 @@ module Maf
       "start" => "[HARNESS ROLE[_WORKER]] [--dispatch [--detach]]  start one agent in its worktree",
       "prepare" => "HARNESS ROLE[_WORKER] [--dispatch] [--replace W]  prepare a worker (--dispatch also starts it)",
       "retire" => "ROLE[_WORKER]                           remove a worker; its tasks return to the pool",
+      "worker" => "status|stop|start|restart ROLE[_WORKER]  control one worker (the dashboard uses it)",
       "team" => "[set --max N --allow HARNESS[:MODEL]]   show the team, or set its budget",
       "uninstall" => "[--check] [--yes] [--force]             remove the flow from the project",
       "migrate" => "[--check] [--yes]                       move an old-layout install into .maf/",
@@ -91,6 +93,8 @@ module Maf
     def run_start = @args.empty? ? SetupAgent.run_here : SetupAgent.run(@args)
     def run_prepare = Prepare.new(@args).run
     def run_team = TeamCommand.new(@args, SetupAgent::Project.root).run
+    def run_worker = WorkerControl.new(SetupAgent::Project.root, @args[1] || abort(worker_usage)).run(@args[0].to_s)
+    def worker_usage = "usage: maf worker #{WorkerControl::ACTIONS.join("|")} ROLE[_WORKER]"
     def run_retire = Retire.new(SetupAgent::Project.root, @args.first || abort("usage: maf retire ROLE[_WORKER]")).run
     def run_uninstall = Uninstall::Runner.new(["--project", Dir.pwd, *@args]).run
     def run_menu = Menu.new.run
