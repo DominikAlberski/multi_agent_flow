@@ -454,10 +454,15 @@ end
           const over = s.context_limit && s.context_tokens >= s.context_limit;
           return (over ? b('over limit', 'warn') + ' ' : '') + k(s.context_tokens) + pct;
         }
+        // A run that ended with status blocked or needs_review waits for someone else. It did not fail.
+        function runBadge(r) {
+          if (r.success) return b('ok', 'ok');
+          return r.outcome === 'waiting' ? b('waiting', 'warn') : b('failed', 'danger');
+        }
         function lastRun(w) {
           const r = (w.status || {}).last_run;
           if (!r) return '-';
-          const badge = b(r.success ? 'ok' : 'failed', r.success ? 'ok' : 'danger');
+          const badge = runBadge(r);
           return badge + ' ' + ago(r.finished_at) + ' ago<div class="log">' + esc(r.detail) + '</div>';
         }
         function buttons(w) {
@@ -522,7 +527,7 @@ end
           const stopped = ws.filter(w => !w.live && w.dispatch)
             .map(w => ({ l: 'danger', m: 'Dispatched worker ' + w.id + ' is stopped' }));
           const run = w => (w.status || {}).last_run || {};
-          const failed = ws.filter(w => run(w).success === false)
+          const failed = ws.filter(w => run(w).success === false && run(w).outcome !== 'waiting')
             .map(w => ({ l: 'warn', m: `Last run of ${w.id} failed: ${(run(w).detail || '').slice(0, 100)}` }));
           return stopped.concat(failed);
         }

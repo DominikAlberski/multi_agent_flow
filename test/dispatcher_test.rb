@@ -404,14 +404,14 @@ class RunnerTest < Minitest::Test
   def session = Dispatcher::Session.new(@dir, "backend-developer-bot")
 
   def test_success_saves_the_session_id
-    capture_io { assert runner("echo session=new-1").dispatch("go") }
+    capture_io { assert_equal :done, runner("echo session=new-1").dispatch("go") }
     assert_equal "new-1", session.id
   end
 
   def test_stale_session_retries_once_with_a_fresh_session
     session.save("old")
     script = %(echo "$1" >> #{@calls}; [ "$1" = old ] && { echo "Session not found: old"; exit 1; }; echo session=new-2)
-    capture_io { assert runner(script).dispatch("go") }
+    capture_io { assert_equal :done, runner(script).dispatch("go") }
     assert_equal ["old", ""], File.readlines(@calls, chomp: true)
     assert_equal "new-2", session.id
   end
@@ -501,24 +501,25 @@ class RunnerTest < Minitest::Test
   def calls = File.readlines(@calls, chomp: true)
 
   def test_report_done_is_a_success
-    capture_io { assert runner(reply("ok #{DONE}")).dispatch("go") }
+    capture_io { assert_equal :done, runner(reply("ok #{DONE}")).dispatch("go") }
     assert_equal [""], calls
   end
 
-  # An agent that gives up but exits 0 must not count as done.
-  def test_report_blocked_is_no_success_and_keeps_the_session
+  # An agent that gives up but exits 0 must not count as done. It waits.
+  def test_report_blocked_waits_and_keeps_the_session
     blocked = '<report>{"status":"blocked","next":"ask the architect"}</report>'
-    out, err = capture_io { refute runner(reply("stuck #{blocked}")).dispatch("go") }
+    out, err = capture_io { assert_equal :waiting, runner(reply("stuck #{blocked}")).dispatch("go") }
     assert_equal "s-1", session.id
     assert_includes out + err, "status blocked"
   end
 
-  def test_report_needs_review_is_no_success
-    capture_io { refute runner(reply('<report>{"status":"needs_review"}</report>')).dispatch("go") }
+  def test_report_needs_review_waits
+    capture_io { assert_equal :waiting, runner(reply('<report>{"status":"needs_review"}</report>')).dispatch("go") }
+    assert_equal [false, "waiting"], worker_status["last_run"].values_at("success", "outcome")
   end
 
   def test_missing_block_resumes_the_session_once_then_counts_the_exit_status
-    capture_io { assert runner(reply("no block")).dispatch("go") }
+    capture_io { assert_equal :done, runner(reply("no block")).dispatch("go") }
     assert_equal ["", "s-1"], calls
   end
 
@@ -530,7 +531,7 @@ class RunnerTest < Minitest::Test
   end
 
   def test_invalid_block_resumes_once_then_fails
-    capture_io { refute runner(reply('<report>{"status":"maybe"}</report>')).dispatch("go") }
+    capture_io { assert_equal :failed, runner(reply('<report>{"status":"maybe"}</report>')).dispatch("go") }
     assert_equal ["", "s-1"], calls
   end
 
@@ -542,13 +543,13 @@ class RunnerTest < Minitest::Test
 
   # A custom command has no session, so the runner cannot resume it.
   def test_missing_block_without_a_session_counts_the_exit_status
-    capture_io { assert runner(%(echo x >> #{@calls}; printf 'reply: plain')).dispatch("go") }
+    capture_io { assert_equal :done, runner(%(echo x >> #{@calls}; printf 'reply: plain')).dispatch("go") }
     assert_equal ["x"], calls
   end
 
   def test_abort_signal_fails_the_run_and_logs_it
     runner = Dispatcher::Runner.new(config(command: "echo GIVE-UP", timeout: 5, abort_signal: "GIVE-UP"), FakeHarness, {})
-    out, err = capture_io { refute runner.dispatch("go") }
+    out, err = capture_io { assert_equal :failed, runner.dispatch("go") }
     assert_includes out + err, "sent the abort signal"
   end
 
@@ -560,19 +561,19 @@ class RunnerTest < Minitest::Test
 
   def test_failing_verify_command_makes_a_done_run_no_success
     with_verify("echo broken; exit 1") do
-      out, err = capture_io { refute runner(reply("ok #{DONE}")).dispatch("go") }
+      out, err = capture_io { assert_equal :failed, runner(reply("ok #{DONE}")).dispatch("go") }
       assert_includes out + err, "verify command failed (echo broken; exit 1): broken"
     end
   end
 
   def test_passing_verify_command_keeps_the_success
-    with_verify("true") { capture_io { assert runner(reply("ok #{DONE}")).dispatch("go") } }
+    with_verify("true") { capture_io { assert_equal :done, runner(reply("ok #{DONE}")).dispatch("go") } }
   end
 
   def test_a_lead_role_gets_no_verify_check
     with_verify("exit 1") do
       lead = Dispatcher::Runner.new(config(role: "architect", command: reply("ok #{DONE}"), timeout: 5), FakeHarness, {})
-      capture_io { assert lead.dispatch("go") }
+      capture_io { assert_equal :done, lead.dispatch("go") }
     end
   end
 
@@ -601,14 +602,14 @@ class RunnerTest < Minitest::Test
   end
 
   def test_a_run_without_usage_writes_nothing
-    capture_io { assert runner("echo plain").dispatch("go") }
+    capture_io { assert_equal :done, runner("echo plain").dispatch("go") }
     refute File.exist?(File.join(@dir, "usage"))
   end
 
   def test_a_broken_usage_file_never_fails_the_run
     FileUtils.mkdir_p(File.join(@dir, "usage"))
     File.write(File.join(@dir, "usage", "backend-developer-bot.json"), "{broken")
-    capture_io { assert runner("echo tokens=10").dispatch("go") }
+    capture_io { assert_equal :done, runner("echo tokens=10").dispatch("go") }
   end
 
   def test_handoff_note_drops_the_report_block
@@ -620,7 +621,7 @@ class RunnerTest < Minitest::Test
   # losing context and doubling the cost.
   def test_other_failures_keep_the_session_and_do_not_retry
     session.save("old")
-    capture_io { refute runner(%(echo "$1" >> #{@calls}; echo "rate limited"; exit 1)).dispatch("go") }
+    capture_io { assert_equal :failed, runner(%(echo "$1" >> #{@calls}; echo "rate limited"; exit 1)).dispatch("go") }
     assert_equal ["old"], File.readlines(@calls, chomp: true)
     assert_equal "old", session.id
   end
@@ -652,6 +653,22 @@ class MainTest < Minitest::Test
     assert_equal 1, prompt.scan("The dispatcher took these messages").size
     assert_equal 2, prompt.scan("--- message from").size
     assert_equal 2, inbox("read").size
+  end
+
+  # Regression: a lead that waited for reviews got its messages back three
+  # times, and then the messages moved to failed/.
+  def test_a_waiting_run_acks_its_messages
+    write_message("backend-developer", "1.md", "architect", "first")
+    run_cycle(%(printf '<report>{"status":"needs_review","next":"wait"}</report>'))
+    assert_equal 1, inbox("read").size
+    assert_empty inbox
+  end
+
+  def test_a_failed_run_returns_its_messages
+    write_message("backend-developer", "1.md", "architect", "first")
+    run_cycle("exit 1")
+    assert_equal 1, inbox.size
+    assert_empty inbox("read")
   end
 
   # FakePoller claims every task except the ones in taken.
