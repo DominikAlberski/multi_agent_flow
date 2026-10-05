@@ -269,6 +269,9 @@ Then it adds workers itself, for example
 - If only one model is allowed for a harness, `maf prepare` uses that model.
 - `maf retire` sends TERM to a background dispatcher. A running agent run
   finishes first. Then the dispatcher exits.
+- Retirement moves the worker inbox and usage file into `.maf/coordination/archive/workers/<worker>-<timestamp>-<suffix>/`.
+  The archive keeps available files as `inbox/`, including read messages, and `usage.json`.
+  Each retirement creates a separate archive. Reusing a retired worker ID starts with an empty inbox and usage totals.
 - A task for a role without a worker sends a message to the project manager.
 - Each done task sends a message to the architect, so a dispatched architect
   starts when there is work to check.
