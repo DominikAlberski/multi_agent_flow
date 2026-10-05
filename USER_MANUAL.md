@@ -262,6 +262,8 @@ maf team set --max 6 --allow claude --allow opencode:deepseek-v4-flash
 Then it adds workers itself, for example
 `maf prepare opencode backend-developer_1 --dispatch`. With `--dispatch`,
 `maf prepare` starts the dispatcher in the background. You run no commands.
+`maf prepare` dispatches the architect by default: the architect never talks to you,
+and a dispatched session stays small. Add `--interactive` for an architect in a terminal.
 
 - `maf team` shows the budget, each worker, its state, and the tasks by role.
 - `maf prepare` refuses a harness or a model outside the budget, and a worker
@@ -1122,7 +1124,7 @@ This section holds the board details for the operator.
 
 | Command | What it does |
 |---|---|
-| `maf prepare HARNESS ROLE[_WORKER] [--replace W]` | Prepare a worker: role file, worktree, registry. Prints the two start commands. |
+| `maf prepare HARNESS ROLE[_WORKER] [--dispatch] [--interactive] [--replace W]` | Prepare a worker: role file, worktree, registry. Prints the two start commands. `--dispatch` starts the dispatcher instead. The architect is dispatched unless `--interactive` is given. |
 | `maf retire ROLE[_WORKER]` | Remove a worker. Stops its background dispatcher. Its claimed tasks return to the pool. |
 | `maf worker ACTION ROLE[_WORKER]` | Control one worker. ACTION is status, stop, start, or restart. Each action is idempotent. A dispatched worker starts again in the background. An idle interactive session stops; maf prints its start command. |
 | `maf team` | Show the budget, the workers, and the tasks by role. |

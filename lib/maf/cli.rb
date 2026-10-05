@@ -42,7 +42,8 @@ module Maf
       "roles" => "                                        list the built-in roles and the project roles",
       "role" => "add NAME                                add a stub role to .maf/roles.yml",
       "start" => "[HARNESS ROLE[_WORKER]] [--dispatch [--detach]]  start one agent in its worktree",
-      "prepare" => "HARNESS ROLE[_WORKER] [--dispatch] [--replace W]  prepare a worker (--dispatch also starts it)",
+      "prepare" => "HARNESS ROLE[_WORKER] [--dispatch|--interactive] [--replace W]  prepare a worker; " \
+                   "--dispatch starts it (default for the architect)",
       "retire" => "ROLE[_WORKER]                           remove a worker; its tasks return to the pool",
       "worker" => "status|stop|start|restart ROLE[_WORKER]  control one worker (the dashboard uses it)",
       "team" => "[set --max N --allow HARNESS[:MODEL]]   show the team, or set its budget",

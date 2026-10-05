@@ -2,13 +2,14 @@
 
 # team.rb - add, replace, and retire workers in one command.
 #
-#   maf prepare HARNESS ROLE[_WORKER] [--model M] [--dispatch] [--replace WORKER]
+#   maf prepare HARNESS ROLE[_WORKER] [--model M] [--dispatch | --interactive] [--replace WORKER]
 #   maf retire WORKER
 #
 # The project manager runs these commands. `maf prepare` adds the role file,
 # creates the worktree, and registers the worker. With --dispatch, it also
 # starts the dispatcher in the background. Without --dispatch, the user runs
-# two commands: `cd <worktree>` and `maf start`.
+# two commands: `cd <worktree>` and `maf start`. The architect is dispatched
+# unless --interactive is given.
 require "rbconfig"
 require_relative "setup_agent"
 require_relative "workers"
@@ -29,9 +30,20 @@ module Maf
   # the new worker have the same id (only the harness or the model changes),
   # the worker keeps its worktree and its claims.
   class Prepare
+    # The architect never talks to the user. A dispatched architect gets fresh
+    # sessions with a handoff note, so its context stays small.
+    DISPATCH_DEFAULT = %w[architect].freeze
+
+    def self.mode_args(argv)
+      return argv - ["--interactive"] if argv.include?("--interactive")
+
+      role = SetupAgent::Args.split_role(argv[1].to_s).first
+      DISPATCH_DEFAULT.include?(role) && !argv.include?("--dispatch") ? argv + ["--dispatch"] : argv
+    end
+
     def initialize(argv)
       @replace = take_replace(argv)
-      @args = SetupAgent::Args.parse(argv)
+      @args = SetupAgent::Args.parse(self.class.mode_args(argv))
       @root = SetupAgent::Project.root
       @budget = Budget.at(@root)
       @args.model ||= @budget.default_model(@args.harness)
