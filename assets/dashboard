@@ -106,14 +106,16 @@ end
     PS_ENV = { "TZ" => "UTC", "LC_ALL" => "C" }.freeze
     LOG_LINES = 5
 
-    def initialize(cfg)
+    # last_events maps each worker to the time of its last event.
+    def initialize(cfg, last_events = {})
       @cfg = cfg
+      @last_events = last_events
     end
 
     def read(id, entry)
       entry.merge("id" => id, "live" => live?(file("presence", id)), "status" => file("status", id),
                   "usage" => file("usage", id), "log" => tail("#{id}.log"), "action" => tail("#{id}.control.log"),
-                  "handoff_at" => mtime(File.join(sessions, "#{id}.handoff.md")))
+                  "handoff_at" => mtime(File.join(sessions, "#{id}.handoff.md")), "last_event" => @last_events[id])
     end
 
     private
@@ -222,10 +224,8 @@ end
     # .maf/coordination/workers.json lists each worker that `maf prepare` or
     # `maf start` set up. The last event shows when the worker last acted.
     def workers
-      last = @files.recent_events(500).to_h { |event| [event[:worker], event[:ts]] }
-      reader = WorkerReader.new(@cfg)
-      registry = JSON.parse(File.read(@cfg.workers_path))
-      registry.map { |id, entry| reader.read(id, entry).merge("last_event" => last[id]) }
+      reader = WorkerReader.new(@cfg, @files.recent_events(500).to_h { |event| [event[:worker], event[:ts]] })
+      JSON.parse(File.read(@cfg.workers_path)).map { |id, entry| reader.read(id, entry) }
     rescue Errno::ENOENT, JSON::ParserError
       []
     end
