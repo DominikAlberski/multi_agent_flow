@@ -409,6 +409,21 @@ class MafTeamTest < Minitest::Test
     assert_equal "opencode", workers.dig("backend-developer-2", "harness")
   end
 
+  # Regression: a project commits its own agents in .claude/agents. A new
+  # worktree then had no architect.md, and `claude --agent architect` failed.
+  def test_a_worktree_with_own_agent_files_gets_a_link_to_the_role_file
+    dir = File.join(@dir, "worktree")
+    FileUtils.mkdir_p(File.join(dir, ".claude", "agents"))
+    File.write(File.join(dir, ".claude", "agents", "mine.md"), "mine\n")
+    FileUtils.mkdir_p(File.join(@project, ".maf", "agents", "claude"))
+    File.write(File.join(@project, ".maf", "agents", "claude", "architect.md"), "role\n")
+
+    SetupAgent::RoleFile.copy(@project, dir, "claude", "architect")
+
+    assert_equal "role\n", File.read(File.join(dir, ".claude", "agents", "architect.md"))
+    assert_equal "mine\n", File.read(File.join(dir, ".claude", "agents", "mine.md"))
+  end
+
   def test_start_without_arguments_starts_the_prepared_worker
     maf("prepare", "opencode", "architect_2", "--interactive")
     out, status = maf("start", dir: worktree("architect-2"))
@@ -552,6 +567,21 @@ class MafTeamTest < Minitest::Test
     out, status = maf("retire", "architect_2")
     assert_equal 0, status, out
     assert_raises(Errno::ESRCH) { Process.kill(0, pid) }
+  ensure
+    Process.kill("KILL", pid) rescue nil if pid
+  end
+
+  # Regression: a worktree keeps the dispatcher copy from the day it was made.
+  # After maf update, the old copy wrote no worker status for the dashboard.
+  def test_dispatch_runs_the_dispatcher_of_the_main_checkout
+    maf("prepare", "opencode", "tester_2", "--interactive")
+    File.write(File.join(worktree("tester-2"), ".maf", "bin", "dispatcher"), "# stale copy\n")
+    out, status = maf("start", "opencode", "tester_2", "--dispatch", "--detach")
+    pid = workers.dig("tester-2", "pid")
+
+    assert_equal 0, status, out
+    command = IO.popen(["ps", "-o", "command=", "-p", pid.to_s], &:read)
+    assert_includes command, File.join(@project, ".maf", "bin", "dispatcher")
   ensure
     Process.kill("KILL", pid) rescue nil if pid
   end

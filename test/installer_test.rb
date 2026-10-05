@@ -651,18 +651,20 @@ class SetupAgentTest < Minitest::Test
     assert_raises(SystemExit) { capture_io { SetupAgent::Args.parse(%w[claude reviewer --interval 5]) } }
   end
 
-  def test_dispatch_runs_the_worktree_dispatcher_with_harness_model_and_flags
+  def test_dispatch_runs_the_main_dispatcher_with_harness_model_and_flags
     parsed = SetupAgent::Args.parse(%w[claude reviewer --dispatch --interval 30])
     ran = nil
+    root = nil
     Dir.mktmpdir do |dir|
       Dir.chdir(dir) do
+        root = Dir.pwd
         FileUtils.mkdir_p(".maf/bin")
         FileUtils.touch(".maf/bin/dispatcher")
         with_exec_stub(->(cmd) { ran = cmd }) { SetupAgent::Dispatch.launch(parsed, "sonnet") }
       end
     end
-    assert_equal [RbConfig.ruby, ".maf/bin/dispatcher", "reviewer", "--harness", "claude", "--model", "sonnet",
-                  "--interval", "30"], ran
+    assert_equal [RbConfig.ruby, File.join(root, ".maf/bin/dispatcher"), "reviewer", "--harness", "claude",
+                  "--model", "sonnet", "--interval", "30"], ran
   end
 
   def wait_for_log(log, limit: 10)
