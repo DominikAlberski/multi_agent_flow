@@ -224,7 +224,8 @@ end
     def workers
       last = @files.recent_events(500).to_h { |event| [event[:worker], event[:ts]] }
       reader = WorkerReader.new(@cfg)
-      JSON.parse(File.read(@cfg.workers_path)).map { |id, entry| reader.read(id, entry).merge("last_event" => last[id]) }
+      registry = JSON.parse(File.read(@cfg.workers_path))
+      registry.map { |id, entry| reader.read(id, entry).merge("last_event" => last[id]) }
     rescue Errno::ENOENT, JSON::ParserError
       []
     end
