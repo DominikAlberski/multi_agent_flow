@@ -85,6 +85,18 @@ class ContextWatchTest < Minitest::Test
     assert_includes output.dig(:hookSpecificOutput, :additionalContext), "Goal 3 is half done."
   end
 
+  # /clear drops the role file that maf start gave in the first prompt.
+  def test_a_cleared_session_reads_the_role_file_again
+    input = { "hook_event_name" => "SessionStart", "session_id" => "s2", "source" => "clear" }
+    output = ContextWatch::Hook.new(input, @env).run
+
+    assert_includes output.dig(:hookSpecificOutput, :additionalContext), "Read .maf/agents/claude/architect.md"
+  end
+
+  def test_a_new_session_without_a_note_gets_no_context
+    assert_nil ContextWatch::Hook.new({ "hook_event_name" => "SessionStart", "source" => "startup" }, @env).run
+  end
+
   def test_the_project_config_sets_the_limit
     @env.delete("MAF_CONTEXT_LIMIT")
     File.write(File.join(@dir, ".maf", "config.json").tap { |p| FileUtils.mkdir_p(File.dirname(p)) },

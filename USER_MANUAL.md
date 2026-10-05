@@ -341,7 +341,7 @@ and Codex sessions:
 2. If the context is over the limit, the hook asks the agent one time to write a
    handoff note to `.maf/coordination/sessions/<worker>.handoff.md`.
 3. Then the hook shows: `Context: 162k tokens (limit 150k) ... Type /clear to restart.`
-4. Type `/clear`. The new session gets the handoff note as context.
+4. Type `/clear`. The new session reads the role file again and gets the handoff note.
 
 The default limit is 150000 tokens. Set `"team": {"context_limit": 200000}` in
 `.maf/config.json`, or `MAF_CONTEXT_LIMIT` before `maf start`.

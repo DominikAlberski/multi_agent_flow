@@ -147,13 +147,34 @@ module ContextWatch
 
     private
 
+    # maf start gives the role file in the first prompt, not as a system
+    # prompt. /clear drops it, so a cleared session reads the role file again.
+    ROLE_FILES = { "claude" => ".maf/agents/claude/%s.md", "codex" => ".codex/prompts/%s.md" }.freeze
+
     def session_start
       @store.save("session_id" => @input["session_id"], "asked" => nil)
+      context = [role_line, note_text].compact.join("\n\n")
+      context.empty? ? nil : { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: context } }
+    end
+
+    def role_line
+      return nil unless @input["source"] == "clear"
+
+      "You are worker #{@env["COORD_WORKER"]}. Read #{role_file} and follow it exactly. Start your work loop now."
+    end
+
+    # The harness guess comes first. The file that exists in the worktree wins.
+    def role_file
+      names = ROLE_FILES.keys.sort_by { |name| name == harness ? 0 : 1 }
+      paths = names.map { |name| format(ROLE_FILES[name], @env["COORD_ROLE"]) }
+      paths.find { |file| File.exist?(file) } || paths.first
+    end
+
+    def note_text
       note = @store.note
       return nil if note.empty?
 
-      context = "Handoff note from your previous session (#{File.mtime(@store.handoff).utc.iso8601}):\n#{note}"
-      { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: context } }
+      "Handoff note from your previous session (#{File.mtime(@store.handoff).utc.iso8601}):\n#{note}"
     end
 
     def stop
