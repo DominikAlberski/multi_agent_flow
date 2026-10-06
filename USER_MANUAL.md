@@ -351,7 +351,7 @@ and Codex sessions:
 2. If the context is over the limit, the hook asks the agent one time to write a
    handoff note to `.maf/coordination/sessions/<worker>.handoff.md`.
 3. Then the hook shows: `Context: 162k tokens (limit 150k) ... Type /clear to restart.`
-4. Type `/clear`. The new session reads the role file again and gets the handoff note.
+4. Type `/clear`. The new session gets the role file text and the handoff note as context.
 
 The default limit is 150000 tokens. Set `"team": {"context_limit": 200000}` in
 `.maf/config.json`, or `MAF_CONTEXT_LIMIT` before `maf start`.
@@ -536,11 +536,12 @@ The wait between runs doubles after each run, up to 1 hour. A new or changed
 task starts a run immediately. A message run never claims a task.
 
 **Prompt cache.** LLM providers cache a conversation for a limited time after the
-last request. Claude Code uses a 1-hour cache.
+last request. Claude Code uses a 1-hour cache. The OpenAI cache of Codex is best
+effort and lasts a few minutes.
 
-- If the last run ended less than `--cache-window` seconds ago (default: 3300 s,
-  55 min), the dispatcher resumes the session. The provider reads the old context
-  from the cache — cheap.
+- If the last run ended less than `--cache-window` seconds ago (default: 300 s for
+  codex, else 3300 s, 55 min), the dispatcher resumes the session. The provider
+  reads the old context from the cache — cheap.
 - If the last run is older, the dispatcher starts a fresh session. The fresh
   session gets a short handoff note (at most 300 words), not the full old context.
   The log shows: `idle Nm, past the cache window; starting fresh with the handoff note`.
@@ -552,12 +553,14 @@ last request. Claude Code uses a 1-hour cache.
   no new run for 15 minutes. Each further limit doubles the pause, up to 1 hour.
   The worker status shows `paused_until`.
 - A dispatched Codex run starts lean: without the user's plugins, apps, browser and
-  computer tools, subagents, and MCP servers. Only the graphify server of the project
-  stays. Each extra tool or skill adds context to every model call of the run.
-  `--full-harness` keeps the full user setup.
-- A run that changed the state of the work ends with a new handoff note in
-  `.maf/coordination/sessions/<worker>.handoff.md`. The agent writes it while the
-  cache is still warm. A run that changed nothing keeps the old note.
+  computer tools, subagents, and MCP servers. A dispatched Claude Code run starts
+  without skills and without the user's MCP servers. The user's CLAUDE.md and hooks
+  stay. Only the graphify server of the project stays. Each extra tool or skill adds
+  context to every model call of the run. `--full-harness` keeps the full user setup.
+- A run that changed the state of the work puts a new handoff note in a
+  `<handoff>` block of its final reply. The dispatcher writes the note to
+  `.maf/coordination/sessions/<worker>.handoff.md`. The agent needs no tool call
+  for the note. A run that changed nothing keeps the old note.
 
 **Prefetch.** A task run prompt holds the task spec (`coord show ID`) and
 `git log --oneline -10`, each cut to 2000 characters. A message run prompt holds
@@ -567,6 +570,10 @@ the log shows `prefetch failed` and the prompt goes out without that part.
 **Token usage.** After each run, the dispatcher adds the token usage of the run
 to `.maf/coordination/usage/<worker>.json`. `input_tokens` counts every input token.
 `cached_input_tokens` counts the cache reads, which cost a fraction of the input price.
+`cache_write_input_tokens` counts the cache writes, which cost more than the input price.
+The dispatcher log shows the usage of each run, and the idle time of a resumed session.
+If a resumed run shows a large cache write, the cache was cold: lower `--cache-window`.
+The dashboard shows the cache hit ratio: cache reads as a part of all input tokens.
 Claude Code, Hermes, and Codex report the usage. opencode and `--command` harnesses
 do not. `coord status` and the dashboard show the totals. A run never fails because
 of missing usage data.

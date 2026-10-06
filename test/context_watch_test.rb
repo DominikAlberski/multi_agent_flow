@@ -50,6 +50,17 @@ class ContextWatchTest < Minitest::Test
     assert_equal 1000, usage["input_tokens"]
   end
 
+  # A cache write costs more than plain input. A cold cache shows as a large write.
+  def test_claude_cache_writes_are_counted_apart
+    usage = { input_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 700, output_tokens: 5 }
+    append(JSON.generate(type: "assistant", message: { id: "m1", model: "claude-opus-5-5", usage: usage }))
+    stop
+
+    assert_equal [702, 0, 700], usage_values
+  end
+
+  def usage_values = usage.values_at("input_tokens", "cached_input_tokens", "cache_write_input_tokens")
+
   # Claude Code writes one line per content block, each with the same usage.
   def test_a_message_id_counts_once
     append(claude_line("m1", 400), claude_line("m1", 400))
@@ -91,6 +102,18 @@ class ContextWatchTest < Minitest::Test
     output = ContextWatch::Hook.new(input, @env).run
 
     assert_includes output.dig(:hookSpecificOutput, :additionalContext), "Read .maf/agents/claude/architect.md"
+  end
+
+  # The hook gives the role file text, so the session spends no Read on it.
+  def test_a_cleared_session_gets_the_role_file_text
+    input = { "hook_event_name" => "SessionStart", "session_id" => "s2", "source" => "clear" }
+    output = Dir.chdir(@dir) do
+      FileUtils.mkdir_p(".maf/agents/claude")
+      File.write(".maf/agents/claude/architect.md", "Plan goals.")
+      ContextWatch::Hook.new(input, @env).run
+    end
+
+    assert_includes output.dig(:hookSpecificOutput, :additionalContext), "exactly. Start your work loop now.\n\nPlan goals."
   end
 
   def test_a_new_session_without_a_note_gets_no_context

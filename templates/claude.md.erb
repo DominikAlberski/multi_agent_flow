@@ -5,10 +5,11 @@ description: <%= description %>
 <% if model -%>
 model: <%= model %>
 <% end -%>
+<%# A tools list blocks each MCP tool that it does not name. -%>
 <% if can_edit -%>
-tools: Read, Write, Edit, Bash, Grep, Glob
+tools: Read, Write, Edit, Bash, Grep, Glob, mcp__graphify
 <% else -%>
-tools: Read, Bash, Grep, Glob
+tools: Read, Bash, Grep, Glob, mcp__graphify
 <% end -%>
 ---
 

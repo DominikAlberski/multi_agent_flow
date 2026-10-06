@@ -37,7 +37,9 @@ module ContextWatch
   # content block, with the same message id and usage, so ids are counted once.
   # Codex writes cumulative totals, so the usage is the change of the total.
   class Transcript
-    USAGE_KEYS = %w[input_tokens cached_input_tokens output_tokens].freeze
+    USAGE_KEYS = %w[input_tokens cached_input_tokens cache_write_input_tokens output_tokens].freeze
+    CLAUDE_KEYS = { "cached_input_tokens" => "cache_read_input_tokens",
+                    "cache_write_input_tokens" => "cache_creation_input_tokens", "output_tokens" => "output_tokens" }.freeze
 
     def initialize(path, offset, seen_total)
       @path, @offset, @seen_total = path, offset, seen_total
@@ -80,8 +82,7 @@ module ContextWatch
 
       @ids[id] = true
       reading.usage["input_tokens"] += reading.context
-      reading.usage["cached_input_tokens"] += usage["cache_read_input_tokens"].to_i
-      reading.usage["output_tokens"] += usage["output_tokens"].to_i
+      CLAUDE_KEYS.each { |key, name| reading.usage[key] += usage[name].to_i }
     end
 
     def codex(reading, event)
@@ -148,7 +149,8 @@ module ContextWatch
     private
 
     # maf start gives the role file in the first prompt, not as a system
-    # prompt. /clear drops it, so a cleared session reads the role file again.
+    # prompt. /clear drops it, so a cleared session gets the role file again.
+    # The hook puts the file text in the context: a Read costs one model call.
     ROLE_FILES = { "claude" => ".maf/agents/claude/%s.md", "codex" => ".codex/prompts/%s.md" }.freeze
 
     def session_start
@@ -160,7 +162,11 @@ module ContextWatch
     def role_line
       return nil unless @input["source"] == "clear"
 
-      "You are worker #{@env["COORD_WORKER"]}. Read #{role_file} and follow it exactly. Start your work loop now."
+      file = role_file
+      intro = "You are worker #{@env["COORD_WORKER"]}."
+      return "#{intro} Read #{file} and follow it exactly. Start your work loop now." unless File.exist?(file)
+
+      "#{intro} Follow your role file #{file} exactly. Start your work loop now.\n\n#{File.read(file)}"
     end
 
     # The harness guess comes first. The file that exists in the worktree wins.

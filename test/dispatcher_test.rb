@@ -445,7 +445,14 @@ class RunnerTest < Minitest::Test
     capture_io { runner(record_call).dispatch("go") }
     prompt = File.read("#{@calls}.prompt")
     refute_includes prompt, "old note"
-    assert_includes prompt, "overwrite #{session.handoff_path}"
+    assert_includes prompt, "<handoff>"
+  end
+
+  def test_a_handoff_block_in_the_final_reply_becomes_the_note
+    FileUtils.mkdir_p(File.dirname(session.handoff_path))
+    File.write(session.handoff_path, "old note")
+    capture_io { runner(reply("done <handoff>Auth half done.</handoff> #{DONE}")).dispatch("go") }
+    assert_equal "Auth half done.", session.handoff
   end
 
   # Some models skip the handoff instruction; the final reply fills in.
@@ -819,7 +826,7 @@ class PromptTest < Minitest::Test
     prompt = Dispatcher::Prompt.messages(messages, "backend-developer")
     assert_includes prompt, "--- message from architect ---\ndo x"
     assert_includes prompt, "--- message from pm ---\ndo y"
-    assert_includes prompt, "AGENTS.md"
+    assert_includes prompt, "Follow your role instructions"
     assert_includes prompt, "Do not use --wait"
   end
 
@@ -1015,8 +1022,8 @@ class AdapterTest < Minitest::Test
   end
 
   def test_claude_usage_comes_from_the_result_event
-    output = %({"result":"ok","session_id":"s","usage":{"input_tokens":12,"output_tokens":3,"cache_read_input_tokens":9}}\n)
-    expected = { "input_tokens" => 21, "cached_input_tokens" => 9, "output_tokens" => 3 }
+    output = %({"result":"ok","session_id":"s","usage":{"input_tokens":12,"output_tokens":3,"cache_read_input_tokens":9,"cache_creation_input_tokens":4}}\n)
+    expected = { "input_tokens" => 25, "cached_input_tokens" => 9, "cache_write_input_tokens" => 4, "output_tokens" => 3 }
     assert_equal(expected, harness("claude").usage(output))
   end
 
@@ -1025,13 +1032,13 @@ class AdapterTest < Minitest::Test
       {"type":"turn.completed","usage":{"input_tokens":5,"cached_input_tokens":1,"output_tokens":2}}
       {"type":"turn.completed","usage":{"input_tokens":7,"output_tokens":4}}
     OUT
-    expected = { "input_tokens" => 12, "cached_input_tokens" => 1, "output_tokens" => 6 }
+    expected = { "input_tokens" => 12, "cached_input_tokens" => 1, "cache_write_input_tokens" => 0, "output_tokens" => 6 }
     assert_equal(expected, harness("codex").usage(output))
   end
 
   def test_hermes_usage_comes_from_the_result_event
     output = %({"type":"result","session_id":"s","usage":{"prompt_tokens":8,"completion_tokens":2}}\n)
-    expected = { "input_tokens" => 8, "cached_input_tokens" => 0, "output_tokens" => 2 }
+    expected = { "input_tokens" => 8, "cached_input_tokens" => 0, "cache_write_input_tokens" => 0, "output_tokens" => 2 }
     assert_equal(expected, harness("hermes").usage(output))
   end
 
@@ -1361,6 +1368,21 @@ class CodexLeanTest < Minitest::Test
     refute_includes command, "--disable"
     assert Dispatcher::Options.parse(%w[tester --no-skill], { "COORD_DIR" => "/tmp/c" }).lean
     refute Dispatcher::Options.parse(%w[tester --no-skill --full-harness], { "COORD_DIR" => "/tmp/c" }).lean
+  end
+
+  # The Codex cache lasts minutes, the Claude Code cache 1 hour.
+  def test_the_cache_window_default_depends_on_the_harness
+    env = { "COORD_DIR" => "/tmp/c" }
+    windows = %w[codex claude].map { |name| Dispatcher::Options.parse(%W[tester --no-skill --harness #{name}], env) }
+    assert_equal [300, 3300], windows.map(&:cache_window)
+    assert_equal 9, Dispatcher::Options.parse(%w[t --no-skill --harness codex --cache-window 9], env).cache_window
+  end
+
+  def test_a_claude_run_starts_without_user_skills_and_mcp_servers
+    lean = Dispatcher::Harness::Claude.build_command(config(lean: true), "go", nil)
+    full = Dispatcher::Harness::Claude.build_command(config(lean: false), "go", nil)
+    assert_equal %w[--strict-mcp-config --disable-slash-commands], lean - full
+    assert_equal %w[-- go], lean.last(2)
   end
 
   def with_env(values)

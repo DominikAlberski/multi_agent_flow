@@ -52,19 +52,21 @@
 #   --abort-signal TEXT  The agent prints TEXT when it gives up. The run is a
 #                      failure. Default: off.
 #   --cache-window S   Resume a session only if its last run ended less than
-#                      S seconds ago (default: 3300, 55 minutes). 0 means
-#                      never resume.
+#                      S seconds ago. Default: 300 for codex, else 3300
+#                      (55 minutes). 0 means never resume.
 #   --max-session-runs N  Start a fresh session after N runs in one session
 #                      (default: 5). Each resume sends the whole old context
 #                      again, so a long session costs more on every call.
 #                      0 means no limit.
 #   --no-poll-tasks    Dispatch on inbox messages only.
-#   --full-harness     Codex only: keep the user's plugins, apps, browser and
-#                      computer tools, subagents, and every MCP server. By
-#                      default a dispatched Codex run starts without them and
-#                      keeps only the graphify server of this project: no
-#                      person reads the run, and each extra tool or skill adds
-#                      context to every model call of the run.
+#   --full-harness     Codex and Claude Code: keep the user's full setup. By
+#                      default a dispatched Codex run starts without plugins,
+#                      apps, browser and computer tools, subagents, and MCP
+#                      servers. A dispatched Claude Code run starts without
+#                      skills and without MCP servers. Both keep only the
+#                      graphify server of this project: no person reads the
+#                      run, and each extra tool or skill adds context to
+#                      every model call of the run.
 #   --once             Run one poll cycle, then exit (tests, cron).
 #   --verbose          Log idle cycles too.
 #
@@ -90,12 +92,13 @@
 # .maf/coordination/sessions/<worker>.session and resumed on the next run, so the
 # agent keeps its context without staying alive. LLM providers cache the
 # session prefix for a limited time after the last request (1 hour for
-# Claude Code). A resume after that time resends the whole context at full
+# Claude Code, a few minutes for Codex). A resume after that time resends the whole context at full
 # price. So the dispatcher resumes only inside --cache-window, and for at
 # most --max-session-runs runs. Otherwise the dispatcher starts a fresh
-# session. A run that changed the state of the work ends by writing a short
-# handoff note to .maf/coordination/sessions/<worker>.handoff.md, and a fresh
-# session starts with that note. If the harness reports an unknown session,
+# session. A run that changed the state of the work puts a short handoff note
+# in its final reply. The dispatcher writes the note to
+# .maf/coordination/sessions/<worker>.handoff.md, and a fresh session starts
+# with that note. If the harness reports an unknown session,
 # the dispatcher also starts fresh. Other failures keep the session.
 #
 # The agent runs with COORD_DIR, COORD_ROLE, COORD_WORKER (default:
@@ -626,14 +629,18 @@ module Dispatcher
   #
   # input_tokens counts every input token, cache reads included.
   # cached_input_tokens counts the cache reads, which cost a fraction of the
-  # input price. Claude Code reports cache reads and cache writes outside its
-  # input_tokens, so they are added. Codex reports them inside.
+  # input price. cache_write_input_tokens counts the cache writes, which cost
+  # more than the input price. A resume with a large cache write found a cold
+  # cache: the --cache-window is too long for the harness. Claude Code reports
+  # cache reads and cache writes outside its input_tokens, so they are added.
+  # Codex reports them inside.
   class TokenUsage
     def self.normalize(data)
       return nil unless data.is_a?(Hash)
 
       { "input_tokens" => input(data),
         "cached_input_tokens" => int(data, "cached_input_tokens", "cache_read_input_tokens"),
+        "cache_write_input_tokens" => int(data, "cache_write_input_tokens", "cache_creation_input_tokens"),
         "output_tokens" => int(data, "output_tokens", "completion_tokens") }
     end
 
@@ -643,6 +650,8 @@ module Dispatcher
     end
 
     def self.int(data, *names) = data.values_at(*names).compact.first.to_i
+
+    def self.label(usage) = usage.map { |key, value| "#{key.delete_suffix("_tokens")}=#{value}" }.join(" ")
 
     def self.sum(list) = list.empty? ? nil : list.reduce { |total, usage| total.merge(usage) { |_, a, b| a + b } }
 
@@ -708,9 +717,14 @@ module Dispatcher
       extend Adapter
       STALE_SESSION = "No conversation found with session ID"
 
+      # LEAN starts no MCP server outside --mcp-config and lists no skill.
+      # The user's CLAUDE.md and hooks stay.
+      LEAN = %w[--strict-mcp-config --disable-slash-commands].freeze
+
       def self.build_command(config, prompt, session_id)
         cmd = %w[claude -p --output-format json --permission-mode bypassPermissions --agent] + [config.role]
         cmd += ["--model", config.model] if config.model
+        cmd += LEAN if config.lean
         cmd + FlowConfig.claude_mcp(config) + resume(session_id, "--resume") + ["--", prompt]
       end
 
@@ -856,6 +870,18 @@ module Dispatcher
     end
   end
 
+  # HandoffBlock reads the handoff note that an agent puts in its final reply:
+  # <handoff>...</handoff>. The dispatcher writes the note to the handoff file,
+  # so the agent spends no tool call and no extra model call on the note.
+  module HandoffBlock
+    PATTERN = %r{<handoff>(.*?)</handoff>}m
+
+    def self.parse(text) = text.to_s.scan(PATTERN).flatten.last&.then { |body| decode(body).strip }
+
+    # Raw harness output holds the block inside a JSON string, with escapes.
+    def self.decode(body) = ReportBlock.load(%("#{body}")).then { |text| text.is_a?(String) ? text : body }
+  end
+
   # Verify runs the verify command of .maf/config.json after a successful
   # run, in the worktree. A non-zero exit makes the run no success. No key
   # means no check. Lead roles own no task, so they get no check.
@@ -907,7 +933,7 @@ module Dispatcher
     # final reply becomes the note, so a later fresh session still gets some
     # context. An existing note stays: a run that changed nothing keeps it.
     def keep_handoff(text)
-      note = text.gsub(ReportBlock::PATTERN, "").strip
+      note = text.gsub(ReportBlock::PATTERN, "").gsub(HandoffBlock::PATTERN, "").strip
       return if note.empty? || !@session.handoff.empty?
 
       @session.write_handoff(note)
@@ -1038,16 +1064,23 @@ module Dispatcher
     end
 
     def attempt(prompt, session_id)
-      Log.line("dispatching #{@config.role} (session: #{session_id || "new"})")
+      Log.line("dispatching #{@config.role} (session: #{session_label(session_id)})")
       text = Prompt.with_handoff(prompt, @session, session_id) + Prompt.signals(@config)
       spawn(@harness.build_command(@config, text, session_id))
     end
 
+    def session_label(id) = id ? "#{id}, idle #{(@session.idle_seconds / 60).round}m" : "new"
+
     def spawn(cmd)
       result = Spawn.run(cmd, env: @env, timeout: @config.timeout, limits: Limits.from(@config))
-      TokenUsage.new(@config.coord_dir, @config.worker).add(@harness.usage(result.output))
+      record(@harness.usage(result.output))
       @model = @harness.model(result.output) || @model
       result
+    end
+
+    def record(usage)
+      usage && Log.line("tokens: #{TokenUsage.label(usage)}")
+      TokenUsage.new(@config.coord_dir, @config.worker).add(usage)
     end
 
     def retry_fresh(prompt)
@@ -1062,9 +1095,15 @@ module Dispatcher
     def report(result, retries = REPORT_RETRIES)
       return failed(result) unless result.success
 
-      @harness.session_id(result.output)&.then { |id| @session.save(id) } if retries == REPORT_RETRIES
+      first_reply(result) if retries == REPORT_RETRIES
       block = ReportBlock.parse(@harness.result_text(result.output) || result.output)
       retry_report?(block, retries) ? report(ask_for_report(block), retries - 1) : conclude(block, result)
+    end
+
+    def first_reply(result)
+      @harness.session_id(result.output)&.then { |id| @session.save(id) }
+      note = HandoffBlock.parse(@harness.result_text(result.output) || result.output)
+      @session.write_handoff(note) unless note.to_s.empty?
     end
 
     def retry_report?(block, retries) = retries.positive? && @session.id && (block.nil? || block.error)
@@ -1105,13 +1144,12 @@ module Dispatcher
   end
 
   # Prompt builds the one-shot work prompt. The coordination rules live in
-  # AGENTS.md (installed by bootstrap), so the prompt only adds what is
-  # specific to a dispatched run.
+  # the role prompt, so the prompt only adds what is specific to a dispatched run.
   module Prompt
     # Each tool output stays in the context for every later model call of
     # the run. A skill or a file that the work does not need costs on each call.
     ONE_SHOT = <<~TEXT
-      You run as role %<role>s in one-shot mode. Follow your role file and the coordination rules in AGENTS.md.
+      You run as role %<role>s in one-shot mode. Follow your role instructions. They hold the coordination rules.
       Do not use --wait: nobody is waiting on this session.
       No person reads this run. Skip session-start skills such as caveman. Read a skill file only if the work needs it.
     TEXT
@@ -1159,9 +1197,9 @@ module Dispatcher
     def self.rules(role) = format(ONE_SHOT, role: role)
 
     HANDOFF = <<~TEXT
-      If this run changed the state of your work, overwrite %<path>s with a handoff note for your next session.
-      Write at most 300 words: current state, decisions, open questions, and the next step.
-      If this run changed nothing, leave the file as it is.
+      If this run changed the state of your work, put a handoff note for your next session in your final reply:
+      <handoff>At most 300 words: current state, decisions, open questions, and the next step.</handoff>
+      Do not write the note to a file. If this run changed nothing, leave out the handoff block.
     TEXT
 
     # A fresh session starts with the previous session's handoff note. A
@@ -1189,7 +1227,7 @@ module Dispatcher
     def self.with_handoff(prompt, session, session_id)
       note = session.handoff
       intro = session_id || note.empty? ? "" : "Handoff note from your previous session:\n#{note}\n\n"
-      "#{intro}#{prompt}\n#{format(HANDOFF, path: session.handoff_path)}#{report}"
+      "#{intro}#{prompt}\n#{HANDOFF}#{report}"
     end
   end
 
@@ -1339,10 +1377,16 @@ module Dispatcher
                  "--full-harness" => [:lean, false],
                  "--once" => [:once, true], "--verbose" => [:verbose, true] }.freeze
     DEFAULTS = { harness: "hermes", interval: 60, max_turns: 50, idle_timeout: 0, grace: Spawn::GRACE,
-                 cache_window: 3300, max_session_runs: 5, poll_tasks: true, lean: true,
+                 max_session_runs: 5, poll_tasks: true, lean: true,
                  no_skill: false, once: false, verbose: false }.freeze
 
     DEFAULT_TIMEOUT = 1500
+
+    # Claude Code caches for 1 hour. The OpenAI cache of Codex is best effort:
+    # a probe missed it after 5 idle minutes. A cold resume costs more than a
+    # fresh session with the handoff note.
+    CACHE_WINDOWS = { "codex" => 300 }.freeze
+    DEFAULT_CACHE_WINDOW = 3300
 
     def self.parse(argv, env = ENV)
       config = Config.new(**DEFAULTS)
@@ -1383,9 +1427,14 @@ module Dispatcher
     def self.finish(config, env)
       config.coord_dir = File.expand_path(env.fetch("COORD_DIR", ".maf/coordination"))
       config.worker = env.fetch("COORD_WORKER", "#{config.role}-bot")
-      config.timeout ||= role_timeout(config.role) || DEFAULT_TIMEOUT
       config.poll_tasks = false if LEADS.include?(config.role)
-      skill(config)
+      skill(limits(config))
+    end
+
+    def self.limits(config)
+      config.timeout ||= role_timeout(config.role) || DEFAULT_TIMEOUT
+      config.cache_window ||= CACHE_WINDOWS.fetch(config.harness, DEFAULT_CACHE_WINDOW)
+      config
     end
 
     # --no-skill drops a skill. Without --skill, the generated Hermes skill of the role loads.
