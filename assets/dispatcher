@@ -16,7 +16,7 @@
 #                     [--timeout S] [--idle-timeout S] [--grace S]
 #                     [--completion-signal TEXT] [--abort-signal TEXT]
 #                     [--cache-window S] [--max-session-runs N] [--no-poll-tasks]
-#                     [--once] [--verbose]
+#                     [--full-harness] [--once] [--verbose]
 #
 #   dispatcher tester                            # hermes (default)
 #   dispatcher reviewer --harness claude --model sonnet
@@ -59,6 +59,12 @@
 #                      again, so a long session costs more on every call.
 #                      0 means no limit.
 #   --no-poll-tasks    Dispatch on inbox messages only.
+#   --full-harness     Codex only: keep the user's plugins, apps, browser and
+#                      computer tools, subagents, and every MCP server. By
+#                      default a dispatched Codex run starts without them and
+#                      keeps only the graphify server of this project: no
+#                      person reads the run, and each extra tool or skill adds
+#                      context to every model call of the run.
 #   --once             Run one poll cycle, then exit (tests, cron).
 #   --verbose          Log idle cycles too.
 #
@@ -66,7 +72,12 @@
 # message into inbox/<role>/processing/ (an atomic rename, so two dispatchers
 # never take the same message), bundles all of them into one prompt, and runs
 # the agent once. On success the messages move to read/. On failure they go
-# back to the inbox, and after MAX_ATTEMPTS failures to failed/.
+# back to the inbox, and after MAX_ATTEMPTS failures to failed/. An FYI
+# message (`coord msg --fyi`) starts no run. The next run takes it along.
+#
+# Usage limits: a run that fails on a provider usage or rate limit never
+# reached the model. The dispatcher returns its messages without an attempt
+# and pauses new runs: 15 minutes, then a doubling pause up to MAX_BACKOFF.
 #
 # Tasks: when `coord next ROLE` lists unclaimed tasks, the dispatcher claims
 # one task for its worker and runs the agent on that task only. The claim is
@@ -116,7 +127,7 @@ module Dispatcher
 
   Config = Struct.new(:role, :harness, :command, :model, :skill, :no_skill, :interval, :max_turns,
                       :timeout, :idle_timeout, :grace, :completion_signal, :abort_signal,
-                      :cache_window, :max_session_runs, :once, :poll_tasks, :worker, :coord_dir, :verbose,
+                      :cache_window, :max_session_runs, :once, :poll_tasks, :worker, :coord_dir, :verbose, :lean,
                       keyword_init: true)
 
   module Log
@@ -259,14 +270,22 @@ module Dispatcher
     # A crash mid-run leaves messages in processing/. Return them to the inbox.
     def recover = Dir.glob(File.join(@dir, "processing", "*.md")).each { |path| move(path, @dir) }
 
+    # FYI messages alone start no run. A waking message takes them along.
     def take
       fold_worker_inboxes
-      Dir.glob(File.join(@dir, "*.md")).sort.filter_map { |path| claim(path) }
+      paths = Dir.glob(File.join(@dir, "*.md")).sort
+      paths.all? { |path| Mailbox.fyi?(path) } ? [] : paths.filter_map { |path| claim(path) }
     end
+
+    # NOTE: assets/coord writes the same name mark (coord msg --fyi).
+    def self.fyi?(path) = File.basename(path).include?(".fyi.")
 
     def ack(messages) = messages.each { |message| move(message.path, File.join(@dir, "read")) }
 
     def release(messages) = messages.each { |message| move(message.path, *retry_target(message.path)) }
+
+    # A run that hit a usage limit never reached the model, so it uses no attempt.
+    def restore(messages) = messages.each { |message| move(message.path, @dir) }
 
     private
 
@@ -331,17 +350,31 @@ module Dispatcher
   # cut to LIMIT characters. A failed command is logged and left out. A run
   # without a task (a message run) gets only the git log. The agent queries
   # the knowledge graph itself, with a question that fits the task.
+  # A lead run also gets the artifact list of the open goals, with sizes, so
+  # it reads single files by name instead of printing a whole folder.
   module Prefetch
     LIMIT = 2000
+    ARTIFACTS = "artifacts of the open goals"
 
-    def self.context(poller, task_id = nil)
-      sections = commands(poller, task_id).filter_map { |label, run| section(label, run) }
+    def self.context(poller, task_id = nil, lead: false)
+      sections = commands(poller, task_id, lead).filter_map { |label, run| section(label, run) }
       sections.empty? ? "" : "\nLive context at dispatch time:\n\n#{sections.join("\n")}"
     end
 
-    def self.commands(poller, task_id)
+    def self.commands(poller, task_id, lead)
       log = { "git log --oneline -10" => -> { git_log } }
+      log = log.merge(ARTIFACTS => -> { artifacts(poller) }) if lead
       task_id ? { "coord show #{task_id}" => -> { poller.show(task_id) } }.merge(log) : log
+    end
+
+    def self.artifacts(poller)
+      files = poller.goal_ids&.flat_map { |id| Dir.glob(File.join(poller.coord_dir, "artifacts", id, "*")) }
+      files && (files.empty? ? "(none)" : files.sort.map { |path| artifact_line(path) }.join("\n"))
+    end
+
+    def self.artifact_line(path)
+      "#{File.basename(File.dirname(path))}/#{File.basename(path)} #{(File.size(path) / 1024.0).round(1)}k " \
+        "#{File.mtime(path).utc.strftime("%H:%M")}"
     end
 
     def self.section(label, run)
@@ -381,6 +414,8 @@ module Dispatcher
     def coord(*args) = CoordCall.run(@env, *args)
     def next_output = read("next", @role)
     def show(id) = read("show", id)
+    def goal_ids = read("goal", "list")&.scan(TASK_ID)&.flatten
+    def coord_dir = @env.fetch("COORD_DIR")
 
     private
 
@@ -698,7 +733,22 @@ module Dispatcher
         cmd = %w[codex exec] + (session_id ? ["resume"] : [])
         cmd += %w[--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox]
         cmd += ["-m", config.model] if config.model
+        cmd += Lean.flags if config.lean
         cmd + resume(session_id) + [session_id ? prompt : role_prompt(config.role) + prompt]
+      end
+
+      # Lean drops the parts of the user's Codex setup that a one-shot run
+      # does not use. Each one adds tool schemas, skill lists, or MCP calls
+      # to every model call. Only the graphify server of this project stays.
+      module Lean
+        FEATURES = %w[plugins apps browser_use computer_use multi_agent].freeze
+        SERVER = /^\[mcp_servers\.([\w-]+)\]\s*$/
+
+        def self.flags = FEATURES.flat_map { |name| ["--disable", name] } + servers.flat_map { |name| off(name) }
+        def self.off(name) = ["-c", "mcp_servers.#{name}.enabled=false"]
+        def self.servers = File.exist?(config_path) ? File.read(config_path).scan(SERVER).flatten.uniq - [keep] : []
+        def self.keep = "graphify-#{File.basename(Project.root)}"
+        def self.config_path = File.join(ENV.fetch("CODEX_HOME", File.join(Dir.home, ".codex")), "config.toml")
       end
 
       def self.role_prompt(role)
@@ -885,6 +935,9 @@ module Dispatcher
       save({ "running" => false, "model" => model, "last_run" => run }.compact)
     end
 
+    # The board shows a paused worker, not a live one that fails each cycle.
+    def paused(time) = save("paused_until" => time&.utc&.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
     private
 
     def now = Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -902,6 +955,37 @@ module Dispatcher
     rescue SystemCallError => e
       Log.line("worker status not saved: #{e.message}")
     end
+  end
+
+  # UsageLimit spots a provider usage or rate limit in the end of the output
+  # of a run that exited with an error. Such a run never reached the model.
+  # A timeout is never a limit: the output can be the agent's own text.
+  module UsageLimit
+    PATTERN = /usage limit|rate limit|hit your limit|limit reached|quota exceeded|too many requests/i
+
+    def self.hit?(result) = result.reason == :exit && result.output.lines.last(10).join.match?(PATTERN)
+  end
+
+  # Pause holds new runs after a usage limit. Each limit in a row doubles the
+  # pause, up to MAX_BACKOFF. Any other outcome ends the series.
+  class Pause
+    FIRST = 900
+
+    def initialize
+      @seconds, @until = 0, Time.at(0)
+    end
+
+    attr_reader :until
+
+    def active?(now = Time.now) = now < @until
+
+    def start(now = Time.now)
+      @seconds = @seconds.zero? ? FIRST : [@seconds * 2, MAX_BACKOFF].min
+      @until = now + @seconds
+    end
+
+    # Returns true when a series of limits ended.
+    def clear = @seconds.positive?.tap { @seconds = 0 }
   end
 
   # Runner runs one agent dispatch. It resumes the saved session only while
@@ -996,10 +1080,11 @@ module Dispatcher
       outcome != :done || Verify.pass?(@config, @env) ? outcome : :failed
     end
 
+    # Returns :limited for a usage limit, else :failed.
     def failed(result)
       Log.line("agent #{failure_label(result.reason)}: #{result.output.lines.last(5).join.strip}")
       report_timeout if result.reason == :timeout
-      :failed
+      UsageLimit.hit?(result) ? :limited : :failed
     end
 
     TIMEOUT_NOTICE = "Dispatcher run of %<worker>s timed out after %<seconds>ss. The claims stay. " \
@@ -1023,17 +1108,25 @@ module Dispatcher
   # AGENTS.md (installed by bootstrap), so the prompt only adds what is
   # specific to a dispatched run.
   module Prompt
+    # Each tool output stays in the context for every later model call of
+    # the run. A skill or a file that the work does not need costs on each call.
     ONE_SHOT = <<~TEXT
       You run as role %<role>s in one-shot mode. Follow your role file and the coordination rules in AGENTS.md.
       Do not use --wait: nobody is waiting on this session.
+      No person reads this run. Skip session-start skills such as caveman. Read a skill file only if the work needs it.
     TEXT
 
     # The dispatcher claims each task. A worker that claims a task itself can
     # take the task of a run that starts next.
     MESSAGE_END = "Handle the messages above. Do not claim a task: the dispatcher claims tasks for you.\n" \
                   "When every message is handled, stop.\n"
-    LEAD_END = "You are a lead role. Never claim a task. Handle the messages above.\n" \
-               "When every message is handled, stop.\n"
+    LEAD_END = <<~TEXT
+      You are a lead role. Never claim a task. Handle the messages above.
+      Start from your handoff note. Read only the artifacts that the messages or the note name.
+      Never print a whole artifact folder. For a revised artifact, read the diff against the reviewed copy.
+      Do not send a message only to acknowledge. Send a message only with a result, a question, or a decision.
+      When every message is handled, stop.
+    TEXT
 
     def self.messages(messages, role)
       bodies = messages.map { |message| "--- #{heading(message)} ---\n#{message.text}\n" }
@@ -1043,7 +1136,10 @@ module Dispatcher
 
     # A worker has no inbox of its own, so a message for one worker reaches
     # any worker of the role.
-    def self.heading(message) = "message from #{message.from}#{" for worker #{message.worker}" if message.worker}"
+    def self.heading(message)
+      fyi = " (FYI: no reply needed)" if Mailbox.fyi?(message.path)
+      "message from #{message.from}#{" for worker #{message.worker}" if message.worker}#{fyi}"
+    end
 
     TASK = <<~TEXT
       The dispatcher claimed task %<id>s for you. Skip the claim step of your work loop.
@@ -1127,6 +1223,7 @@ module Dispatcher
       @mailbox = Mailbox.new(config.coord_dir, config.role)
       @poller = Poller.new(Main.run_env(config), config.role)
       @watch, @resume = Array.new(2) { TaskWatch.new(config.interval) }
+      @pause, @status = Pause.new, WorkerStatus.new(config)
     end
 
     def self.run_env(config)
@@ -1149,13 +1246,27 @@ module Dispatcher
     def cycle
       Presence.write(@config)
       chores.run
+      return paused_cycle if @pause.active?
+
       worked = dispatch_messages || (@config.poll_tasks && (dispatch_claimed || dispatch_tasks))
       Log.line("no work this cycle") if @config.verbose && !worked
     end
 
     private
 
-    def context(task_id = nil) = Prefetch.context(@poller, task_id)
+    def context(task_id = nil) = Prefetch.context(@poller, task_id, lead: LEADS.include?(@config.role))
+
+    def dispatch(prompt) = @runner.dispatch(prompt).tap { |outcome| pace(outcome) }
+
+    def pace(outcome) = outcome == :limited ? pause : unpause
+    def unpause = @pause.clear && @status.paused(nil)
+    def paused_cycle = @config.verbose && Log.line("paused for a usage limit until #{@pause.until.utc}")
+
+    def pause
+      @pause.start
+      @status.paused(@pause.until)
+      Log.line("usage limit: no new run until #{@pause.until.utc}")
+    end
     def chores = @chores ||= LeadChores.new(@poller, @config.role)
 
     def start
@@ -1175,7 +1286,7 @@ module Dispatcher
       messages = @mailbox.take
       return false if messages.empty?
 
-      settle(messages, @runner.dispatch(Prompt.messages(messages, @config.role) + context))
+      settle(messages, dispatch(Prompt.messages(messages, @config.role) + context))
     end
 
     # A run that waits for someone else handled its messages, so they are read.
@@ -1183,7 +1294,7 @@ module Dispatcher
     # Tasks still unclaimed after a message run count as dispatched, so the
     # next cycle backs off instead of starting another run for them.
     def settle(messages, outcome)
-      outcome == :failed ? @mailbox.release(messages) : @mailbox.ack(messages)
+      { failed: :release, limited: :restore }.fetch(outcome, :ack).then { |step| @mailbox.public_send(step, messages) }
       @watch.dispatched(@poller.unclaimed_task_ids) if @config.poll_tasks
       true
     end
@@ -1193,7 +1304,7 @@ module Dispatcher
       ids = @poller.claimed_task_ids
       return false unless @resume.due?(ids)
 
-      @runner.dispatch(Prompt.resume(@config.role, ids) + context(ids.first))
+      dispatch(Prompt.resume(@config.role, ids) + context(ids.first))
       @resume.dispatched(ids)
       true
     end
@@ -1209,7 +1320,7 @@ module Dispatcher
     end
 
     def run_task(id)
-      @runner.dispatch(Prompt.task(@config.role, id) + context(id))
+      dispatch(Prompt.task(@config.role, id) + context(id))
       true
     end
   end
@@ -1225,9 +1336,10 @@ module Dispatcher
                "--completion-signal TEXT" => [:completion_signal, String],
                "--abort-signal TEXT" => [:abort_signal, String] }.freeze
     SWITCHES = { "--no-skill" => [:no_skill, true], "--no-poll-tasks" => [:poll_tasks, false],
+                 "--full-harness" => [:lean, false],
                  "--once" => [:once, true], "--verbose" => [:verbose, true] }.freeze
     DEFAULTS = { harness: "hermes", interval: 60, max_turns: 50, idle_timeout: 0, grace: Spawn::GRACE,
-                 cache_window: 3300, max_session_runs: 5, poll_tasks: true,
+                 cache_window: 3300, max_session_runs: 5, poll_tasks: true, lean: true,
                  no_skill: false, once: false, verbose: false }.freeze
 
     DEFAULT_TIMEOUT = 1500

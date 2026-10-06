@@ -621,7 +621,7 @@ class RunnerTest < Minitest::Test
   # losing context and doubling the cost.
   def test_other_failures_keep_the_session_and_do_not_retry
     session.save("old")
-    capture_io { assert_equal :failed, runner(%(echo "$1" >> #{@calls}; echo "rate limited"; exit 1)).dispatch("go") }
+    capture_io { assert_equal :failed, runner(%(echo "$1" >> #{@calls}; echo "boom"; exit 1)).dispatch("go") }
     assert_equal ["old"], File.readlines(@calls, chomp: true)
     assert_equal "old", session.id
   end
@@ -1248,5 +1248,149 @@ class TimeoutTest < Minitest::Test
     yield
   ensure
     Dispatcher::CoordCall.define_singleton_method(:run, original)
+  end
+end
+
+# An FYI message (coord msg --fyi) waits in the inbox and starts no run.
+class FyiMailboxTest < Minitest::Test
+  include DispatcherTestHelpers
+
+  def setup
+    @dir = Dir.mktmpdir("dispatcher-fyi-test")
+    @mailbox = Dispatcher::Mailbox.new(@dir, "backend-developer")
+  end
+
+  def teardown
+    FileUtils.remove_entry(@dir)
+  end
+
+  def test_fyi_messages_alone_start_no_run
+    write_message("backend-developer", "1.fyi.md", "architect", "note")
+    assert_empty @mailbox.take
+    assert_equal 1, inbox.size
+  end
+
+  def test_a_waking_message_takes_the_fyi_messages_along
+    write_message("backend-developer", "1.fyi.md", "architect", "note")
+    write_message("backend-developer", "2.md", "architect", "act")
+    assert_equal %w[note act], @mailbox.take.map(&:text)
+  end
+
+  def test_the_prompt_marks_an_fyi_message
+    write_message("backend-developer", "1.fyi.md", "architect", "note")
+    write_message("backend-developer", "2.md", "architect", "act")
+    prompt = Dispatcher::Prompt.messages(@mailbox.take, "backend-developer")
+    assert_includes prompt, "message from architect (FYI: no reply needed)"
+  end
+
+  # A usage limit is no attempt: the name keeps no retry count.
+  def test_restore_returns_messages_without_an_attempt
+    write_message("backend-developer", "1.md", "architect", "act")
+    @mailbox.restore(@mailbox.take)
+    assert_equal ["1.md"], inbox.map { |path| File.basename(path) }
+  end
+end
+
+class UsageLimitTest < Minitest::Test
+  include DispatcherTestHelpers
+
+  def setup
+    @dir = Dir.mktmpdir("dispatcher-limit-test")
+  end
+
+  def teardown
+    FileUtils.remove_entry(@dir)
+  end
+
+  LIMIT = %(echo '{"type":"error","message":"You have hit your usage limit."}'; exit 1)
+
+  def main(command) = Dispatcher::Main.new(config(command: command, poll_tasks: false, timeout: 5))
+  def status = JSON.parse(File.read(File.join(@dir, "status", "backend-developer-bot.json")))
+
+  def test_a_limit_returns_the_messages_and_pauses_new_runs
+    write_message("backend-developer", "1.md", "architect", "first")
+    calls = File.join(@dir, "calls")
+    dispatcher = main("echo run >> #{calls}; #{LIMIT}")
+    capture_io { 2.times { dispatcher.cycle } }
+    assert_equal 1, File.readlines(calls).size
+    assert_equal ["1.md"], inbox.map { |path| File.basename(path) }
+    assert_equal "limited", status.dig("last_run", "outcome")
+    assert status["paused_until"]
+  end
+
+  def test_the_pause_doubles_and_ends_on_another_outcome
+    pause = Dispatcher::Pause.new
+    now = Time.at(0)
+    pause.start(now)
+    assert_equal 900, (pause.until - now).to_i
+    pause.start(now)
+    assert_equal 1800, (pause.until - now).to_i
+    assert pause.clear
+    refute pause.clear
+  end
+
+  def test_the_text_of_a_successful_or_timed_out_run_is_no_limit
+    limit = "rate limit\n"
+    refute Dispatcher::UsageLimit.hit?(Dispatcher::Result.new(limit, false, true, :timeout))
+    assert Dispatcher::UsageLimit.hit?(Dispatcher::Result.new(limit, false, false, :exit))
+  end
+end
+
+# A dispatched Codex run starts without the user's extra tools. Only the
+# graphify server of this project stays.
+class CodexLeanTest < Minitest::Test
+  include DispatcherTestHelpers
+
+  def setup
+    @dir = "/tmp"
+  end
+
+  def test_lean_flags_disable_features_and_foreign_mcp_servers
+    Dir.mktmpdir do |home|
+      toml = "[mcp_servers.devrelay-gateway]\n[mcp_servers.graphify-#{File.basename(Dispatcher::Project.root)}]\n"
+      File.write(File.join(home, "config.toml"), toml)
+      flags = with_env("CODEX_HOME" => home) { Dispatcher::Harness::Codex::Lean.flags }
+      assert_includes flags.each_cons(2).to_a, %w[--disable plugins]
+      assert_includes flags.each_cons(2).to_a, ["-c", "mcp_servers.devrelay-gateway.enabled=false"]
+      refute(flags.any? { |flag| flag.include?("graphify") })
+    end
+  end
+
+  def test_full_harness_keeps_the_user_setup
+    command = Dispatcher::Harness::Codex.build_command(config(lean: false), "go", nil)
+    refute_includes command, "--disable"
+    assert Dispatcher::Options.parse(%w[tester --no-skill], { "COORD_DIR" => "/tmp/c" }).lean
+    refute Dispatcher::Options.parse(%w[tester --no-skill --full-harness], { "COORD_DIR" => "/tmp/c" }).lean
+  end
+
+  def with_env(values)
+    old = values.keys.to_h { |key| [key, ENV[key]] }
+    values.each { |key, value| ENV[key] = value }
+    yield
+  ensure
+    old.each { |key, value| ENV[key] = value }
+  end
+end
+
+class LeadPrefetchTest < Minitest::Test
+  GOAL = "c1ab3a20-3f47-440e-92d8-62f15de77ef5"
+  Poller = Struct.new(:coord_dir) do
+    def goal_ids = [GOAL]
+  end
+
+  def test_a_lead_run_gets_the_artifact_list_with_sizes
+    Dir.mktmpdir do |dir|
+      FileUtils.mkdir_p(File.join(dir, "artifacts", GOAL))
+      File.write(File.join(dir, "artifacts", GOAL, "plan.md"), "x" * 2048)
+      context = Dispatcher::Prefetch.context(Poller.new(dir), nil, lead: true)
+      assert_includes context, "$ artifacts of the open goals\n#{GOAL}/plan.md 2.0k"
+      refute_includes Dispatcher::Prefetch.context(Poller.new(dir)), "artifacts"
+    end
+  end
+
+  def test_the_lead_prompt_limits_reads_and_acknowledgements
+    prompt = Dispatcher::Prompt.messages([Dispatcher::Message.new("p", "project-manager", "x")], "architect")
+    assert_includes prompt, "Never print a whole artifact folder"
+    assert_includes prompt, "Do not send a message only to acknowledge"
   end
 end

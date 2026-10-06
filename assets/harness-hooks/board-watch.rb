@@ -82,7 +82,11 @@ module BoardWatch
     end
 
     def messages = message_paths.map { |path| File.basename(path) }
-    def message_paths = Dir.glob(File.join(@env["COORD_DIR"], "inbox", @env["COORD_ROLE"], "*.md"))
+
+    # An FYI message (coord msg --fyi) wakes no one. NOTE: assets/coord writes the mark.
+    def message_paths
+      Dir.glob(File.join(@env["COORD_DIR"], "inbox", @env["COORD_ROLE"], "*.md")).reject { |path| path.include?(".fyi.") }
+    end
     def oldest_message_age = message_paths.map { |path| Time.now - File.mtime(path) }.max.to_i
   end
 

@@ -496,15 +496,33 @@ class FlowTest < InstallerTestCase
     refute_includes content, "coord next --wait"
   end
 
-  # Codex and Hermes cannot wake an idle session. They must block in
-  # `coord next --wait`, which returns on a new task or a new message.
-  def test_codex_worker_blocks_on_the_board_instead_of_stopping
+  # Codex returns a long tool call to the model about every 30 seconds. The
+  # worker arms the stop hook with `coord await`, and the hook waits instead.
+  def test_codex_worker_waits_in_the_stop_hook
     out, status = flow_with_home("--agent", "codex:backend-developer")
 
     assert_equal 0, status, out
     content = File.read(File.join(@dir, ".codex", "prompts", "backend-developer.md"))
-    assert_includes content, "coord next --wait --timeout 540"
-    refute_includes content, "next-task hook will re-prompt"
+    assert_includes content, "run `coord await`. Then end your turn."
+    refute_includes content, "coord next --wait"
+  end
+
+  # The project manager waits for reports without a model call: no poll loop.
+  def test_codex_project_manager_waits_in_the_stop_hook
+    out, status = flow_with_home("--agent", "codex:project-manager")
+
+    assert_equal 0, status, out
+    content = File.read(File.join(@dir, ".codex", "prompts", "project-manager.md"))
+    assert_includes content, "To wait for reports, run `coord await`"
+    assert_includes content, "Never poll with sleep"
+  end
+
+  # After `coord await`, the stop hook can wait for 55 minutes.
+  def test_codex_stop_hook_gets_a_long_timeout
+    out, status = flow_with_home("--agent", "codex:backend-developer")
+    assert_equal 0, status, out
+    hooks = JSON.parse(File.read(File.join(@dir, ".codex/hooks.json")))["hooks"]["Stop"].flat_map { _1["hooks"] }
+    assert_equal 3600, hooks.find { |hook| hook["command"].include?("next-task.rb") }["timeout"]
   end
 
   def test_codex_hooks_stay_in_the_project
@@ -711,6 +729,30 @@ class SetupAgentTest < Minitest::Test
       end
       assert_equal ["--add-dir", File.join(File.realpath(dir), ".maf", "coordination")], calls.first[1, 2]
     end
+  end
+
+  # Untrusted Codex hooks record no usage and never wake the session.
+  def test_codex_launch_warns_about_untrusted_hooks
+    Dir.mktmpdir do |dir|
+      FileUtils.mkdir_p(File.join(dir, ".codex", "prompts"))
+      File.write(File.join(dir, ".codex", "prompts", "tester.md"), "prompt")
+      File.write(File.join(dir, ".codex", "hooks.json"), "{}")
+      hooks = File.join(File.realpath(dir), ".codex", "hooks.json")
+      assert_includes launch_codex(dir), "does not trust the hooks"
+      File.write(File.join(dir, "config.toml"), "[hooks.state.\"#{hooks}:stop:0:0\"]\n")
+      refute_includes launch_codex(dir), "does not trust"
+    end
+  end
+
+  def launch_codex(dir)
+    old = ENV["CODEX_HOME"]
+    ENV["CODEX_HOME"] = dir
+    _, err = capture_io do
+      with_exec_stub(->(_cmd) {}) { Dir.chdir(dir) { SetupAgent::Launcher::Codex.launch("tester", "t-1", nil) } }
+    end
+    err
+  ensure
+    ENV["CODEX_HOME"] = old
   end
 
   # The project's harness config stays as it is. The flow passes its own files at the start.

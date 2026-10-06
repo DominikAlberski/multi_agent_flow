@@ -58,7 +58,20 @@ module SetupAgent
 
         cmd = ["codex", *writable_dirs]
         cmd += ["--model", model] if model
+        warn_untrusted
         Launcher.exec_or_die(cmd + [File.read(prompt_file)])
+      end
+
+      UNTRUSTED = "maf: Codex does not trust the hooks in %<file>s yet. Trust them when Codex asks. " \
+                  "Without the hooks, the session records no token usage, and coord await cannot wake it."
+
+      # Codex runs the hooks of a project only after the user trusts them, and
+      # a worktree is a new project for Codex. Codex records the trust in its config.toml.
+      def self.warn_untrusted
+        hooks = File.join(File.realpath(Dir.pwd), ".codex", "hooks.json")
+        config = File.join(ENV.fetch("CODEX_HOME", File.join(Dir.home, ".codex")), "config.toml")
+        trusted = File.exist?(config) && File.read(config).include?("#{hooks}:stop:")
+        warn format(UNTRUSTED, file: hooks) if File.exist?(hooks) && !trusted
       end
 
       # The worktree is the only writable root of the Codex sandbox. coord

@@ -495,6 +495,33 @@ end
     assert_match(/Task #{id}: use A/, File.read(inbox_files("backend-developer").first))
   end
 
+  # An FYI message waits for the next run of the role. It wakes no one: no
+  # hook runs, and `coord inbox --wait` does not return for it.
+  def test_msg_fyi_wakes_no_one
+    write_manifest("architect", "backend-developer")
+    hook = install_hook("backend-developer", "echo fired > \"$0.out\"\n")
+    capture_io { Coord::CLI.new(["msg", "--fyi", "--from", "architect", "backend-developer", "note"], env: @env).run }
+
+    assert_match(/\.fyi\.md\z/, inbox_files("backend-developer").first)
+    refute wait_for_file("#{hook}.out", timeout: 1), "the hook ran for an FYI message"
+    assert_empty Coord::Messages.new(Coord::Paths.new(@env["COORD_DIR"]), "x").wake_files("backend-developer")
+  end
+
+  def test_await_arms_the_stop_hook_of_the_worker
+    out, = capture_io { Coord::CLI.new(["await", "--timeout", "120"], env: @env).run }
+
+    arm = JSON.parse(File.read(File.join(@env["COORD_DIR"], "locks", "await-backend-1.json")))
+    assert_equal "backend-developer", arm["role"]
+    assert_in_delta Time.now.to_i + 120, arm["until"], 5
+    assert_includes out, "Then end your turn"
+  end
+
+  def test_await_refuses_a_dispatched_run
+    env = @env.merge("COORD_DISPATCHED" => "1")
+    error = assert_raises(SystemExit) { capture_io { Coord::CLI.new(["await"], env: env).run } }
+    assert_includes error.message, "dispatched run cannot wait"
+  end
+
   def test_inbox_reads_the_old_worker_inbox_folders
     old = File.join(@dir, ".maf/coordination/inbox/backend-developer-3")
     FileUtils.mkdir_p(old)

@@ -7,6 +7,7 @@ module Flow
     COMMANDS = %w[next-task.rb context-watch.rb].map { |name| %(ruby #{HOOKS_DIR}/#{name}") }.freeze
     EVENTS = %w[SessionStart Stop].freeze
     FILE = ".codex/hooks.json"
+    TIMEOUT = { "timeout" => 3600 }.freeze
 
     def initialize(project)
       @project = project
@@ -32,9 +33,14 @@ module Flow
 
     def add(data, event, command)
       entries = (data["hooks"] ||= {})[event] ||= []
-      return if entries.any? { |entry| entry.fetch("hooks", []).any? { |hook| hook["command"] == command } }
+      found = entries.flat_map { |entry| entry.fetch("hooks", []) }.find { |hook| hook["command"] == command }
+      found ? found.merge!(hook(command)) : entries << { "hooks" => [hook(command)] }
+    end
 
-      entries << { "hooks" => [{ "type" => "command", "command" => command }] }
+    # After `coord await`, next-task.rb waits for work for up to 55 minutes.
+    # Without a timeout, Codex could stop the hook before work arrives.
+    def hook(command)
+      { "type" => "command", "command" => command }.merge(command.include?("next-task.rb") ? TIMEOUT : {})
     end
   end
 end
