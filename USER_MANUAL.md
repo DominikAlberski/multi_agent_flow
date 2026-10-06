@@ -361,12 +361,21 @@ The hook also writes the model and the context size to
 to `.maf/coordination/usage/<worker>.json`. For an interactive worker, `runs`
 counts the turns. The dispatcher writes the same status file for a dispatched worker.
 
-Codex and Hermes role files tell the agent to block in
+Hermes role files tell the agent to block in
 `coord next --wait --timeout 540` when it has no work. The command returns
 when a task or a message arrives. Each timeout costs one model call, so use
-`--dispatch` for idle Codex and Hermes agents.
+`--dispatch` for idle Hermes agents.
+
+Codex returns a long tool call to the model about every 30 seconds. A wait in a
+tool call, or a `sleep` loop, costs one model call over the whole context per
+return. So Codex role files use `coord await` instead. The agent runs
+`coord await` and ends its turn. The stop hook (`next-task.rb`) then waits for a
+waking message or a task without model calls, for up to 55 minutes. When work
+arrives, the hook continues the session. Press Esc in Codex to end the wait.
 Codex uses project hooks in `.codex/hooks.json` for `SessionStart` and `Stop`.
-The stop hook can continue a registered session but cannot wake an idle session when new work arrives.
+Codex runs the hooks only after you trust them, and each worktree needs its own trust.
+`maf start` prints a warning when Codex does not trust the hooks of the worktree.
+Without the hooks, the session records no token usage, and `coord await` cannot wake it.
 Use `--dispatch` to run Codex agents unattended.
 
 `maf update` disables the legacy global Codex hook and removes its registration from `~/.codex/hooks.json`.
@@ -538,6 +547,14 @@ last request. Claude Code uses a 1-hour cache.
 - Each resume sends the whole old context again, on every model call of the run.
   After `--max-session-runs` runs (default: 5) in one session, the dispatcher starts
   a fresh session with the handoff note. `--max-session-runs 0` turns the limit off.
+- A run that fails on a provider usage or rate limit never reached the model.
+  The dispatcher returns its messages to the inbox without an attempt and starts
+  no new run for 15 minutes. Each further limit doubles the pause, up to 1 hour.
+  The worker status shows `paused_until`.
+- A dispatched Codex run starts lean: without the user's plugins, apps, browser and
+  computer tools, subagents, and MCP servers. Only the graphify server of the project
+  stays. Each extra tool or skill adds context to every model call of the run.
+  `--full-harness` keeps the full user setup.
 - A run that changed the state of the work ends with a new handoff note in
   `.maf/coordination/sessions/<worker>.handoff.md`. The agent writes it while the
   cache is still warm. A run that changed nothing keeps the old note.
@@ -853,7 +870,9 @@ root as the Obsidian vault.
 `.maf/coordination/message-hooks/<role>.sh` when a message is delivered. The hook is a plain
 shell script. If there is no hook, `coord` only writes the inbox file.
 An agent does not need a hook to get a message. The board watcher (Claude Code
-and opencode) and `coord next --wait` (Codex and Hermes) wake the agent on an unread message.
+and opencode), `coord await` (Codex), and `coord next --wait` (Hermes) wake the agent on an unread message.
+`coord msg --fyi` writes a message that wakes no one: no hook runs, no dispatcher run starts, and no
+watcher pokes. The next run of the role reads the message together with the next waking message.
 
 ```sh
 # .maf/coordination/message-hooks/backend-developer.sh
@@ -1205,7 +1224,8 @@ This section holds the board details for the operator.
 | `coord unclaim ID` | Release a claim without finishing it. |
 | `coord done ID [--force]` | Complete a task. Refused while the task branch has own commits and lacks the goal branch head. |
 | `coord annotate ID TEXT` | Add a note to a task (permanent). |
-| `coord msg --from A [--task ID] TO TEXT` | Send a message to a role or a worker (the role inbox). `--task` also notes the task. |
+| `coord msg --from A [--task ID] [--fyi] TO TEXT` | Send a message to a role or a worker (the role inbox). `--task` also notes the task. `--fyi` wakes no one. |
+| `coord await [--timeout S]` | Interactive session: arm the stop hook, then end the turn. The hook waits for work without model calls (default: 3000 s). Refused in a dispatched run. |
 | `coord broadcast --from A [--to workers\|leads\|all] TEXT` | Send a message to a group of roles. Default: workers. |
 | `coord inbox [ROLE]` | Read messages (marks them read; `--peek` keeps them; `--wait` blocks; a second `--wait` for the same role is refused). |
 | `coord log [N]` | Show the last N coordination events. |

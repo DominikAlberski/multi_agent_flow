@@ -76,14 +76,17 @@ module Coord
       coord done ID [--force]              complete (refused while the task branch lacks the goal head,
                                            or while the verify command fails)
       coord annotate ID TEXT...
-      coord msg [--from A] [--task ID] TO TEXT...
+      coord msg [--from A] [--task ID] [--fyi] TO TEXT...
                                            TO is a role or a worker; a worker's mail goes to its role inbox.
                                            --task also saves the text as a note on the task.
+                                           --fyi wakes no one: the next run of TO reads the message.
       coord escalate [--task ID] TEXT...   report a problem you cannot fix to the project manager
                                            (copy to the architect)
       coord broadcast [--from A] [--to workers|leads|all] TEXT...
                                            send to a group of roles (default: workers)
       coord inbox [ROLE] [--peek] [--all] [--wait [--interval S] [--timeout S]]
+      coord await [--timeout S]            interactive session: arm the stop hook, then end the turn.
+                                           The hook waits for work without model calls (default: 3000s)
       coord hooks [ROLE]                          show message hooks for a role or all
       coord log [N]                               show last N coordination events
       coord lock NAME [--ttl SECONDS] [--worker W]
@@ -102,7 +105,7 @@ module Coord
       "conflicts" => :cmd_conflicts,
       "claim" => :cmd_claim, "unclaim" => :cmd_unclaim,
       "done" => :cmd_done, "annotate" => :cmd_annotate,
-    "msg" => :cmd_msg, "inbox" => :cmd_inbox, "broadcast" => :cmd_broadcast,
+    "msg" => :cmd_msg, "inbox" => :cmd_inbox, "await" => :cmd_await, "broadcast" => :cmd_broadcast,
     "log" => :cmd_log, "hooks" => :cmd_hooks,
     "lock" => :cmd_lock, "unlock" => :cmd_unlock, "with-lock" => :cmd_with_lock,
     "worktree" => :cmd_worktree, "goal" => :cmd_goal, "start-task" => :cmd_start_task,
@@ -679,8 +682,10 @@ module Coord
 
     # A message for one worker goes to the inbox of its role. The header
     # names the worker, so the reader knows who the message is for.
-    def send_message(to, from, text, worker: nil)
-      path = new_message_path(to)
+    # An FYI message (fyi: true) waits in the inbox and wakes no one. The
+    # next run of the role reads it together with the next waking message.
+    def send_message(to, from, text, worker: nil, fyi: false)
+      path = new_message_path(to, fyi)
       File.write(path, body(to, from, text, worker))
       puts "msg -> #{path}"
       path
@@ -701,6 +706,12 @@ module Coord
       Dir.glob(File.join(dir, all ? "**" : "", "*.md")).sort
     end
 
+    # The unread messages that justify a model call: every message except FYI.
+    def wake_files(role) = files(role).reject { |file| Messages.fyi?(file) }
+
+    # NOTE: assets/dispatcher and board-watch.rb read the same name mark.
+    def self.fyi?(path) = File.basename(path).include?(".fyi.")
+
     # Broadcast sends one message to each role in ROLES. Returns the list of
     # [role, path] pairs so the caller can fire hooks for each.
     def broadcast(from, text, roles)
@@ -711,10 +722,10 @@ module Coord
 
     private
 
-    def new_message_path(to)
+    def new_message_path(to, fyi)
       dir = @paths.inbox_dir(to)
       FileUtils.mkdir_p(dir)
-      File.join(dir, "#{stamp}-#{Process.pid}.md")
+      File.join(dir, "#{stamp}-#{Process.pid}#{".fyi" if fyi}.md")
     end
 
     def body(to, from, text, worker)
@@ -1442,6 +1453,23 @@ end
     end
   end
 
+  # Await arms the stop hook of an interactive session. The agent ends its
+  # turn, and the hook (harness-hooks/next-task.rb) waits for work outside the
+  # model. A wait in a tool call costs one model call per return; this wait
+  # costs none. NOTE: next-task.rb reads the same file.
+  class Await
+    DEFAULT_SECONDS = 3000
+
+    def initialize(paths, worker)
+      @path = File.join(paths.locks_dir, "await-#{worker}.json")
+    end
+
+    def arm(role, seconds)
+      FileUtils.mkdir_p(File.dirname(@path))
+      File.write(@path, JSON.generate("role" => role, "until" => Time.now.to_i + seconds))
+    end
+  end
+
   # InboxWaiter allows one `coord inbox --wait` for each role. Two waiters on
   # one inbox split the messages between two agents. The pid file of a waiter
   # that exited without cleanup counts as free.
@@ -2123,14 +2151,17 @@ end
     def cmd_msg
       from = require_role!(@args.value_of("--from") || @role, "msg --from A, or export COORD_ROLE")
       task = @args.value_of("--task")&.then { |id| find_task!(id) }
+      fyi = @args.flag?("--fyi")
       name = @args.require_arg("msg", "TO")
-      deliver_to(name, from, task_message(task, from, @args.require_text("msg")))
+      deliver_to(name, from, task_message(task, from, @args.require_text("msg")), fyi: fyi)
     end
 
-    def deliver_to(name, from, text)
+    # An FYI message wakes no one, so it needs no push.
+    def deliver_to(name, from, text, fyi: false)
       role, worker = recipient(name)
-      push(role, from, messages.send_message(role, from, text, worker: worker))
-      event_log.append("msg", @worker, "to #{name}: #{text}")
+      path = messages.send_message(role, from, text, worker: worker, fyi: fyi)
+      push(role, from, path) unless fyi
+      event_log.append("msg", @worker, "to #{name}#{" (fyi)" if fyi}: #{text}")
     end
 
     # A worker can stop before it reads its mail. The note on the task stays
@@ -2187,6 +2218,18 @@ end
       [(ESCALATE_PM if pm), ("architect" unless @role == "architect")].compact
     end
 
+    AWAIT_ARMED = "coord: the stop hook waits up to %<minutes>d minutes for work for %<role>s. " \
+                  "Tell the user that you wait and that Esc ends the wait. Then end your turn."
+    AWAIT_DISPATCHED = "coord: a dispatched run cannot wait. Stop: the dispatcher starts a run on new work."
+
+    def cmd_await
+      abort AWAIT_DISPATCHED if @env["COORD_DISPATCHED"]
+      role = require_role!(@role, "await, export COORD_ROLE")
+      seconds = @args.timeout || Await::DEFAULT_SECONDS
+      Await.new(paths, require_worker!(@worker, "await, export COORD_WORKER")).arm(role, seconds)
+      puts format(AWAIT_ARMED, minutes: seconds / 60, role: role)
+    end
+
     def cmd_inbox
       flags = inbox_flags
       role = require_role!(@args.shift || @role, "inbox ROLE, or export COORD_ROLE")
@@ -2203,7 +2246,7 @@ end
     end
 
     def wait_inbox(role, flags)
-      wait_for(flags[:interval], flags[:timeout], -> { messages.files(role, all: flags[:all]) }) do
+      wait_for(flags[:interval], flags[:timeout], -> { messages.wake_files(role) }) do
         messages.inbox(role, peek: flags[:peek], all: flags[:all])
       end
     end

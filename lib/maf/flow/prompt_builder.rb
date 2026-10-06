@@ -14,7 +14,7 @@ module Flow
     private
 
     def role_prompt(harness, role, data)
-      return project_manager_prompt(data) if role == "project-manager"
+      return project_manager_prompt(harness, data) if role == "project-manager"
       return architect_prompt(harness, data) if role == "architect"
 
       worker_prompt(harness, role, data)
@@ -28,9 +28,12 @@ module Flow
     # Claude Code wakes an idle session with the board-watch hook, and opencode
     # with the board-watch plugin. So these agents stop instead of waiting:
     # each return of a wait costs one model call over the whole context.
-    # Codex and Hermes cannot be woken, so they block in `coord next --wait`.
+    # Codex waits in its stop hook after `coord await`. Hermes cannot be
+    # woken, so it blocks in `coord next --wait`.
     # The dispatcher adds the report block rule to each dispatched prompt.
     def no_task_line(harness)
+      return NO_TASK_AWAIT if harness == "codex"
+
       WAKE_HARNESSES.include?(harness) ? NO_TASK_STOP : NO_TASK_WAIT
     end
 
@@ -50,9 +53,9 @@ module Flow
       @agents.any? { |a| a[:role] == "project-manager" }
     end
 
-    def project_manager_prompt(data)
+    def project_manager_prompt(harness, data)
       "#{intro(data)} You do not plan tasks or implement code yourself.\n\n" \
-        "#{duties_block(data)}\n\n#{PM_LOOP}"
+        "#{duties_block(data)}\n\n#{format(PM_LOOP, wait_instruction: PM_WAIT.fetch(harness, PM_WAIT_DEFAULT))}"
     end
 
     def intro(data)

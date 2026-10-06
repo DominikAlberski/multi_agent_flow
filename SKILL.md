@@ -245,9 +245,10 @@ Restart workers with `maf start` after the update.
    regenerated graphify output, not a durable store.
 5. Report via `coord annotate`; coordinate via `coord msg`.
 6. Worker roles: if no task is available, Claude Code and opencode agents stop.
-   The board watcher wakes them. Codex and Hermes agents use `coord next --wait`
-   instead of polling by hand. Lead roles (project manager, architect) never claim a task;
-   they wait with `coord inbox --wait`.
+   The board watcher wakes them. Codex agents run `coord await` and end the turn;
+   the stop hook waits for work. Hermes agents use `coord next --wait`.
+   Never poll by hand. Lead roles (project manager, architect) never claim a task.
+   `coord msg --fyi` sends a note that wakes no one.
 7. Before `coord done`, merge the goal branch into the task branch and rerun
    the task tests. `coord done` refuses a task branch without the goal head.
 8. `coord who` shows which workers are live. `coord msg` warns when the

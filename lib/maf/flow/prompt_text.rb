@@ -28,6 +28,23 @@ module Flow
     - If no task is available, run `coord next --wait --timeout 540`. It returns
       when a task or a message arrives. If it times out, run it again. Do not poll by hand.
   TEXT
+  # Codex returns a long tool call to the model about every 30 seconds, so a
+  # wait inside a tool call costs one model call per return. `coord await`
+  # arms the stop hook, and the hook waits outside the model.
+  NO_TASK_AWAIT = <<~TEXT.strip
+    - If no task and no message is available, run `coord await`. Then end your turn.
+      The stop hook waits for work and wakes you. Do not wait in a loop.
+  TEXT
+
+  # The project manager waits for reports. Each check in a loop sends the
+  # whole context again, so the wait must not call the model.
+  PM_WAIT = {
+    "claude" => "End your turn to wait for reports. The board watcher wakes you when a message arrives.",
+    "opencode" => "End your turn to wait for reports. The board watcher wakes you when a message arrives.",
+    "codex" => "To wait for reports, run `coord await`. Tell the user that you wait. Then end your turn.\n" \
+               "   The stop hook wakes you when a message arrives."
+  }.freeze
+  PM_WAIT_DEFAULT = "Wait for reports with `coord inbox project-manager --wait --timeout 540`."
 
   # Every role except the project manager reads the code graph before work.
   # A query output stays in the context for each later call, so the budget is small.
@@ -139,6 +156,9 @@ module Flow
       for a worker that can edit files. That worker commits the artifact on the goal branch.
     - Create tasks in stage order. Do not create the task of the next stage until the gate of the current stage passes.
       A task that does not exist cannot be claimed.
+    - Do not send a message only to acknowledge. For a note that needs no action now, use `coord msg --fyi`.
+    - Before you revise an artifact that a reviewer read, copy it to `<name>.r<round>.md`. Name both files
+      in the review task. The reviewer reads `diff -u` of the two files and checks the open findings only.
     #{GRAPH_RULE}
   TEXT
 
@@ -210,8 +230,9 @@ module Flow
        The command prints the goal id and creates the goal branch. The glossary draft path needs the goal id.
     3. When the interview ends, hand the goal to the architect:
          coord msg --from project-manager architect "GOAL <goal-id>: <goal>"
-    4. Check status with `coord goal list` and `coord goal show <goal-id>`.
-       Wait for reports with `coord inbox project-manager --wait`.
+    4. Check status with `coord goal list` and `coord goal show <goal-id>` when the user asks.
+       %{wait_instruction}
+       Never poll with sleep or with repeated status commands. Each check sends your whole context again.
     5. Summarize the report for the user.
     6. #{PM_DECISIONS}
 
@@ -225,6 +246,10 @@ module Flow
       If `maf` reports that the old worker still runs, ask the user to stop that session. Then run the command again.
     #{TEAM_RULES}
     - Send goals to the architect only. Never dispatch work to other roles directly.
+    - Send the user's decisions to the architect in one message, not one message per decision.
+      Each message starts an architect run. For a note that needs no action now, use `coord msg --fyi`.
+    - Do not read the project docs in full. Each file that you read stays in your context for the whole session.
+      Ask the architect, or start one subagent that returns a summary of at most 300 words.
     - If no report has arrived yet, tell the user and check again with `coord inbox project-manager`.
     #{STE_RULE}
     #{SUBAGENT_RULE}

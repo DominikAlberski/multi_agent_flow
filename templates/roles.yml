@@ -195,6 +195,8 @@ roles:
       TESTS line is a critical finding.
       A review task has no branch of its own. Do not run `coord start-task`. Do not commit.
       Read the diff of the branch that Inputs names. Annotate the findings. Then run `coord done`.
+      For a re-review of an artifact, read `diff -u` of the reviewed copy and the revision.
+      Check the open findings by ID. Do not review the unchanged parts again.
 
       Report every issue that you can support with evidence, also minor ones.
       Use the label to show importance: critical, warning, or minor.

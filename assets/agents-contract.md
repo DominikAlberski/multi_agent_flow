@@ -30,9 +30,11 @@ coord next [ROLE] [--wait] | --mine          # unclaimed tasks, or your claimed 
 coord claim ID | start-task ID | done ID     # take a task, check out its branch, finish it
 coord annotate ID TEXT                       # add a note to a task
 coord escalate [--task ID] TEXT              # a problem you cannot fix: the project manager asks the user
-coord msg --from A [--task ID] TO TEXT      # message a role or a worker; --task also notes the task
+coord msg --from A [--task ID] [--fyi] TO TEXT   # message a role or a worker; --task also notes the task
+                                             # --fyi: no run starts; the next run of TO reads it
 coord broadcast --from A [--to workers|leads|all] TEXT
 coord inbox [ROLE] [--wait]                  # read your messages
+coord await                                  # interactive Codex: arm the stop hook, then end your turn
 coord goal list | goal show ID               # open goals, or one goal and its tasks
 coord who | status | log [N]                 # live workers, tasks by role, recent events
 coord with-lock NAME -- CMD                  # run a command under a lock

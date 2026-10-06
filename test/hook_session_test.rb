@@ -255,3 +255,44 @@ class HermesHookIsolationTest < HookSessionCase
     assert File.exist?(@marker)
   end
 end
+
+# After `coord await`, the stop hook waits for work outside the model.
+class HookAwaitTest < HookSessionCase
+  def arm(seconds)
+    FileUtils.mkdir_p(File.join(@board, "locks"))
+    File.write(arm_path, JSON.generate("role" => "tester", "until" => Time.now.to_i + seconds))
+  end
+
+  def arm_path = File.join(@board, "locks", "await-tester-1.json")
+  def quiet_board = File.write(File.join(@root, ".maf/bin/coord"), "exit 0\n")
+  def reason = JSON.parse(run_hook(@env.merge("MAF_AWAIT_TICK" => "0.1")).first).fetch("reason")
+
+  def write_message(name)
+    inbox = File.join(@board, "inbox", "tester")
+    FileUtils.mkdir_p(inbox)
+    File.write(File.join(inbox, name), "x")
+  end
+
+  def test_an_armed_hook_wakes_the_session_on_work
+    bind_session
+    arm(60)
+    assert_includes reason, "Work arrived for role tester"
+    refute File.exist?(arm_path), "the hook disarms itself"
+  end
+
+  def test_an_armed_hook_wakes_on_a_message
+    bind_session
+    quiet_board
+    write_message("1.md")
+    arm(60)
+    assert_includes reason, "Work arrived"
+  end
+
+  def test_an_fyi_message_does_not_end_the_wait
+    bind_session
+    quiet_board
+    write_message("1.fyi.md")
+    arm(1)
+    assert_includes reason, "No work arrived for role tester"
+  end
+end

@@ -89,6 +89,20 @@ class BoardSettledTest < Minitest::Test
   end
 end
 
+class BoardFyiTest < Minitest::Test
+  # An FYI message (coord msg --fyi) waits for the next turn. It pokes no one.
+  def test_fyi_messages_are_no_work
+    Dir.mktmpdir("board-watch-fyi") do |dir|
+      inbox = File.join(dir, "inbox", "architect")
+      FileUtils.mkdir_p(inbox)
+      %w[1.fyi.md 2.md].each { |name| File.write(File.join(inbox, name), "x") }
+      board = BoardWatch::Board.new("coord", { "COORD_DIR" => dir, "COORD_ROLE" => "architect" })
+
+      assert_equal %w[2.md], board.send(:messages)
+    end
+  end
+end
+
 class LockTest < Minitest::Test
   def setup
     @dir = Dir.mktmpdir("board-watch-lock")
