@@ -8,6 +8,7 @@ require "minitest/autorun"
 require "tmpdir"
 require "fileutils"
 require "json"
+require "open3"
 # `dashboard` has no .rb suffix, so `require` cannot find it.
 load File.expand_path("../assets/dashboard", __dir__)
 
@@ -298,5 +299,33 @@ class TokenHintsTest < Minitest::Test
     assert_includes hint[:text], "until 10:00 UTC"
     assert_nil hint[:limits]
     assert_empty hints(runs, Time.utc(2026, 10, 7, 11))
+  end
+end
+
+# The page builds onclick attributes from worker ids. A quote in an id must
+# not close the attribute or the JS string. node runs the escape helpers of
+# the page; the test decodes the attribute as a browser does.
+class DashboardEscapeTest < Minitest::Test
+  HELPERS = /^ *function esc\(s\) \{.*?^ *\}$|^ *function arg\(v\) .*?$/m
+
+  def run_js(body)
+    skip "node not installed" unless system("node", "--version", out: File::NULL, err: File::NULL)
+    out, status = Open3.capture2("node", "-e", Dashboard::PAGE_HTML.scan(HELPERS).join("\n") + "\n" + body)
+    assert status.success?
+    out
+  end
+
+  def test_a_quote_in_a_worker_id_stays_inside_the_onclick_argument
+    id = %(a'b"c</button>&x)
+    attr = run_js("process.stdout.write(`act(${arg(#{JSON.generate(id)})}, 'stop')`)")
+    refute_match(/["<>]/, attr)
+
+    decoded = attr.gsub("&quot;", '"').gsub("&#39;", "'").gsub("&lt;", "<").gsub("&gt;", ">").gsub("&amp;", "&")
+    got = run_js("function act(w) { process.stdout.write(w) }\n#{decoded}")
+    assert_equal id, got
+  end
+
+  def test_esc_keeps_zero
+    assert_equal "0", run_js("process.stdout.write(esc(0))")
   end
 end
