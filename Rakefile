@@ -2,8 +2,9 @@
 
 # Rakefile - run the repo checks and the tests.
 #
-#   rake                               check, then test
+#   rake                               check, lint, then test
 #   rake check                         scripts/check.rb
+#   rake lint                          RuboCop (CI pins the version)
 #   rake test                          all test files
 #   rake test TEST=test/coord_test.rb  one test file
 #
@@ -28,25 +29,33 @@ task :check do
   ruby "scripts/check.rb"
 end
 
+desc "Run RuboCop"
+task :lint do
+  sh "rubocop", "--format", "simple" do |ok, _|
+    ok || abort("rake: RuboCop failed. Fix the offenses. If rubocop is missing: gem install rubocop")
+  end
+end
+
 desc "Run the tests (TEST=path runs one file)"
 task :test do
-  queue = Queue.new
-  (ENV["TEST"] ? [ENV["TEST"]] : Dir["test/*_test.rb"].sort).each { |file| queue << file }
-  queue.close
-  results = Array.new(Etc.nprocessors) { Thread.new { run_tests(queue) } }.flat_map(&:value)
-  failed = results.reject { |_, status, _| status.success? }
-  failed.each { |file, _, out| puts "== #{file}", out }
+  queue = Queue.new.tap { |q| test_files.each { |file| q << file } }.close
+  failed = Array.new(Etc.nprocessors) { Thread.new { run_tests(queue) } }.flat_map(&:value)
+  failed.each { |file, out| puts "== #{file}", out }
   abort "rake: #{failed.size} test file(s) failed: #{failed.map(&:first).join(", ")}" unless failed.empty?
 end
 
+def test_files = ENV["TEST"] ? [ENV["TEST"]] : Dir["test/*_test.rb"]
+
+# Returns [file, output] for each failed file.
 def run_tests(queue)
-  results = []
-  while (file = queue.pop)
-    out, status = Open3.capture2e(TEST_ENV, RbConfig.ruby, file)
-    puts "#{status.success? ? "ok  " : "FAIL"} #{file}  #{out[/^\d+ runs.*$/]}"
-    results << [file, status, out]
-  end
-  results
+  Enumerator.produce { queue.pop }.take_while(&:itself).filter_map { |path| run_test(path) }
 end
 
-task default: %i[check test]
+# Returns nil when the file passes.
+def run_test(file)
+  out, status = Open3.capture2e(TEST_ENV, RbConfig.ruby, file)
+  puts "#{status.success? ? "ok  " : "FAIL"} #{file}  #{out[/^\d+ runs.*$/]}"
+  [file, out] unless status.success?
+end
+
+task default: %i[check lint test]

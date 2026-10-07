@@ -1,0 +1,71 @@
+# RuboCop config. Run: rake lint (rake runs it with the checks and tests).
+#
+# The size limits are the project rules: a class has at most 100 lines, a
+# method at most 5 lines and 4 parameters, a line at most 120 characters.
+# .rubocop_todo.yml lists the code that broke a rule before this config.
+# Fix an entry there, then delete it. Do not add new entries.
+inherit_from: .rubocop_todo.yml
+
+# The Exclude lists here add to the lists of .rubocop_todo.yml.
+inherit_mode:
+  merge:
+    - Exclude
+
+AllCops:
+  TargetRubyVersion: 3.0
+  NewCops: enable
+  SuggestExtensions: false
+  # The standalone scripts have no .rb suffix.
+  Include:
+    - "**/*.rb"
+    - "Rakefile"
+    - "bin/maf"
+    - "assets/analyst"
+    - "assets/coord"
+    - "assets/dashboard"
+    - "assets/dispatcher"
+    - "assets/doc-graph-refresh"
+    - "assets/vault"
+    - "assets/git-hooks/pre-commit"
+  Exclude:
+    - ".worktrees/**/*"
+    - "docs/**/*"
+    - "vendor/**/*"
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+Layout/LineLength:
+  Max: 120
+
+Metrics/ClassLength:
+  Max: 100
+
+Metrics/ModuleLength:
+  Max: 100
+
+Metrics/MethodLength:
+  Max: 5
+
+Metrics/ParameterLists:
+  Max: 4
+  CountKeywordArgs: true
+
+# The tests are long by nature. Minitest classes group many cases.
+Metrics/BlockLength:
+  Exclude:
+    - "test/**/*"
+    - "Rakefile"
+
+# The installed scripts and hooks keep their file names.
+Naming/FileName:
+  Exclude:
+    - "assets/**/*"
+
+# The tests run as `ruby test/x_test.rb`. They do not need the exec bit.
+Lint/ScriptPermission:
+  Exclude:
+    - "test/**/*"
