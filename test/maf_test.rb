@@ -513,6 +513,17 @@ class MafTeamTest < Minitest::Test
     assert_equal "{ not json", File.read(File.join(@project, ".maf/config.json"))
   end
 
+  # The budget must not drop the timeouts and the session limits of the roles.
+  def test_team_set_keeps_the_timeouts_and_the_limits
+    path = File.join(@project, ".maf/config.json")
+    team = { "timeouts" => { "reviewer" => 2400 }, "limits" => { "reviewer" => { "max_context" => 80_000 } } }
+    File.write(path, JSON.generate(JSON.parse(File.read(path)).merge("team" => team)))
+    maf("team", "set", "--max", "2")
+
+    saved = JSON.parse(File.read(path))["team"]
+    assert_equal [2, team["timeouts"], team["limits"]], saved.values_at("max_workers", "timeouts", "limits")
+  end
+
   # The installed post-commit hook starts a detached doc-graph refresh. That
   # process outlives the test and writes into @dir while teardown removes it.
   def test_git_helper_runs_no_hook

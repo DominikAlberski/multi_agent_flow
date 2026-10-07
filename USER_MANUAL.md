@@ -552,6 +552,9 @@ effort and lasts a few minutes.
   the session had `--max-context` tokens or more (default: 150000), the dispatcher
   starts a fresh session with the handoff note. Only opencode reports the context
   size. `--max-context 0` turns the limit off.
+- `team.limits.<role>` in `.maf/config.json` sets `max_context`, `max_session_runs`, and
+  `cache_window` for a role. A dispatcher flag wins over the saved limit. The dashboard
+  suggests better limits (see Token hints).
 - DeepSeek bills half price off-peak. Peak hours are 01:00-04:00 and 06:00-10:00 UTC,
   Monday to Friday. If a dispatched opencode run uses a DeepSeek model in peak hours,
   the log shows `info: DeepSeek peak hours (HH:MM UTC): this run costs 2x the off-peak rate`.
@@ -790,6 +793,42 @@ Actions run `maf worker ACTION WORKER` in the background, in the project root:
 - One action per worker runs at a time. The output goes to
   `.maf/coordination/sessions/<worker>.control.log`.
 
+**Token hints.** The dispatcher appends one line per run to
+`.maf/coordination/usage/<worker>.runs.jsonl`: the token usage, the session run
+(1 is a fresh session), the context of the last model call, the peak rate, and the
+session limits of the run. The dashboard reads the last 20 runs of each worker. It
+counts only the runs with the limits of the last run. It shows a hint when:
+
+| Hint | Rule | Button |
+|---|---|---|
+| A resumed run costs more than a fresh run | The median resumed run uses 3x or more the input of the median fresh run, over 2 or more resumed runs. | If the harness reports the context (opencode): restart with `max_context` at 2x the context of a fresh run, at least 40k. Else: restart with `max_session_runs=1`. |
+| The cache was cold | 2 or more resumed runs wrote more than 25% of their input to the cache. | Restart with half the cache window. |
+| DeepSeek peak rate | The last run used DeepSeek in peak hours, and the peak hours go on. | Stop the worker. |
+
+**Analyze button.** The rules see only the token numbers. The `analyze` button of a
+worker row asks a small model for hints that the numbers do not show, for example a
+worker that greps instead of querying the graph. `.maf/bin/analyst WORKER` builds a
+short digest: the run history, and the tool calls of the current session (counts by
+kind, output sizes, the 5 largest outputs). It reads the transcripts of Claude Code
+and Codex, and the opencode database through the `sqlite3` command. The model returns
+at most 3 hints. The page shows them with an `analysis` tag, with a restart button
+when a hint names a session limit. The result is in
+`.maf/coordination/hints/<worker>.json`.
+
+The default model call is Claude Haiku with a one-line system prompt, without tools,
+skills, MCP servers, user settings, or thinking. One analysis costs about 1.2k input
+tokens and 200 output tokens (about $0.002) and takes a few seconds. The analyst runs
+only when you click the button. To use another command, set
+`"team": { "analyst": { "command": ["opencode", "run", "-m", "deepseek/deepseek-flash"] } }`
+in `.maf/config.json`. The analyst sends the prompt on stdin. `analyst WORKER --print`
+shows the prompt and calls no model.
+
+A restart from a hint runs `maf worker restart WORKER --max-context N` (or the
+other limit flag). maf saves the limit for the role in `.maf/config.json`:
+`"team": { "limits": { "frontend-developer": { "max_context": 70000 } } }`. Each
+later start of a worker of that role uses the limit. The runs with the new limits
+start a new history, so the hint goes away.
+
 The server listens on 127.0.0.1 only. An action needs a token that changes at each
 server start, and a localhost Host header. So another web site cannot start an action.
 
@@ -800,6 +839,8 @@ dashboard --maf PATH  # the maf command for actions (default: maf on PATH)
 ```
 
 From a terminal, use the same command: `maf worker status|stop|start|restart ROLE[_WORKER] [--force]`.
+`start` and `restart` take `--max-context N`, `--max-session-runs N`, and `--cache-window S`. maf saves
+them for the role in `.maf/config.json`.
 
 ---
 
@@ -1215,7 +1256,7 @@ This section holds the board details for the operator.
 |---|---|
 | `maf prepare HARNESS ROLE[_WORKER] [--dispatch] [--interactive] [--replace W]` | Prepare a worker: role file, worktree, registry. Prints the two start commands. `--dispatch` starts the dispatcher instead. The architect is dispatched unless `--interactive` is given. |
 | `maf retire ROLE[_WORKER]` | Remove a worker. Stops its background dispatcher. Its claimed tasks return to the pool. |
-| `maf worker ACTION ROLE[_WORKER] [--force]` | Control one worker. ACTION is status, stop, start, or restart. Each action is idempotent. A dispatched worker starts again in the background. An idle interactive session stops; maf prints its start command. `--force` stops a session that maf cannot check (opencode). |
+| `maf worker ACTION ROLE[_WORKER] [--force]` | Control one worker. ACTION is status, stop, start, or restart. Each action is idempotent. A dispatched worker starts again in the background. An idle interactive session stops; maf prints its start command. `--force` stops a session that maf cannot check (opencode). `start` and `restart` take `--max-context N`, `--max-session-runs N`, and `--cache-window S`, and save them for the role. |
 | `maf team` | Show the budget, the workers, and the tasks by role. |
 | `maf team set --max N --allow HARNESS[:MODEL]` | Set the team budget in `.maf/config.json`. |
 | `maf start ... --dispatch --detach` | Start a dispatcher in the background. |

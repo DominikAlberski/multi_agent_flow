@@ -6,6 +6,7 @@ require "fileutils"
 require "rbconfig"
 require_relative "workers"
 require_relative "retire"
+require_relative "role_limits"
 
 module Maf
   # WorkerControl stops, starts, or restarts one worker. Each action is
@@ -24,9 +25,11 @@ module Maf
     def self.started_at(pid) = IO.popen(PS_ENV, ["ps", "-o", "lstart=", "-p", pid.to_s], &:read).strip
 
     # force stops an interactive session also when maf cannot tell if it is idle.
-    def initialize(root, spec, force: false)
+    # limits are session limits of the role. start and restart save them first.
+    def initialize(root, spec, force: false, limits: {})
       @root = root
       @force = force
+      @limits = limits
       @worker = Workers.id(spec)
       @entry = Workers.at(root).find(@worker) || abort("maf: no worker #{@worker}")
     end
@@ -34,6 +37,7 @@ module Maf
     def run(action)
       abort "usage: maf worker #{ACTIONS.join("|")} ROLE[_WORKER]" unless ACTIONS.include?(action)
 
+      RoleLimits.new(@root).save(@entry["role"], @limits) if %w[start restart].include?(action)
       ControlLock.new(File.join(coord_dir, "locks", "control-#{@worker}.d")).hold { send(action) }
     end
 

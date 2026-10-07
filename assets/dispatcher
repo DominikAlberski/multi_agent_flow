@@ -135,7 +135,8 @@ module Dispatcher
 
   Config = Struct.new(:role, :harness, :command, :model, :skill, :no_skill, :interval, :max_turns,
                       :timeout, :idle_timeout, :grace, :completion_signal, :abort_signal,
-                      :cache_window, :max_session_runs, :max_context, :once, :poll_tasks, :worker, :coord_dir, :verbose, :lean,
+                      :cache_window, :max_session_runs, :max_context, :once, :poll_tasks, :worker, :coord_dir,
+                      :verbose, :lean,
                       keyword_init: true)
 
   module Log
@@ -366,6 +367,7 @@ module Dispatcher
   # it reads single files by name instead of printing a whole folder.
   module Prefetch
     LIMIT = 2000
+    GRAPH_BUDGET = 500
     ARTIFACTS = "artifacts of the open goals"
 
     def self.context(poller, task_id = nil, lead: false)
@@ -376,7 +378,30 @@ module Dispatcher
     def self.commands(poller, task_id, lead)
       log = { "git log --oneline -10" => -> { git_log } }
       log = log.merge(ARTIFACTS => -> { artifacts(poller) }) if lead
-      task_id ? { "coord show #{task_id}" => -> { poller.show(task_id) } }.merge(log) : log
+      task_id ? task_sections(poller, task_id).merge(log) : log
+    end
+
+    # A graph query on the task description names the code of the task. Some
+    # models skip the graph rule and grep instead, and each grep output stays in
+    # the context of the run. The query runs only when the graph exists.
+    def self.task_sections(poller, task_id)
+      spec = poller.show(task_id)
+      { "coord show #{task_id}" => -> { spec } }.merge(graph(poller.coord_dir, spec.to_s[/^description: (.+)$/, 1]))
+    end
+
+    def self.graph(coord_dir, words)
+      path = File.join(coord_dir, "..", "graphify-out", "graph.json")
+      return {} unless words && File.exist?(path)
+
+      { "graphify query <task description> --budget #{GRAPH_BUDGET}" => -> { graph_query(words, path) } }
+    end
+
+    def self.graph_query(words, path)
+      output = IO.popen(["graphify", "query", words, "--budget", GRAPH_BUDGET.to_s, "--graph", path], err: File::NULL,
+                        &:read)
+      $?.success? ? output : nil
+    rescue SystemCallError
+      nil
     end
 
     def self.artifacts(poller)
@@ -683,6 +708,36 @@ module Dispatcher
     def write(data) = FileUtils.mkdir_p(File.dirname(@path)) && File.write(@path, JSON.generate(data))
   end
 
+  # RunHistory appends one line per run to .maf/coordination/usage/<worker>.runs.jsonl:
+  # the usage, the session run (1 is a fresh session), the context of the last
+  # model call, the peak rate, and the session limits of the run. The dashboard
+  # turns the history into hints. A run without usage data adds no line.
+  class RunHistory
+    def initialize(config)
+      @config = config
+      @path = File.join(config.coord_dir, "usage", "#{config.worker}.runs.jsonl")
+    end
+
+    def add(usage, session_run, context)
+      return unless usage
+
+      FileUtils.mkdir_p(File.dirname(@path))
+      File.write(@path, "#{JSON.generate(line(usage, session_run, context))}\n", mode: "a")
+    rescue SystemCallError => e
+      Log.line("run history not saved: #{e.message}")
+    end
+
+    private
+
+    def line(usage, session_run, context)
+      { "at" => Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ"), "session_run" => session_run, "context" => context,
+        "peak" => PeakRate.notice(@config) ? true : nil, "limits" => limits }.compact.merge(usage)
+    end
+
+    def limits = { "max_context" => @config.max_context, "max_session_runs" => @config.max_session_runs,
+                   "cache_window" => @config.cache_window }
+  end
+
   # PeakRate tells when a dispatched opencode run uses DeepSeek at the peak
   # rate. The off-peak rate is half the peak rate. Peak hours are 01:00-04:00
   # and 06:00-10:00 UTC, Monday to Friday. All other hours are off-peak.
@@ -710,7 +765,8 @@ module Dispatcher
     def self.for(config) = config.model || agent(config.role) || configured
     def self.agent(role) = find(File.join(".opencode", "agents", "#{role}.md"), AGENT_MODEL)
     def self.configured = config_paths.lazy.filter_map { |path| find(path, CONFIG_MODEL) }.first
-    def self.config_paths = %w[opencode.json opencode.jsonc] + %w[opencode.jsonc opencode.json].map { File.join(home, _1) }
+    def self.config_paths = %w[opencode.json opencode.jsonc] + user_paths
+    def self.user_paths = %w[opencode.jsonc opencode.json].map { |name| File.join(home, name) }
     def self.home = File.join(ENV.fetch("XDG_CONFIG_HOME", File.join(Dir.home, ".config")), "opencode")
     def self.find(path, pattern) = File.exist?(path) ? File.read(path)[pattern, 1] : nil
   end
@@ -1092,6 +1148,7 @@ module Dispatcher
 
     def run(prompt)
       session_id = warm_session_id
+      @session_run = session_id ? @session.runs + 1 : 1
       @status.started(session_id, @session.runs)
       result = attempt(prompt, session_id)
       result = retry_fresh(prompt) if session_id && @harness.stale_session?(result.output)
@@ -1133,14 +1190,15 @@ module Dispatcher
 
     def spawn(cmd)
       result = Spawn.run(cmd, env: @env, timeout: @config.timeout, limits: Limits.from(@config))
-      record(@harness.usage(result.output))
+      record(@harness.usage(result.output), result.output)
       @model = @harness.model(result.output) || @model
       result
     end
 
-    def record(usage)
+    def record(usage, output)
       usage && Log.line("tokens: #{TokenUsage.label(usage)}")
       TokenUsage.new(@config.coord_dir, @config.worker).add(usage)
+      RunHistory.new(@config).add(usage, @session_run, @harness.context(output))
     end
 
     def retry_fresh(prompt)
@@ -1372,7 +1430,8 @@ module Dispatcher
       @mailbox.recover
       @stop = StopSignal.new
     end
-    def timing_label = "interval=#{@config.interval}s cache_window=#{@config.cache_window}s"
+    def timing_label = "interval=#{@config.interval}s cache_window=#{@config.cache_window}s " \
+                       "max_session_runs=#{@config.max_session_runs} max_context=#{@config.max_context}"
     def harness_label = @config.command ? "command=#{@config.command.inspect}" : "harness=#{@config.harness}"
 
     def cycle_forever
@@ -1437,10 +1496,12 @@ module Dispatcher
                  "--full-harness" => [:lean, false],
                  "--once" => [:once, true], "--verbose" => [:verbose, true] }.freeze
     DEFAULTS = { harness: "hermes", interval: 60, max_turns: 50, idle_timeout: 0, grace: Spawn::GRACE,
-                 max_session_runs: 5, max_context: 150_000, poll_tasks: true, lean: true,
+                 poll_tasks: true, lean: true,
                  no_skill: false, once: false, verbose: false }.freeze
 
     DEFAULT_TIMEOUT = 1500
+    DEFAULT_SESSION_RUNS = 5
+    DEFAULT_CONTEXT = 150_000
 
     # Claude Code caches for 1 hour. The OpenAI cache of Codex is best effort:
     # a probe missed it after 5 idle minutes. A cold resume costs more than a
@@ -1494,7 +1555,17 @@ module Dispatcher
 
     def self.limits(config)
       config.timeout ||= role_timeout(config.role) || DEFAULT_TIMEOUT
-      config.cache_window ||= CACHE_WINDOWS.fetch(config.harness, DEFAULT_CACHE_WINDOW)
+      session_limits(config, Project.manifest.dig("team", "limits", config.role) || {})
+    end
+
+    # The team section of .maf/config.json sets the session limits of a role:
+    # "team": { "limits": { "frontend-developer": { "max_context": 80000 } } }.
+    # `maf worker restart ID --max-context N` writes them. A command-line flag wins.
+    # NOTE: assets/dashboard reads the limits of each run from the run history.
+    def self.session_limits(config, saved)
+      config.cache_window ||= saved["cache_window"] || CACHE_WINDOWS.fetch(config.harness, DEFAULT_CACHE_WINDOW)
+      config.max_session_runs ||= saved["max_session_runs"] || DEFAULT_SESSION_RUNS
+      config.max_context ||= saved["max_context"] || DEFAULT_CONTEXT
       config
     end
 
