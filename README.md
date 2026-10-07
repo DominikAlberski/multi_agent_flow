@@ -243,8 +243,18 @@ and `lib/maf/setup_agent/worktree.rb`; each script carries its signature; and th
 literals that the standalone scripts share (lead roles, read-only toolsets,
 the report format, the presence start time) are identical.
 
+Run the checks and all tests:
+
+```sh
+rake                               # scripts/check.rb, then all tests
+rake test TEST=test/coord_test.rb  # one test file
+```
+
+`rake test` runs each test file in its own process, in parallel, and prints the
+output of a failed file only. It unsets the variables below for each test.
+
 An agent session exports `TASKRC` and `COORD_DIR` for the shared board. Unset
-them before the tests, so a test never writes to that board:
+them when you run a test file directly, so a test never writes to that board:
 
 ```sh
 env -u TASKRC -u COORD_DIR -u COORD_ROLE -u COORD_WORKER ruby test/coord_test.rb
@@ -270,8 +280,10 @@ ruby test/worker_control_test.rb     # covers maf worker
 ruby test/untrack_test.rb            # covers maf untrack
 ```
 
-Minitest, stdlib only. Tests that require `task` or `git` skip (exit 0) when
-those tools are absent. If wiring into CI, install both to get full coverage.
+Minitest, stdlib only. Tests that require `task`, `git`, or `node` skip (exit 0)
+when those tools are absent. The dashboard tests need the `webrick` gem.
+CI (`.github/workflows/test.yml`) installs all of them and runs `rake` on Linux
+and macOS for each push to `main` and each pull request.
 
 ---
 
