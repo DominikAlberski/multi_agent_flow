@@ -1,4 +1,4 @@
-# Runs scripts/check.rb and all tests (rake) on each push to main and each
+# Runs scripts/check.rb, RuboCop, and all tests on each push to main and each
 # pull request. Ruby 3.0 is the lowest version the flow supports.
 name: test
 
@@ -15,6 +15,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A new RuboCop version can add cops. Raise the pin on purpose, then fix
+  # or list the new offenses.
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+
+      - name: Install RuboCop
+        run: gem install --no-document rubocop -v 1.91.0
+
+      - name: Run RuboCop
+        run: rake lint
+
   test:
     name: ${{ matrix.os }} / Ruby ${{ matrix.ruby }}
     runs-on: ${{ matrix.os }}
@@ -55,4 +73,4 @@ jobs:
         run: ruby -v && task --version && git --version && node --version
 
       - name: Run checks and tests
-        run: rake
+        run: rake check test

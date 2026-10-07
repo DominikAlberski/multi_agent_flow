@@ -246,9 +246,16 @@ the report format, the presence start time) are identical.
 Run the checks and all tests:
 
 ```sh
-rake                               # scripts/check.rb, then all tests
+rake                               # scripts/check.rb, RuboCop, then all tests
+rake lint                          # RuboCop only
 rake test TEST=test/coord_test.rb  # one test file
 ```
+
+RuboCop (`gem install rubocop -v 1.91.0`) uses `.rubocop.yml`. It sets the
+size rules: a class at most 100 lines, a method at most 5 lines and 4
+parameters, a line at most 120 characters. `.rubocop_todo.yml` lists the code
+that broke a rule before the config existed. Fix an entry, then delete it.
+Do not add new entries.
 
 `rake test` runs each test file in its own process, in parallel, and prints the
 output of a failed file only. It unsets the variables below for each test.
@@ -282,8 +289,9 @@ ruby test/untrack_test.rb            # covers maf untrack
 
 Minitest, stdlib only. Tests that require `task`, `git`, or `node` skip (exit 0)
 when those tools are absent. The dashboard tests need the `webrick` gem.
-CI (`.github/workflows/test.yml`) installs all of them and runs `rake` on Linux
-and macOS for each push to `main` and each pull request.
+CI (`.github/workflows/test.yml`) installs all of them and runs the checks and
+tests on Linux and macOS, and RuboCop, for each push to `main` and each pull
+request.
 
 ---
 
