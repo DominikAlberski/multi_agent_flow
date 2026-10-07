@@ -39,7 +39,7 @@ module Maf
       return unless pid && RunningProcesses.alive?(pid)
 
       puts "Stopping the dispatcher of #{@worker} (pid #{pid}). A running agent finishes first."
-      Process.kill("TERM", pid)
+      RunningProcesses.terminate(pid)
       abort "maf: pid #{pid} did not stop. Stop it with: kill #{pid}" unless RunningProcesses.wait_for_exit(pid)
     end
 
@@ -93,11 +93,21 @@ module Maf
       []
     end
 
+    # EPERM means the process exists but belongs to another user.
     def self.alive?(pid)
       Process.kill(0, pid)
       true
-    rescue Errno::ESRCH, Errno::EPERM
+    rescue Errno::ESRCH
       false
+    rescue Errno::EPERM
+      true
+    end
+
+    # TERM lets a running agent finish its run first.
+    def self.terminate(pid)
+      Process.kill("TERM", pid)
+    rescue Errno::EPERM
+      abort "maf: pid #{pid} belongs to another user. Stop it with: sudo kill #{pid}"
     end
 
     # A dispatcher run can take up to its --timeout (default 1500 seconds).

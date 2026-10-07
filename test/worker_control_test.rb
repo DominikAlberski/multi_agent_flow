@@ -145,6 +145,28 @@ class WorkerControlTest < Minitest::Test
 
     refute Dir.exist?(File.join(@coord, "locks", "control-architect-1.d"))
   end
+  # pid 1 belongs to root. kill(0) on it raises EPERM for other users.
+  def test_a_process_of_another_user_is_alive
+    skip "runs as root" if Process.uid.zero?
+
+    assert Maf::RunningProcesses.alive?(1)
+  end
+
+  def test_terminate_of_a_process_of_another_user_aborts
+    with_kill_stub(->(*) { raise Errno::EPERM }) do
+      _, err = capture_io { assert_raises(SystemExit) { Maf::RunningProcesses.terminate(4242) } }
+      assert_includes err, "sudo kill 4242"
+    end
+  end
+
+  def with_kill_stub(stub)
+    original = Process.method(:kill)
+    Process.define_singleton_method(:kill, &stub)
+    yield
+  ensure
+    Process.define_singleton_method(:kill, original)
+  end
+
   def test_start_saves_the_session_limits_of_the_role
     register(dispatch: false)
     spawn_worker
