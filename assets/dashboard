@@ -536,8 +536,11 @@ end
           return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
         }
         function esc(s) {
-          return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
+        // A value as a JS argument in an onclick attribute. JSON quotes it. esc keeps the attribute closed.
+        function arg(v) { return esc(JSON.stringify(v)); }
         function b(t, l) { return `<span class="b b-${l}">${t}</span>`; }
         function ac(a) {
           const classes = { done: 'ad', claim: 'ac', unclaim: 'au', msg: 'am', broadcast: 'am' };
@@ -589,7 +592,7 @@ end
           if (!w.dispatch && !w.live) return '<div class="log">cd ' + esc(w.dir) + ' &amp;&amp; maf start</div>';
           const acts = w.dispatch ? (w.live ? ['stop', 'restart'] : ['start']) : ['stop'];
           return acts.concat(['analyze'])
-            .map(a => `<button class="act" onclick="act('${esc(w.id)}','${a}')">${a}</button>`).join('');
+            .map(a => `<button class="act" onclick="act(${arg(w.id)}, ${arg(a)})">${a}</button>`).join('');
         }
         function logLines(w) {
           const lines = (w.dispatch ? w.log : []).concat(w.action.length ? ['action: ' + w.action.at(-1)] : []);
@@ -660,11 +663,10 @@ end
         // A hint suggests a better session limit. Its button restarts the worker with that limit.
         // An analysis hint comes from the analyst model (the analyze button). The other hints come from rules.
         function renderHints(hints) {
-          const id = h => JSON.stringify(h.worker);
           const button = h => h.limits
-            ? `<button class="act" onclick='act(${id(h)}, "restart", ${JSON.stringify(h.limits)})'>`
+            ? `<button class="act" onclick="act(${arg(h.worker)}, 'restart', ${arg(h.limits)})">`
               + 'restart with ' + esc(limitText(h.limits)) + '</button>'
-            : h.action === 'stop' ? `<button class="act" onclick='act(${id(h)}, "stop")'>stop</button>` : '';
+            : h.action === 'stop' ? `<button class="act" onclick="act(${arg(h.worker)}, 'stop')">stop</button>` : '';
           const tag = h => h.level === 'analysis' ? b('analysis', 'info') + (h.at ? meta(ago(h.at) + ' ago') : '') : '';
           $('hints').innerHTML = (hints || [])
             .map(h => `<div class="alert hint">&#x1F4A1; ${tag(h)}<span>${esc(h.text)}</span>${button(h)}</div>`)
