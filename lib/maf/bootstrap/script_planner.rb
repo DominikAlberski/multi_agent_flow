@@ -29,6 +29,10 @@ module Bootstrap
       script("dashboard", DASHBOARD_SIGNATURE)
     end
 
+    def analyst
+      script("analyst", ANALYST_SIGNATURE)
+    end
+
     def vault
       script("vault", VAULT_SIGNATURE)
     end

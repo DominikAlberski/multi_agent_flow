@@ -1,0 +1,240 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# analyst - ask a small model for token hints about one dispatched worker.
+#
+# Usage: analyst WORKER [--coord DIR] [--print]
+#
+# The analyst builds a short digest of the worker: the run history that the
+# dispatcher writes, and the tool calls of the current session (counts by
+# kind, output sizes, the largest outputs). A small model reads the digest
+# and returns at most 3 hints. The analyst writes them to
+# .maf/coordination/hints/<worker>.json, and the dashboard shows them.
+#
+# The default model call is Claude Haiku without tools, skills, MCP servers,
+# user settings, or thinking: about 1.2k input and 200 output tokens, $0.002. Set another command in
+# .maf/config.json: "team": { "analyst": { "command": ["opencode", "run"] } }.
+# The analyst sends the prompt on stdin. --print shows the prompt and calls
+# no model. The analyst runs only when the user asks (dashboard button).
+
+require "json"
+require "fileutils"
+require "open3"
+require "optparse"
+require "tmpdir"
+require "time"
+
+module Analyst
+  HISTORY = 20
+  TOP = 5
+  # The short system prompt replaces the 7k-token default of Claude Code.
+  # MAX_THINKING_TOKENS=0 turns thinking off: 3k fewer output tokens.
+  DEFAULT_COMMAND = ["claude", "-p", "--model", "haiku", "--system-prompt", "Reply with JSON only.",
+                     "--tools", "", "--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "",
+                     "--no-session-persistence", "--output-format", "json"].freeze
+  MODEL_ENV = { "MAX_THINKING_TOKENS" => "0" }.freeze
+  LIMITS = %w[max_context max_session_runs cache_window].freeze
+  KINDS = { "graphify" => /\bgraphify\b/, "grep" => /\b(rg|grep|ag)\s/, "read" => /\b(cat|sed -n|nl|head|tail)\s/,
+            "test" => %r{\b(rails test|rspec|bin/rails|rake)\b}, "git" => /\bgit\s/, "coord" => /\bcoord\s/ }.freeze
+
+  PROMPT = <<~TEXT
+    You review the token use of one AI coding worker. The worker runs as one-shot runs.
+    A dispatcher resumes the last session while the prompt cache is warm.
+    Each resume sends the whole old context again on every model call.
+    The session limits are: max_context (start fresh when the last call had this many context tokens),
+    max_session_runs (start fresh after this many runs), cache_window (seconds to resume a session).
+    In "runs", session_run 1 is a fresh session. "context" is the context of the last model call.
+    In "tools", each kind counts tool calls. graphify is a code graph query. It is cheaper than grep and file reads.
+
+    Find at most 3 problems that cost tokens. Name the numbers that show each problem.
+    For each problem, write one hint of at most 40 words.
+    Add "limits" only when a restart with that limit fixes that problem. Use an integer.
+    Never put the same limit in two hints.
+    A tool choice problem (many grep calls or file reads, few graphify calls) needs a prompt change, not a limit.
+    For a prompt or config change, write the change in the hint and add no limits.
+    Do not report a problem that the data does not show.
+    Return only JSON: {"hints":[{"text":"...","limits":{"max_context":80000}}]}.
+    If you find no problem, return {"hints":[]}.
+
+    Data:
+  TEXT
+
+  # Call is one tool call: its kind, the start of its command, and the size of its output.
+  Call = Struct.new(:kind, :text, :size)
+
+  # A shell command often starts with `source .maf/env.sh;` or `cd DIR &&`. Its kind is the command after that.
+  SETUP = /\A(\s*(source|cd)\s+\S+[^;&]*(;|&&))+\s*/
+
+  def self.call(tool, command, size)
+    kind = command ? KINDS.find { |_name, pattern| command.match?(pattern) }&.first : tool.to_s.downcase
+    text = (command || tool).to_s.gsub(/\s+/, " ")[0, 100]
+    Call.new(kind || command.sub(SETUP, "").split.first.to_s, text, size.to_i)
+  end
+
+  # Transcripts reads the tool calls of one session from the files of the harness.
+  module Transcripts
+    def self.calls(harness, id)
+      return [] if id.to_s.empty?
+
+      { "claude" => -> { claude(id) }, "codex" => -> { codex(id) }, "opencode" => -> { opencode(id) } }
+        .fetch(harness, -> { [] }).call
+    end
+
+    def self.lines(path) = path ? File.foreach(path).filter_map { |line| JSON.parse(line) rescue nil } : []
+
+    # Claude Code: a tool_use block, then a tool_result block with the same ID.
+    def self.claude(id)
+      events = lines(Dir.glob(File.join(Dir.home, ".claude", "projects", "*", "#{id}.jsonl")).first)
+      blocks = events.flat_map { |event| Array(event.dig("message", "content")).select { |block| block.is_a?(Hash) } }
+      sizes = blocks.select { |block| block["type"] == "tool_result" }
+                    .to_h { |block| [block["tool_use_id"], block["content"].to_s.size] }
+      blocks.select { |block| block["type"] == "tool_use" }
+            .map { |block| Analyst.call(block["name"], block.dig("input", "command"), sizes[block["id"]]) }
+    end
+
+    # Codex: a custom_tool_call or function_call, then its output with the same call_id.
+    def self.codex(id)
+      events = lines(Dir.glob(File.join(Dir.home, ".codex", "sessions", "**", "rollout-*#{id}.jsonl")).first)
+      payloads = events.map { |event| event["payload"] || {} }
+      sizes = payloads.select { |p| p["type"].to_s.end_with?("_output") }
+                      .to_h { |p| [p["call_id"], p["output"].to_s.size] }
+      payloads.select { |p| %w[custom_tool_call function_call].include?(p["type"]) }
+              .map { |p| Analyst.call(p["name"], codex_command(p), sizes[p["call_id"]]) }
+    end
+
+    def self.codex_command(payload)
+      text = (payload["input"] || payload["arguments"]).to_s
+      text[/cmd["']?\s*:\s*["']((?:[^"'\\]|\\.)*)/, 1] || text
+    end
+
+    # opencode keeps its sessions in a SQLite database. The sqlite3 CLI reads it.
+    def self.opencode(id)
+      db = File.join(Dir.home, ".local", "share", "opencode", "opencode.db")
+      return [] unless File.exist?(db) && id.match?(/\A[\w-]+\z/)
+
+      out, status = Open3.capture2("sqlite3", "-readonly", "-json", db, opencode_query(id))
+      status.success? ? JSON.parse(out.empty? ? "[]" : out).map { |row| Analyst.call(*row.values) } : []
+    rescue SystemCallError, JSON::ParserError
+      []
+    end
+
+    def self.opencode_query(id)
+      "select json_extract(data,'$.tool') tool, json_extract(data,'$.state.input.command') command, " \
+        "length(json_extract(data,'$.state.output')) size from part where session_id = '#{id}' " \
+        "and json_extract(data,'$.type') = 'tool'"
+    end
+  end
+
+  # Digest is the data that the model reads: the runs and the tool calls.
+  class Digest
+    def initialize(coord, worker)
+      @coord, @worker = coord, worker
+    end
+
+    def to_h
+      { worker: @worker, harness: entry["harness"], model: status["model"], limits: runs.last&.fetch("limits", nil),
+        runs: runs.map { |run| run_row(run) }, tools: tools }
+    end
+
+    def runs = @runs ||= history.last(HISTORY)
+
+    private
+
+    def entry = read(File.join(@coord, "workers.json")).fetch(@worker, {})
+    def status = @status ||= read(File.join(@coord, "status", "#{@worker}.json"))
+
+    def history
+      path = File.join(@coord, "usage", "#{@worker}.runs.jsonl")
+      File.exist?(path) ? File.foreach(path).filter_map { |line| JSON.parse(line) rescue nil } : []
+    end
+
+    def run_row(run)
+      run.slice("session_run", "input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens",
+                "context", "peak")
+    end
+
+    def tools
+      calls = Transcripts.calls(entry["harness"], status["session_id"])
+      { session: status["session_id"], calls: calls.size, output_chars: calls.sum(&:size),
+        by_kind: calls.group_by(&:kind).transform_values(&:size).sort_by { -_2 }.to_h,
+        largest: calls.max_by(TOP, &:size).map { |call| { size: call.size, call: call.text } } }
+    end
+
+    def read(path)
+      File.exist?(path) ? JSON.parse(File.read(path)) : {}
+    rescue JSON::ParserError
+      {}
+    end
+  end
+
+  # Model sends the prompt to the analyst command and reads the hints.
+  module Model
+    def self.ask(command, prompt)
+      out, err, status = Open3.capture3(MODEL_ENV, *command, stdin_data: prompt, chdir: Dir.tmpdir)
+      raise "#{command.first} failed: #{(err.empty? ? out : err).strip[0, 200]}" unless status.success?
+
+      reply = JSON.parse(out) rescue nil
+      reply = {} unless reply.is_a?(Hash)
+      [hints(reply["result"] || out), reply["total_cost_usd"]]
+    end
+
+    def self.hints(text)
+      data = JSON.parse(text.to_s[/\{\s*"hints".*\}/m].to_s)
+      Array(data["hints"]).first(3).filter_map { |hint| clean(hint) }
+    rescue JSON::ParserError
+      raise "the model returned no JSON: #{text.to_s.strip[0, 200]}"
+    end
+
+    # Only known limits with integer values reach the restart button.
+    def self.clean(hint)
+      return unless hint.is_a?(Hash) && !hint["text"].to_s.strip.empty?
+
+      limits = limits(hint["limits"])
+      { "text" => hint["text"].to_s.strip[0, 400], "limits" => (limits unless limits.empty?) }.compact
+    end
+
+    def self.limits(data)
+      return {} unless data.is_a?(Hash)
+
+      data.select { |key, value| LIMITS.include?(key) && value.is_a?(Integer) && value >= 0 }
+    end
+  end
+
+  # Main writes the state of the analysis to hints/<worker>.json: running first, then the hints or the error.
+  class Main
+    def initialize(argv)
+      @coord = ".maf/coordination"
+      @print = false
+      parser = OptionParser.new("Usage: analyst WORKER [--coord DIR] [--print]")
+      parser.on("--coord DIR") { |dir| @coord = dir }.on("--print") { @print = true }.parse!(argv)
+      @worker = argv.first || abort(parser.banner)
+    end
+
+    def run
+      return puts(prompt) if @print
+
+      write("running" => true)
+      hints, cost = Model.ask(command, prompt)
+      write("hints" => hints, "cost_usd" => cost)
+    rescue StandardError => e
+      write("error" => e.message)
+    end
+
+    private
+
+    def prompt = PROMPT + JSON.pretty_generate(Digest.new(@coord, @worker).to_h)
+
+    def command
+      manifest = JSON.parse(File.read(File.join(File.dirname(@coord), "config.json"))) rescue {}
+      Array(manifest.dig("team", "analyst", "command")).then { |list| list.empty? ? DEFAULT_COMMAND : list }
+    end
+
+    def write(data)
+      path = File.join(@coord, "hints", "#{@worker}.json")
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, JSON.generate({ "at" => Time.now.utc.iso8601 }.merge(data)))
+    end
+  end
+end
+
+Analyst::Main.new(ARGV).run if __FILE__ == $PROGRAM_NAME

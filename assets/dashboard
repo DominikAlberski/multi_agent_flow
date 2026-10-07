@@ -53,6 +53,7 @@ module Dashboard
     def manifest     = File.join(File.dirname(coord_dir), "config.json")
     def workers_path = File.join(coord_dir, "workers.json")
     def vault_path   = File.join(File.dirname(File.expand_path(coord_dir)), "bin", "vault")
+    def analyst_path = File.join(File.dirname(File.expand_path(coord_dir)), "bin", "analyst")
     def root         = File.dirname(File.dirname(File.expand_path(coord_dir)))
     def lease_ttl
       v = Integer(ENV.fetch("COORD_LEASE_TTL", ""), exception: false)
@@ -117,7 +118,7 @@ end
       entry.merge("id" => id, "live" => live?(file("presence", id)), "status" => file("status", id),
                   "usage" => file("usage", id), "log" => tail("#{id}.log"), "action" => tail("#{id}.control.log"),
                   "handoff_at" => mtime(File.join(sessions, "#{id}.handoff.md")), "last_event" => @last_events[id],
-                  "runs" => history(id))
+                  "runs" => history(id), "analysis" => file("hints", id))
     end
 
     private
@@ -166,7 +167,7 @@ end
   # wait for a running agent, so the request does not wait for the command.
   # The output goes to sessions/<id>.control.log, which the page shows.
   class ActionRunner
-    ACTIONS = %w[start stop restart].freeze
+    ACTIONS = %w[start stop restart analyze].freeze
 
     def initialize(cfg)
       @cfg = cfg
@@ -181,6 +182,8 @@ end
       return "unknown worker #{id}" unless registered?(id)
       return "unknown limit" unless limits.all? { |key, value| LIMITS.include?(key) && value.is_a?(Integer) }
 
+      return spawn_analyst(id) if action == "analyze"
+
       spawn_maf(id, action, limits.flat_map { |key, value| ["--#{key.tr("_", "-")}", value.to_s] })
     end
 
@@ -189,7 +192,7 @@ end
     def start_log(id, action)
       log = File.join(@cfg.coord_dir, "sessions", "#{id}.control.log")
       FileUtils.mkdir_p(File.dirname(log))
-      File.write(log, "[#{Time.now.utc.iso8601}] maf worker #{action} #{id}\n", mode: "a")
+      File.write(log, "[#{Time.now.utc.iso8601}] #{action} #{id}\n", mode: "a")
       log
     end
 
@@ -199,8 +202,18 @@ end
       false
     end
 
+    # The analyst asks a small model for hints. It writes hints/<id>.json.
+    def spawn_analyst(id)
+      log = start_log(id, "analyst")
+      pid = spawn(RbConfig.ruby, @cfg.analyst_path, id, "--coord", File.expand_path(@cfg.coord_dir),
+                  chdir: @cfg.root, in: File::NULL, out: [log, "a"], err: %i[child out])
+      Process.detach(pid) && nil
+    rescue SystemCallError => e
+      "analyst did not start: #{e.message}. Run maf update."
+    end
+
     def spawn_maf(id, action, flags)
-      log = start_log(id, ([action] + flags).join(" "))
+      log = start_log(id, ["maf worker", action, *flags].join(" "))
       pid = spawn(@cfg.maf, "worker", action, id, *flags, chdir: @cfg.root, in: File::NULL, out: [log, "a"],
                   err: %i[child out])
       Process.detach(pid) && nil
@@ -280,7 +293,7 @@ end
       return unless @runs.last["peak"] && @now.wday.between?(1, 5) && hours
 
       hint("info", "#{@id}: DeepSeek runs cost 2x the off-peak rate until #{hours.end}:00 UTC. " \
-                   "Stop the worker to wait for the off-peak rate.")
+                   "Stop the worker to wait for the off-peak rate.").merge(action: "stop")
     end
 
     def tokens(count) = count >= 1_000_000 ? "#{(count / 1e6).round(1)}M" : "#{(count / 1e3).round}k"
@@ -303,9 +316,19 @@ end
     def board
       tasks = TaskReader.new(@cfg.taskrc).read
       list = workers
-      { workers: list, hints: list.flat_map { |worker| TokenHints.new(worker).list },
+      { workers: list, hints: list.flat_map { |worker| TokenHints.new(worker).list + analysis(worker) },
         graph: GraphReader.new(@cfg).read, tasks: TaskSummary.new(@cfg, declared_roles).of(tasks),
         events: @files.recent_events, inboxes: @files.inbox_messages, locks: @files.active_locks }
+    end
+
+    # The analyst writes running, then its hints or its error.
+    def analysis(worker)
+      data = worker["analysis"] || {}
+      base = { worker: worker["id"], level: "analysis", at: data["at"] }
+      return [base.merge(text: "#{worker["id"]}: the analyst runs.")] if data["running"]
+      return [base.merge(text: "#{worker["id"]}: the analyst failed: #{data["error"]}")] if data["error"]
+
+      Array(data["hints"]).map { |hint| base.merge(text: "#{worker["id"]}: #{hint["text"]}", limits: hint["limits"]) }
     end
 
     def declared_roles
@@ -528,7 +551,8 @@ end
 
         async function act(id, action, limits) {
           const what = action + ' ' + id + (limits ? ' with ' + limitText(limits) : '');
-          if (action !== 'start' && !confirm(what + '? A running agent finishes its run first.')) return;
+          const asks = action === 'stop' || action === 'restart';
+          if (asks && !confirm(what + '? A running agent finishes its run first.')) return;
           const headers = { 'Content-Type': 'application/json', 'X-Maf-Token': TOKEN };
           const body = JSON.stringify({ worker: id, action: action, limits: limits || {} });
           const r = await fetch('/action', { method: 'POST', headers: headers, body: body })
@@ -564,7 +588,8 @@ end
         function buttons(w) {
           if (!w.dispatch && !w.live) return '<div class="log">cd ' + esc(w.dir) + ' &amp;&amp; maf start</div>';
           const acts = w.dispatch ? (w.live ? ['stop', 'restart'] : ['start']) : ['stop'];
-          return acts.map(a => `<button class="act" onclick="act('${esc(w.id)}','${a}')">${a}</button>`).join('');
+          return acts.concat(['analyze'])
+            .map(a => `<button class="act" onclick="act('${esc(w.id)}','${a}')">${a}</button>`).join('');
         }
         function logLines(w) {
           const lines = (w.dispatch ? w.log : []).concat(w.action.length ? ['action: ' + w.action.at(-1)] : []);
@@ -633,13 +658,17 @@ end
           return Object.entries(limits).map(([key, value]) => key + '=' + value).join(' ');
         }
         // A hint suggests a better session limit. Its button restarts the worker with that limit.
+        // An analysis hint comes from the analyst model (the analyze button). The other hints come from rules.
         function renderHints(hints) {
+          const id = h => JSON.stringify(h.worker);
           const button = h => h.limits
-            ? `<button class="act" onclick='act(${JSON.stringify(h.worker)}, "restart", ${JSON.stringify(h.limits)})'>`
+            ? `<button class="act" onclick='act(${id(h)}, "restart", ${JSON.stringify(h.limits)})'>`
               + 'restart with ' + esc(limitText(h.limits)) + '</button>'
-            : `<button class="act" onclick='act(${JSON.stringify(h.worker)}, "stop")'>stop</button>`;
+            : h.action === 'stop' ? `<button class="act" onclick='act(${id(h)}, "stop")'>stop</button>` : '';
+          const tag = h => h.level === 'analysis' ? b('analysis', 'info') + (h.at ? meta(ago(h.at) + ' ago') : '') : '';
           $('hints').innerHTML = (hints || [])
-            .map(h => `<div class="alert hint">&#x1F4A1; <span>${esc(h.text)}</span>${button(h)}</div>`).join('');
+            .map(h => `<div class="alert hint">&#x1F4A1; ${tag(h)}<span>${esc(h.text)}</span>${button(h)}</div>`)
+            .join('');
         }
         function renderAlerts(alerts) {
           const html = a => `<div class="alert ${a.l === 'warn' ? 'warn' : ''}">&#x26A0; ${esc(a.m)}</div>`;

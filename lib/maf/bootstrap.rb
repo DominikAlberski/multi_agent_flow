@@ -29,6 +29,7 @@ module Bootstrap
   DISPATCHER_SIGNATURE = "dispatcher - task board and inbox monitor that starts one-shot agents."
   VAULT_SIGNATURE = "vault - shared knowledge base watcher (graphify + Obsidian + MCP)."
   DASHBOARD_SIGNATURE = "dashboard - local observability web UI for multi-agent coordination."
+  ANALYST_SIGNATURE = "analyst - ask a small model for token hints about one dispatched worker."
   SUBDIRS = %w[inbox locks exports message-hooks harness-hooks].freeze
 
   NEXT_TASK_HOOK_SIGNATURE = "next-task.rb - Stop hook for Claude Code and Codex."

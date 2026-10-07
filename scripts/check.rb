@@ -43,6 +43,7 @@ module Check
     "dispatcher" => "dispatcher - task board and inbox monitor that starts one-shot agents.",
     "vault" => "vault - shared knowledge base watcher (graphify + Obsidian + MCP).",
     "dashboard" => "dashboard - local observability web UI for multi-agent coordination.",
+    "analyst" => "analyst - ask a small model for token hints about one dispatched worker.",
     "git-hooks/pre-commit" => "commit-guard - git pre-commit hook for the multi-agent flow.",
     "doc-graph-refresh" => "doc-graph-refresh - rebuild the knowledge graph after a markdown change."
   }.freeze
