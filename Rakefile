@@ -11,11 +11,17 @@
 # The processes run in parallel. A failed file prints its full output.
 # An agent session exports the variables of the shared board. The tests run
 # without them, so a test never writes to that board.
+# New git versions start a detached `git maintenance` after a commit. It can
+# hold a lock file in a test repository while the test deletes it. The tests
+# turn automatic maintenance off.
 require "etc"
 require "open3"
 require "rbconfig"
 
 BOARD_ENV = %w[TASKRC COORD_DIR COORD_ROLE COORD_WORKER].to_h { |name| [name, nil] }.freeze
+GIT_ENV = { "GIT_CONFIG_COUNT" => "2", "GIT_CONFIG_KEY_0" => "maintenance.auto", "GIT_CONFIG_VALUE_0" => "false",
+            "GIT_CONFIG_KEY_1" => "gc.auto", "GIT_CONFIG_VALUE_1" => "0" }.freeze
+TEST_ENV = BOARD_ENV.merge(GIT_ENV).freeze
 
 desc "Run the repo consistency checks"
 task :check do
@@ -36,7 +42,7 @@ end
 def run_tests(queue)
   results = []
   while (file = queue.pop)
-    out, status = Open3.capture2e(BOARD_ENV, RbConfig.ruby, file)
+    out, status = Open3.capture2e(TEST_ENV, RbConfig.ruby, file)
     puts "#{status.success? ? "ok  " : "FAIL"} #{file}  #{out[/^\d+ runs.*$/]}"
     results << [file, status, out]
   end
