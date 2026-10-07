@@ -548,6 +548,15 @@ effort and lasts a few minutes.
 - Each resume sends the whole old context again, on every model call of the run.
   After `--max-session-runs` runs (default: 5) in one session, the dispatcher starts
   a fresh session with the handoff note. `--max-session-runs 0` turns the limit off.
+- Each task in a resumed session adds to the context. If the last model call of
+  the session had `--max-context` tokens or more (default: 150000), the dispatcher
+  starts a fresh session with the handoff note. Only opencode reports the context
+  size. `--max-context 0` turns the limit off.
+- DeepSeek bills half price off-peak. Peak hours are 01:00-04:00 and 06:00-10:00 UTC,
+  Monday to Friday. If a dispatched opencode run uses a DeepSeek model in peak hours,
+  the log shows `info: DeepSeek peak hours (HH:MM UTC): this run costs 2x the off-peak rate`.
+  The run still starts. The dispatcher does not know Chinese public holidays, which
+  are off-peak in full, so the notice can show on a holiday.
 - A run that fails on a provider usage or rate limit never reached the model.
   The dispatcher returns its messages to the inbox without an attempt and starts
   no new run for 15 minutes. Each further limit doubles the pause, up to 1 hour.
@@ -574,7 +583,7 @@ to `.maf/coordination/usage/<worker>.json`. `input_tokens` counts every input to
 The dispatcher log shows the usage of each run, and the idle time of a resumed session.
 If a resumed run shows a large cache write, the cache was cold: lower `--cache-window`.
 The dashboard shows the cache hit ratio: cache reads as a part of all input tokens.
-Claude Code, Hermes, and Codex report the usage. opencode and `--command` harnesses
+Claude Code, Hermes, Codex, and opencode report the usage. `--command` harnesses
 do not. `coord status` and the dashboard show the totals. A run never fails because
 of missing usage data.
 

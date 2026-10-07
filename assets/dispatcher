@@ -15,7 +15,8 @@
 #                     [--skill NAME | --no-skill] [--interval S] [--max-turns N]
 #                     [--timeout S] [--idle-timeout S] [--grace S]
 #                     [--completion-signal TEXT] [--abort-signal TEXT]
-#                     [--cache-window S] [--max-session-runs N] [--no-poll-tasks]
+#                     [--cache-window S] [--max-session-runs N] [--max-context N]
+#                     [--no-poll-tasks]
 #                     [--full-harness] [--once] [--verbose]
 #
 #   dispatcher tester                            # hermes (default)
@@ -58,6 +59,10 @@
 #                      (default: 5). Each resume sends the whole old context
 #                      again, so a long session costs more on every call.
 #                      0 means no limit.
+#   --max-context N    Start a fresh session when the last model call of the
+#                      session had N or more context tokens (default:
+#                      150000). Each task in a resumed session adds to the
+#                      context. Only opencode reports the size. 0 means no limit.
 #   --no-poll-tasks    Dispatch on inbox messages only.
 #   --full-harness     Codex and Claude Code: keep the user's full setup. By
 #                      default a dispatched Codex run starts without plugins,
@@ -94,7 +99,7 @@
 # session prefix for a limited time after the last request (1 hour for
 # Claude Code, a few minutes for Codex). A resume after that time resends the whole context at full
 # price. So the dispatcher resumes only inside --cache-window, and for at
-# most --max-session-runs runs. Otherwise the dispatcher starts a fresh
+# most --max-session-runs runs, below --max-context tokens. Otherwise the dispatcher starts a fresh
 # session. A run that changed the state of the work puts a short handoff note
 # in its final reply. The dispatcher writes the note to
 # .maf/coordination/sessions/<worker>.handoff.md, and a fresh session starts
@@ -130,7 +135,7 @@ module Dispatcher
 
   Config = Struct.new(:role, :harness, :command, :model, :skill, :no_skill, :interval, :max_turns,
                       :timeout, :idle_timeout, :grace, :completion_signal, :abort_signal,
-                      :cache_window, :max_session_runs, :once, :poll_tasks, :worker, :coord_dir, :verbose, :lean,
+                      :cache_window, :max_session_runs, :max_context, :once, :poll_tasks, :worker, :coord_dir, :verbose, :lean,
                       keyword_init: true)
 
   module Log
@@ -247,10 +252,14 @@ module Dispatcher
     # context again, so --max-session-runs caps the count.
     def runs = lines[1].to_i
 
-    def save(session_id)
+    # The third line holds the context tokens of the last model call, if the
+    # harness reports them. --max-context caps the size.
+    def context_tokens = lines[2].to_i
+
+    def save(session_id, context = nil)
       count = session_id == id ? runs + 1 : 1
       FileUtils.mkdir_p(File.dirname(@path))
-      File.write(@path, "#{session_id}\n#{count}\n")
+      File.write(@path, "#{session_id}\n#{count}\n#{context}\n")
     end
 
     def lines = File.exist?(@path) ? File.read(@path).split("\n").map(&:strip) : []
@@ -623,8 +632,8 @@ module Dispatcher
   end
 
   # TokenUsage reads the token usage of one run and adds it to the totals of
-  # the worker in .maf/coordination/usage/<worker>.json. Claude Code, Hermes, and
-  # Codex report usage. A run without usage data adds nothing. A usage error
+  # the worker in .maf/coordination/usage/<worker>.json. Claude Code, Hermes,
+  # Codex, and opencode report usage. A run without usage data adds nothing. A usage error
   # never fails a run.
   #
   # input_tokens counts every input token, cache reads included.
@@ -674,6 +683,38 @@ module Dispatcher
     def write(data) = FileUtils.mkdir_p(File.dirname(@path)) && File.write(@path, JSON.generate(data))
   end
 
+  # PeakRate tells when a dispatched opencode run uses DeepSeek at the peak
+  # rate. The off-peak rate is half the peak rate. Peak hours are 01:00-04:00
+  # and 06:00-10:00 UTC, Monday to Friday. All other hours are off-peak.
+  # Chinese public holidays are off-peak in full, but the dispatcher does not
+  # know them, so the notice can show on a holiday.
+  module PeakRate
+    HOURS = [1...4, 6...10].freeze
+
+    def self.peak?(time) = time.wday.between?(1, 5) && HOURS.any? { |hours| hours.cover?(time.hour) }
+    def self.deepseek?(config) = config.harness == "opencode" && OpencodeModel.for(config).to_s.include?("deepseek")
+
+    def self.notice(config, time = Time.now.utc)
+      return unless peak?(time) && deepseek?(config)
+
+      "info: DeepSeek peak hours (#{time.strftime("%H:%M")} UTC): this run costs 2x the off-peak rate"
+    end
+  end
+
+  # OpencodeModel finds the model of an opencode run in the opencode order:
+  # --model, the agent file, the project config, the user config.
+  module OpencodeModel
+    CONFIG_MODEL = /^\s*"model"\s*:\s*"([^"]+)"/
+    AGENT_MODEL = /\A---\n(?:(?!^---$).)*?^model:\s*(\S+)/m
+
+    def self.for(config) = config.model || agent(config.role) || configured
+    def self.agent(role) = find(File.join(".opencode", "agents", "#{role}.md"), AGENT_MODEL)
+    def self.configured = config_paths.lazy.filter_map { |path| find(path, CONFIG_MODEL) }.first
+    def self.config_paths = %w[opencode.json opencode.jsonc] + %w[opencode.jsonc opencode.json].map { File.join(home, _1) }
+    def self.home = File.join(ENV.fetch("XDG_CONFIG_HOME", File.join(Dir.home, ".config")), "opencode")
+    def self.find(path, pattern) = File.exist?(path) ? File.read(path)[pattern, 1] : nil
+  end
+
   module Harness
     # Adapter is the part every built-in adapter shares. Each adapter sets
     # STALE_SESSION to the error its CLI prints for an unknown session ID.
@@ -682,6 +723,7 @@ module Dispatcher
       def resume(session_id, *flag) = session_id ? [*flag, session_id] : []
       def present(value) = value.to_s.empty? ? nil : value
       def usage(_output) = nil
+      def context(_output) = nil
       def model(_output) = nil
     end
 
@@ -805,6 +847,20 @@ module Dispatcher
       end
 
       def self.result_text(_output) = nil
+
+      # Each model call ends with a step_finish event. Its tokens.input
+      # excludes the cache reads and writes; reasoning is billed as output.
+      STEP_FINISH = /\{"type":"step_finish".*/
+
+      def self.steps(output) = output.scan(STEP_FINISH).filter_map { |json| Events.parse(json)&.dig("part", "tokens") }
+      def self.usage(output) = TokenUsage.sum(steps(output).map { |tokens| TokenUsage.normalize(flat(tokens)) })
+      def self.context(output) = steps(output).last&.then { |tokens| TokenUsage.input(flat(tokens)) }
+
+      def self.flat(tokens)
+        { "input_tokens" => tokens["input"].to_i, "cache_read_input_tokens" => tokens.dig("cache", "read").to_i,
+          "cache_creation_input_tokens" => tokens.dig("cache", "write").to_i,
+          "output_tokens" => tokens["output"].to_i + tokens["reasoning"].to_i }
+      end
     end
 
     # Generic: a user-provided shell template. No session resume, no parsing.
@@ -821,6 +877,7 @@ module Dispatcher
       def self.session_id(_output) = nil
       def self.result_text(_output) = nil
       def self.usage(_output) = nil
+      def self.context(_output) = nil
       def self.model(_output) = nil
     end
 
@@ -1043,13 +1100,14 @@ module Dispatcher
 
     def warm_session_id
       id = @session.id
-      return id unless id && (cold? || full?)
+      return id unless id && (cold? || full? || large?)
 
       expire(id)
     end
 
     def cold? = @session.idle_seconds > @config.cache_window
     def full? = @config.max_session_runs.to_i.positive? && @session.runs >= @config.max_session_runs
+    def large? = @config.max_context.to_i.positive? && @session.context_tokens >= @config.max_context
 
     def expire(id)
       Log.line("session #{id} #{expire_reason}; starting fresh with the handoff note")
@@ -1058,13 +1116,15 @@ module Dispatcher
     end
 
     def expire_reason
-      return "has #{@session.runs} runs, the --max-session-runs limit" unless cold?
+      return "idle #{(@session.idle_seconds / 60).round}m, past the cache window" if cold?
+      return "has #{@session.runs} runs, the --max-session-runs limit" if full?
 
-      "idle #{(@session.idle_seconds / 60).round}m, past the cache window"
+      "has #{@session.context_tokens} context tokens, the --max-context limit"
     end
 
     def attempt(prompt, session_id)
       Log.line("dispatching #{@config.role} (session: #{session_label(session_id)})")
+      PeakRate.notice(@config)&.then { |text| Log.line(text) }
       text = Prompt.with_handoff(prompt, @session, session_id) + Prompt.signals(@config)
       spawn(@harness.build_command(@config, text, session_id))
     end
@@ -1101,7 +1161,7 @@ module Dispatcher
     end
 
     def first_reply(result)
-      @harness.session_id(result.output)&.then { |id| @session.save(id) }
+      @harness.session_id(result.output)&.then { |id| @session.save(id, @harness.context(result.output)) }
       note = HandoffBlock.parse(@harness.result_text(result.output) || result.output)
       @session.write_handoff(note) unless note.to_s.empty?
     end
@@ -1369,7 +1429,7 @@ module Dispatcher
                "--model M" => [:model, String], "--skill NAME" => [:skill, String],
                "--interval S" => [:interval, Integer], "--max-turns N" => [:max_turns, Integer],
                "--timeout S" => [:timeout, Integer], "--cache-window S" => [:cache_window, Integer],
-               "--max-session-runs N" => [:max_session_runs, Integer],
+               "--max-session-runs N" => [:max_session_runs, Integer], "--max-context N" => [:max_context, Integer],
                "--idle-timeout S" => [:idle_timeout, Integer], "--grace S" => [:grace, Integer],
                "--completion-signal TEXT" => [:completion_signal, String],
                "--abort-signal TEXT" => [:abort_signal, String] }.freeze
@@ -1377,7 +1437,7 @@ module Dispatcher
                  "--full-harness" => [:lean, false],
                  "--once" => [:once, true], "--verbose" => [:verbose, true] }.freeze
     DEFAULTS = { harness: "hermes", interval: 60, max_turns: 50, idle_timeout: 0, grace: Spawn::GRACE,
-                 max_session_runs: 5, poll_tasks: true, lean: true,
+                 max_session_runs: 5, max_context: 150_000, poll_tasks: true, lean: true,
                  no_skill: false, once: false, verbose: false }.freeze
 
     DEFAULT_TIMEOUT = 1500
@@ -1411,8 +1471,9 @@ module Dispatcher
     end
 
     def self.validate_limits(config)
-      limits = [config.idle_timeout, config.grace, config.max_session_runs]
-      abort "dispatcher: --idle-timeout, --grace, and --max-session-runs must be 0 or more" if limits.any?(&:negative?)
+      limits = [config.idle_timeout, config.grace, config.max_session_runs, config.max_context]
+      abort "dispatcher: --idle-timeout, --grace, --max-session-runs, and --max-context must be 0 or more" if
+        limits.any?(&:negative?)
       config
     end
 
