@@ -20,7 +20,7 @@ load File.expand_path("../assets/dispatcher", __dir__)
 module DispatcherTestHelpers
   def config(**overrides)
     defaults = { role: "backend-developer", harness: "hermes", interval: 60, max_turns: 50, timeout: 300,
-                 cache_window: 3300, max_session_runs: 5, coord_dir: @dir, worker: "backend-developer-bot",
+                 cache_window: 3300, max_session_runs: 5, max_context: 150_000, coord_dir: @dir, worker: "backend-developer-bot",
                  poll_tasks: true }
     Dispatcher::Config.new(**defaults, **overrides)
   end
@@ -387,6 +387,7 @@ class RunnerTest < Minitest::Test
     def self.result_text(output) = output[/^reply: (.*)/m, 1] || "ok #{DONE}"
     def self.usage(output) = output[/tokens=(\d+)/, 1]&.then { |n| { "input_tokens" => n.to_i, "output_tokens" => 1 } }
     def self.model(output) = output[/model=(\S+)/, 1]
+    def self.context(output) = output[/context=(\d+)/, 1]&.to_i
   end
 
   DONE = '<report>{"status":"done","tests":"pass"}</report>'
@@ -473,6 +474,26 @@ class RunnerTest < Minitest::Test
     _out, err = capture_io { runner(record_call).dispatch("go") }
     assert_equal [""], File.readlines(@calls, chomp: true)
     assert_includes err, "has 5 runs, the --max-session-runs limit"
+  end
+
+  # Each task in a resumed session adds to the context. A large session starts fresh.
+  def test_a_session_at_the_context_limit_starts_fresh
+    session.save("s-1", 150_000)
+    _out, err = capture_io { runner(record_call).dispatch("go") }
+    assert_equal [""], File.readlines(@calls, chomp: true)
+    assert_includes err, "has 150000 context tokens, the --max-context limit"
+  end
+
+  def test_the_context_of_the_last_call_is_saved
+    capture_io { runner("echo session=s-1 context=4200").dispatch("go") }
+    assert_equal 4200, session.context_tokens
+  end
+
+  def test_a_zero_context_limit_never_caps_the_session
+    session.save("s-1", 900_000)
+    runner = Dispatcher::Runner.new(config(command: record_call, timeout: 5, max_context: 0), FakeHarness, {})
+    capture_io { runner.dispatch("go") }
+    assert_equal ["s-1"], File.readlines(@calls, chomp: true)
   end
 
   def test_a_zero_run_limit_never_caps_the_session
@@ -1046,7 +1067,26 @@ class AdapterTest < Minitest::Test
     assert_nil harness("claude").usage(%({"result":"ok"}\n))
     assert_nil harness("codex").usage("")
     assert_nil harness("opencode").usage("x")
+    assert_nil harness("opencode").context("x")
     assert_nil Dispatcher::Harness::Generic.usage("x")
+  end
+
+  # Captured from a real `opencode run --format json`, shortened.
+  OPENCODE_STEPS = "\e]777;notify;warp://cli-agent;{\"event\":\"stop\"}\a" \
+                   "{\"type\":\"step_finish\",\"timestamp\":1,\"sessionID\":\"ses_a\",\"part\":{\"type\":\"step-finish\"," \
+                   "\"tokens\":{\"total\":23047,\"input\":21381,\"output\":2,\"reasoning\":0," \
+                   "\"cache\":{\"write\":0,\"read\":1664}}}}\n" \
+                   "{\"type\":\"step_finish\",\"timestamp\":2,\"sessionID\":\"ses_a\",\"part\":{\"type\":\"step-finish\"," \
+                   "\"tokens\":{\"input\":100,\"output\":5,\"reasoning\":3,\"cache\":{\"write\":10,\"read\":23000}}}}\n"
+
+  def test_opencode_usage_sums_the_steps
+    expected = { "input_tokens" => 46_155, "cached_input_tokens" => 24_664, "cache_write_input_tokens" => 10,
+                 "output_tokens" => 10 }
+    assert_equal expected, harness("opencode").usage(OPENCODE_STEPS)
+  end
+
+  def test_opencode_context_is_the_input_of_the_last_step
+    assert_equal 23_110, harness("opencode").context(OPENCODE_STEPS)
   end
 
   def test_opencode_command
@@ -1414,5 +1454,40 @@ class LeadPrefetchTest < Minitest::Test
     prompt = Dispatcher::Prompt.messages([Dispatcher::Message.new("p", "project-manager", "x")], "architect")
     assert_includes prompt, "Never print a whole artifact folder"
     assert_includes prompt, "Do not send a message only to acknowledge"
+  end
+end
+
+class PeakRateTest < Minitest::Test
+  include DispatcherTestHelpers
+
+  # 2026-10-07 is a Wednesday, 2026-10-10 a Saturday.
+  def at(text) = Time.utc(*text.split(/[- :]/).map(&:to_i))
+
+  def test_peak_hours_on_a_weekday
+    assert Dispatcher::PeakRate.peak?(at("2026-10-07 01:00"))
+    assert Dispatcher::PeakRate.peak?(at("2026-10-07 09:59"))
+    refute Dispatcher::PeakRate.peak?(at("2026-10-07 04:00"))
+    refute Dispatcher::PeakRate.peak?(at("2026-10-07 10:00"))
+  end
+
+  def test_the_weekend_is_off_peak
+    refute Dispatcher::PeakRate.peak?(at("2026-10-10 07:00"))
+  end
+
+  def test_notice_for_deepseek_on_opencode_at_peak
+    cfg = config(harness: "opencode", model: "deepseek/deepseek-flash")
+    assert_includes Dispatcher::PeakRate.notice(cfg, at("2026-10-07 07:30")), "DeepSeek peak hours (07:30 UTC)"
+    assert_nil Dispatcher::PeakRate.notice(cfg, at("2026-10-07 12:00"))
+    assert_nil Dispatcher::PeakRate.notice(config(harness: "claude", model: "deepseek"), at("2026-10-07 07:30"))
+  end
+
+  def test_the_agent_file_names_the_model
+    Dir.mktmpdir do |dir|
+      Dir.chdir(dir) do
+        FileUtils.mkdir_p(".opencode/agents")
+        File.write(".opencode/agents/backend-developer.md", "---\nmode: all\nmodel: deepseek/x\n---\nmodel: other\n")
+        assert_equal "deepseek/x", Dispatcher::OpencodeModel.for(config)
+      end
+    end
   end
 end
