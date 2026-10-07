@@ -476,7 +476,9 @@ end
         }
         function tokens(w) {
           const u = w.usage || {};
-          const rest = `${k(u.cached_input_tokens)} cached &middot; ${k(u.output_tokens)} out`
+          const hit = u.input_tokens ? Math.round(100 * (u.cached_input_tokens || 0) / u.input_tokens) : 0;
+          const rest = `${k(u.cached_input_tokens)} cached (${hit}%) &middot; ${k(u.cache_write_input_tokens)} written`
+            + ` &middot; ${k(u.output_tokens)} out`
             + ` &middot; ${u.runs || 0} runs`;
           return k(u.input_tokens) + ' in' + meta(rest);
         }
