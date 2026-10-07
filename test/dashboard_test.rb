@@ -183,6 +183,32 @@ class DashboardWorkerTest < Minitest::Test
     assert_includes File.read(log), "args: worker restart architect-1 --max-context 70000"
   end
 
+  def hints = Dashboard::Collector.new(cfg).collect[:hints]
+
+  def test_the_hints_of_the_analyst_show_with_their_limits
+    write("hints/architect-1.json", "at" => "2026-10-07T17:00:00Z",
+                                    "hints" => [{ "text" => "Cap it.", "limits" => { "max_context" => 80_000 } }])
+    assert_equal [{ worker: "architect-1", level: "analysis", at: "2026-10-07T17:00:00Z",
+                    text: "architect-1: Cap it.", limits: { "max_context" => 80_000 } }], hints
+  end
+
+  def test_a_running_or_failed_analysis_shows_as_a_hint
+    write("hints/architect-1.json", "running" => true)
+    assert_equal "architect-1: the analyst runs.", hints.first[:text]
+    write("hints/architect-1.json", "error" => "quota")
+    assert_equal "architect-1: the analyst failed: quota", hints.first[:text]
+  end
+
+  def test_analyze_starts_the_analyst_in_the_background
+    bin = File.join(@dir, ".maf", "bin")
+    FileUtils.mkdir_p(bin)
+    File.write(File.join(bin, "analyst"), 'puts "analyst args: " + ARGV.join(" ")')
+    assert_nil Dashboard::ActionRunner.new(cfg).run("architect-1", "analyze")
+    log = File.join(@coord, "sessions", "architect-1.control.log")
+    30.times { break if File.read(log).include?("analyst args:") || !sleep(0.1) }
+    assert_includes File.read(log), "analyst args: architect-1 --coord #{File.expand_path(@coord)}"
+  end
+
   def test_an_action_refuses_an_unknown_or_a_non_number_limit
     runner = Dashboard::ActionRunner.new(cfg)
 

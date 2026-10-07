@@ -721,6 +721,7 @@ class MainTest < Minitest::Test
     def claimed_task_ids = claimed || []
     def claim_first(list) = list.find { |id| !(taken || []).include?(id) }
     def show(id) = "uuid: #{id}\ndescription: fix login"
+    def coord_dir = "/nonexistent/coordination"
   end
 
   # A message run already tells the agent to work through `coord next`, so a
@@ -772,6 +773,31 @@ class MainTest < Minitest::Test
     prompt, = task_cycle(FakePoller.new(["t1"]))
     assert_includes prompt, "$ coord show t1\nuuid: t1\ndescription: fix login"
     assert_includes prompt, "$ git log --oneline -10\n"
+  end
+
+  # Some models grep instead of querying the graph. The prompt brings the graph query along.
+  def test_a_task_run_gets_a_graph_query_on_the_task_description
+    coord = File.join(@dir, "coordination")
+    FileUtils.mkdir_p([coord, File.join(@dir, "graphify-out"), File.join(@dir, "bin")])
+    File.write(File.join(@dir, "graphify-out", "graph.json"), "{}")
+    File.write(File.join(@dir, "bin", "graphify"), "#!/bin/sh\necho \"NODE app.rb args: $2 $4\"\n")
+    FileUtils.chmod(0o755, File.join(@dir, "bin", "graphify"))
+    poller = FakePoller.new(["t1"]).tap { |p| p.define_singleton_method(:coord_dir) { coord } }
+    prompt, = with_path(File.join(@dir, "bin")) { task_cycle(poller) }
+    assert_includes prompt, "$ graphify query <task description> --budget 500\nNODE app.rb args: fix login 500"
+  end
+
+  def test_no_graph_query_without_a_graph
+    prompt, = task_cycle(FakePoller.new(["t1"]))
+    refute_includes prompt, "graphify query"
+  end
+
+  def with_path(dir)
+    old = ENV["PATH"]
+    ENV["PATH"] = "#{dir}:#{old}"
+    yield
+  ensure
+    ENV["PATH"] = old
   end
 
   def test_prefetch_text_is_bounded

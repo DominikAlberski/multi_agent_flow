@@ -5,6 +5,7 @@ module Uninstall
     SIGNATURES = { ".maf/bin/coord" => Bootstrap::COORD_SIGNATURE,
                    ".maf/bin/dispatcher" => Bootstrap::DISPATCHER_SIGNATURE,
                    ".maf/bin/dashboard" => Bootstrap::DASHBOARD_SIGNATURE,
+                   ".maf/bin/analyst" => Bootstrap::ANALYST_SIGNATURE,
                    ".maf/bin/vault" => Bootstrap::VAULT_SIGNATURE,
                    ".maf/bin/doc-graph-refresh" => Bootstrap::DOC_GRAPH_SIGNATURE,
                    ".maf/env.sh" => Bootstrap::ENV_SIGNATURE,

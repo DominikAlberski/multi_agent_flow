@@ -805,6 +805,24 @@ counts only the runs with the limits of the last run. It shows a hint when:
 | The cache was cold | 2 or more resumed runs wrote more than 25% of their input to the cache. | Restart with half the cache window. |
 | DeepSeek peak rate | The last run used DeepSeek in peak hours, and the peak hours go on. | Stop the worker. |
 
+**Analyze button.** The rules see only the token numbers. The `analyze` button of a
+worker row asks a small model for hints that the numbers do not show, for example a
+worker that greps instead of querying the graph. `.maf/bin/analyst WORKER` builds a
+short digest: the run history, and the tool calls of the current session (counts by
+kind, output sizes, the 5 largest outputs). It reads the transcripts of Claude Code
+and Codex, and the opencode database through the `sqlite3` command. The model returns
+at most 3 hints. The page shows them with an `analysis` tag, with a restart button
+when a hint names a session limit. The result is in
+`.maf/coordination/hints/<worker>.json`.
+
+The default model call is Claude Haiku with a one-line system prompt, without tools,
+skills, MCP servers, user settings, or thinking. One analysis costs about 1.2k input
+tokens and 200 output tokens (about $0.002) and takes a few seconds. The analyst runs
+only when you click the button. To use another command, set
+`"team": { "analyst": { "command": ["opencode", "run", "-m", "deepseek/deepseek-flash"] } }`
+in `.maf/config.json`. The analyst sends the prompt on stdin. `analyst WORKER --print`
+shows the prompt and calls no model.
+
 A restart from a hint runs `maf worker restart WORKER --max-context N` (or the
 other limit flag). maf saves the limit for the role in `.maf/config.json`:
 `"team": { "limits": { "frontend-developer": { "max_context": 70000 } } }`. Each
