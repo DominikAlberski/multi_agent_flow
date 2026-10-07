@@ -1,0 +1,58 @@
+# Runs scripts/check.rb and all tests (rake) on each push to main and each
+# pull request. Ruby 3.0 is the lowest version the flow supports.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Ruby ${{ matrix.ruby }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, ruby: "3.0" }
+          - { os: ubuntu-24.04, ruby: "4.0" }
+          - { os: macos-15, ruby: "4.0" }
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+
+      # Tests that need task, git, or node skip without them. CI installs all.
+      - name: Install Taskwarrior (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq taskwarrior lsof
+
+      - name: Install Taskwarrior (macOS)
+        if: runner.os == 'macOS'
+        run: brew install task
+
+      - name: Install webrick
+        run: gem install --no-document webrick
+
+      - name: Configure git
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.com
+          git config --global init.defaultBranch main
+
+      - name: Show tool versions
+        run: ruby -v && task --version && git --version && node --version
+
+      - name: Run checks and tests
+        run: rake
