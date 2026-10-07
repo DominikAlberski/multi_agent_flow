@@ -53,11 +53,14 @@ module Migrate
       pids.select { |pid| alive?(pid) }
     end
 
+    # EPERM means the process exists but belongs to another user.
     def alive?(pid)
       Process.kill(0, pid)
       true
-    rescue Errno::ESRCH, Errno::EPERM
+    rescue Errno::ESRCH
       false
+    rescue Errno::EPERM
+      true
     end
 
     # Regenerate the files of the current agents: scripts, role files, symlinks,

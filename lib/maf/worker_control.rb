@@ -65,7 +65,7 @@ module Maf
     # TERM lets a running agent finish its run. The dispatcher then exits.
     def stop_dispatcher
       puts "Stopping #{@worker} (pid #{pid}). A running agent finishes its run first."
-      Process.kill("TERM", pid)
+      RunningProcesses.terminate(pid)
       abort "maf: pid #{pid} did not stop. Stop it with: kill #{pid}" unless RunningProcesses.wait_for_exit(pid)
     end
 
@@ -74,7 +74,7 @@ module Maf
       abort "maf: #{@worker} is in a turn. Try again when the session is idle." if busy?
       abort "maf: maf cannot tell if #{@worker} is idle. Stop it in its terminal, or add --force." if unknown?
 
-      Process.kill("TERM", pid)
+      RunningProcesses.terminate(pid)
       RunningProcesses.wait_for_exit(pid, timeout: 10)
       puts "Stopped #{@worker}. To start it again: #{start_hint}"
     end
