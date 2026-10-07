@@ -46,7 +46,8 @@ module Maf
       "prepare" => "HARNESS ROLE[_WORKER] [--dispatch|--interactive] [--replace W]  prepare a worker; " \
                    "--dispatch starts it (default for the architect)",
       "retire" => "ROLE[_WORKER]                           remove a worker; its tasks return to the pool",
-      "worker" => "status|stop|start|restart ROLE[_WORKER] [--force]  control one worker (the dashboard uses it)",
+      "worker" => "status|stop|start|restart ROLE[_WORKER] [--force] [--max-context N] [--max-session-runs N] " \
+                  "[--cache-window S]  control one worker; start and restart save the session limits of the role",
       "team" => "[set --max N --allow HARNESS[:MODEL]]   show the team, or set its budget",
       "uninstall" => "[--check] [--yes] [--force]             remove the flow from the project",
       "migrate" => "[--check] [--yes]                       move an old-layout install into .maf/",
@@ -100,10 +101,13 @@ module Maf
     def run_team = TeamCommand.new(@args, SetupAgent::Project.root).run
     def run_worker
       spec = @args[1] || abort(worker_usage)
-      WorkerControl.new(SetupAgent::Project.root, spec, force: @args.include?("--force")).run(@args[0].to_s)
+      limits = RoleLimits.parse(@args)
+      WorkerControl.new(SetupAgent::Project.root, spec, force: @args.include?("--force"), limits: limits)
+        .run(@args[0].to_s)
     end
 
-    def worker_usage = "usage: maf worker #{WorkerControl::ACTIONS.join("|")} ROLE[_WORKER] [--force]"
+    def worker_usage = "usage: maf worker #{WorkerControl::ACTIONS.join("|")} ROLE[_WORKER] [--force] " \
+                       "[--max-context N] [--max-session-runs N] [--cache-window S]"
     def run_retire = Retire.new(SetupAgent::Project.root, @args.first || abort("usage: maf retire ROLE[_WORKER]")).run
     def run_uninstall = Uninstall::Runner.new(["--project", Dir.pwd, *@args]).run
     def run_menu = Menu.new.run

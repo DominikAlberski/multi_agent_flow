@@ -105,6 +105,7 @@ end
   class WorkerReader
     PS_ENV = { "TZ" => "UTC", "LC_ALL" => "C" }.freeze
     LOG_LINES = 5
+    HISTORY = 20
 
     # last_events maps each worker to the time of its last event.
     def initialize(cfg, last_events = {})
@@ -115,7 +116,8 @@ end
     def read(id, entry)
       entry.merge("id" => id, "live" => live?(file("presence", id)), "status" => file("status", id),
                   "usage" => file("usage", id), "log" => tail("#{id}.log"), "action" => tail("#{id}.control.log"),
-                  "handoff_at" => mtime(File.join(sessions, "#{id}.handoff.md")), "last_event" => @last_events[id])
+                  "handoff_at" => mtime(File.join(sessions, "#{id}.handoff.md")), "last_event" => @last_events[id],
+                  "runs" => history(id))
     end
 
     private
@@ -151,6 +153,13 @@ end
     end
 
     def mtime(path) = File.exist?(path) ? File.mtime(path).utc.iso8601 : nil
+
+    # The dispatcher appends one line per run. A broken line counts as no run.
+    def history(id)
+      path = File.join(@cfg.coord_dir, "usage", "#{id}.runs.jsonl")
+      lines = File.exist?(path) ? File.readlines(path).last(HISTORY) : []
+      lines.filter_map { |line| JSON.parse(line) rescue nil }
+    end
   end
 
   # ActionRunner runs `maf worker ACTION ID` in the background. A stop can
@@ -163,12 +172,16 @@ end
       @cfg = cfg
     end
 
-    # Returns an error text, or nil when the command started.
-    def run(id, action)
+    LIMITS = %w[max_context max_session_runs cache_window].freeze
+
+    # Returns an error text, or nil when the command started. limits are the
+    # session limits that a restart saves (see TokenHints).
+    def run(id, action, limits = {})
       return "unknown action #{action}" unless ACTIONS.include?(action)
       return "unknown worker #{id}" unless registered?(id)
+      return "unknown limit" unless limits.all? { |key, value| LIMITS.include?(key) && value.is_a?(Integer) }
 
-      spawn_maf(id, action)
+      spawn_maf(id, action, limits.flat_map { |key, value| ["--#{key.tr("_", "-")}", value.to_s] })
     end
 
     private
@@ -186,13 +199,91 @@ end
       false
     end
 
-    def spawn_maf(id, action)
-      log = start_log(id, action)
-      pid = spawn(@cfg.maf, "worker", action, id, chdir: @cfg.root, in: File::NULL, out: [log, "a"], err: %i[child out])
+    def spawn_maf(id, action, flags)
+      log = start_log(id, ([action] + flags).join(" "))
+      pid = spawn(@cfg.maf, "worker", action, id, *flags, chdir: @cfg.root, in: File::NULL, out: [log, "a"],
+                  err: %i[child out])
       Process.detach(pid) && nil
     rescue SystemCallError => e
       "maf did not start: #{e.message}. Put maf on PATH or pass --maf PATH."
     end
+  end
+
+  # TokenHints reads the run history of a dispatched worker and suggests
+  # better session limits. The page shows each hint with a button that
+  # restarts the worker with the suggested limit. Only the runs with the
+  # limits of the last run count, so a restart with new limits clears the
+  # hints of the old limits. NOTE: assets/dispatcher writes the history
+  # (RunHistory) and carries the same peak hours (PeakRate).
+  class TokenHints
+    RATIO = 3
+    MIN_RUNS = 2
+    COLD_WRITE = 0.25
+    MIN_CONTEXT = 40_000
+    PEAK_HOURS = [1...4, 6...10].freeze
+
+    def initialize(worker, now = Time.now.utc)
+      @id, @now = worker["id"], now
+      runs = worker["runs"] || []
+      @runs = runs.select { |run| run["limits"] == runs.last["limits"] }
+    end
+
+    def list = @runs.empty? ? [] : [growth, cold, peak].compact
+
+    private
+
+    def fresh = @runs.select { |run| run["session_run"] == 1 }
+    def resumed = @runs.reject { |run| run["session_run"] == 1 }
+    def limits = @runs.last["limits"] || {}
+    def median(runs, key) = runs.map { |run| run[key].to_i }.sort[runs.size / 2]
+    def hint(level, text, limits = nil) = { worker: @id, level: level, text: text, limits: limits }.compact
+
+    # Each resume sends the old context again, so a long session costs more per run.
+    def growth
+      return unless fresh.any? && resumed.size >= MIN_RUNS && ratio >= RATIO
+
+      @runs.any? { |run| run["context"] } ? context_cap : fresh_runs
+    end
+
+    def ratio = median(resumed, "input_tokens").fdiv([median(fresh, "input_tokens"), 1].max)
+
+    def growth_text
+      "#{@id}: a resumed run uses #{ratio.round(1)}x the input of a fresh run " \
+        "(#{tokens(median(resumed, "input_tokens"))} vs #{tokens(median(fresh, "input_tokens"))})."
+    end
+
+    def context_cap
+      cap = [(median(fresh, "context") * 2 / 10_000.0).ceil * 10_000, MIN_CONTEXT].max
+      return if limits["max_context"].to_i.positive? && limits["max_context"] <= cap
+
+      hint("warn", "#{growth_text} Cap the session context at #{cap / 1000}k tokens.", "max_context" => cap)
+    end
+
+    def fresh_runs
+      return if limits["max_session_runs"] == 1
+
+      hint("warn", "#{growth_text} Start each run fresh with the handoff note.", "max_session_runs" => 1)
+    end
+
+    # A large cache write on a resume means that the cache expired first.
+    def cold
+      runs = resumed.select { |run| run["cache_write_input_tokens"].to_i > COLD_WRITE * run["input_tokens"].to_i }
+      window = limits["cache_window"].to_i / 2
+      return if runs.size < MIN_RUNS || window < 60
+
+      hint("warn", "#{@id}: #{runs.size} resumed runs found a cold cache. Lower the cache window to #{window} s.",
+           "cache_window" => window)
+    end
+
+    def peak
+      hours = PEAK_HOURS.find { |range| range.cover?(@now.hour) }
+      return unless @runs.last["peak"] && @now.wday.between?(1, 5) && hours
+
+      hint("info", "#{@id}: DeepSeek runs cost 2x the off-peak rate until #{hours.end}:00 UTC. " \
+                   "Stop the worker to wait for the off-peak rate.")
+    end
+
+    def tokens(count) = count >= 1_000_000 ? "#{(count / 1e6).round(1)}M" : "#{(count / 1e3).round}k"
   end
 
   # Collector builds the data of one page refresh.
@@ -211,7 +302,9 @@ end
 
     def board
       tasks = TaskReader.new(@cfg.taskrc).read
-      { workers: workers, graph: GraphReader.new(@cfg).read, tasks: TaskSummary.new(@cfg, declared_roles).of(tasks),
+      list = workers
+      { workers: list, hints: list.flat_map { |worker| TokenHints.new(worker).list },
+        graph: GraphReader.new(@cfg).read, tasks: TaskSummary.new(@cfg, declared_roles).of(tasks),
         events: @files.recent_events, inboxes: @files.inbox_messages, locks: @files.active_locks }
     end
 
@@ -345,6 +438,7 @@ end
         .alert{padding:7px 12px;border-radius:5px;border-left:3px solid var(--danger);
           background:#1f1a1a;font-size:12px}
         .alert.warn{border-color:var(--warn);background:#1f1c16}
+        .alert.hint{border-color:var(--info);background:#161b22;display:flex;gap:10px;align-items:center}
         .stats{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
         .stat{background:var(--surface);border:1px solid var(--border);border-radius:7px;
           padding:10px 14px;min-width:90px}
@@ -388,6 +482,7 @@ end
         <button id="pbtn" onclick="togglePause()">Pause</button>
       </header>
       <div id="alerts" class="alerts"></div>
+      <div id="hints" class="alerts"></div>
       <div id="stats" class="stats"></div>
       <div class="card" style="margin-bottom:10px"><h3>Workers</h3><div id="workers"></div></div>
       <div class="card" style="margin-bottom:10px"><h3>Knowledge graph</h3><div id="graph"></div></div>
@@ -431,10 +526,11 @@ end
           if (!paused) refresh();
         }
 
-        async function act(id, action) {
-          if (action !== 'start' && !confirm(action + ' ' + id + '? A running agent finishes its run first.')) return;
+        async function act(id, action, limits) {
+          const what = action + ' ' + id + (limits ? ' with ' + limitText(limits) : '');
+          if (action !== 'start' && !confirm(what + '? A running agent finishes its run first.')) return;
           const headers = { 'Content-Type': 'application/json', 'X-Maf-Token': TOKEN };
-          const body = JSON.stringify({ worker: id, action: action });
+          const body = JSON.stringify({ worker: id, action: action, limits: limits || {} });
           const r = await fetch('/action', { method: 'POST', headers: headers, body: body })
             .then(r => r.json()).catch(e => ({ error: e.message }));
           if (r.error) alert(r.error);
@@ -533,6 +629,18 @@ end
             .map(w => ({ l: 'warn', m: `Last run of ${w.id} failed: ${(run(w).detail || '').slice(0, 100)}` }));
           return stopped.concat(failed);
         }
+        function limitText(limits) {
+          return Object.entries(limits).map(([key, value]) => key + '=' + value).join(' ');
+        }
+        // A hint suggests a better session limit. Its button restarts the worker with that limit.
+        function renderHints(hints) {
+          const button = h => h.limits
+            ? `<button class="act" onclick='act(${JSON.stringify(h.worker)}, "restart", ${JSON.stringify(h.limits)})'>`
+              + 'restart with ' + esc(limitText(h.limits)) + '</button>'
+            : `<button class="act" onclick='act(${JSON.stringify(h.worker)}, "stop")'>stop</button>`;
+          $('hints').innerHTML = (hints || [])
+            .map(h => `<div class="alert hint">&#x1F4A1; <span>${esc(h.text)}</span>${button(h)}</div>`).join('');
+        }
         function renderAlerts(alerts) {
           const html = a => `<div class="alert ${a.l === 'warn' ? 'warn' : ''}">&#x26A0; ${esc(a.m)}</div>`;
           $('alerts').innerHTML = alerts.map(html).join('');
@@ -622,6 +730,7 @@ end
           $('upd').textContent = 'Updated ' + ago(d.generated_at) + ' | lease ' + Math.round(d.lease_ttl / 3600) + 'h';
           const tasks = d.tasks.all || [], now = new Date(), ws = d.workers || [];
           renderAlerts(taskAlerts(d).concat(otherAlerts(d), workerAlerts(ws)));
+          renderHints(d.hints);
           renderStats(d, tasks, now);
           renderWorkers(ws, tasks);
           renderGraph(d.graph);
@@ -706,10 +815,15 @@ end
     end
 
     def action(req, res)
-      error = refusal(req) || @actions.run(*JSON.parse(req.body.to_s).values_at("worker", "action").map(&:to_s))
+      error = refusal(req) || run_action(JSON.parse(req.body.to_s))
       answer(res, error ? 400 : 202, error ? { error: error } : { ok: true })
     rescue JSON::ParserError
       answer(res, 400, error: "the body is not JSON")
+    end
+
+    def run_action(body)
+      limits = body["limits"].is_a?(Hash) ? body["limits"] : {}
+      @actions.run(body["worker"].to_s, body["action"].to_s, limits)
     end
 
     def answer(res, status, data)

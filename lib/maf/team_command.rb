@@ -43,11 +43,13 @@ module Maf
       RunningProcesses.alive?(pid) ? "running (pid #{pid})" : "stopped"
     end
 
-    # The team key is the user's budget. Keep every other manifest key.
+    # The budget keys replace the old budget. Keep every other manifest key,
+    # and the timeouts and limits in the team key.
     def set(args)
       team = parse(args)
       path = File.join(@root, ".maf/config.json")
-      File.write(path, JSON.pretty_generate(manifest(path).merge("team" => team)))
+      data = manifest(path)
+      File.write(path, JSON.pretty_generate(data.merge("team" => data.fetch("team", {}).merge(team))))
       puts Budget.new(team).summary
     end
 

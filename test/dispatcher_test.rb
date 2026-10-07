@@ -484,6 +484,22 @@ class RunnerTest < Minitest::Test
     assert_includes err, "has 150000 context tokens, the --max-context limit"
   end
 
+  def history = File.readlines(File.join(@dir, "usage", "backend-developer-bot.runs.jsonl")).map { JSON.parse(_1) }
+
+  # The dashboard turns the run history into hints.
+  def test_each_run_adds_a_history_line
+    session.save("s-1")
+    capture_io { runner(%(echo session=s-1 tokens=900 context=4200)).dispatch("go") }
+    line = history.last
+    assert_equal [2, 4200, 900], line.values_at("session_run", "context", "input_tokens")
+    assert_equal({ "max_context" => 150_000, "max_session_runs" => 5, "cache_window" => 3300 }, line["limits"])
+  end
+
+  def test_a_fresh_session_is_session_run_one
+    capture_io { runner(%(echo session=s-1 tokens=900)).dispatch("go") }
+    assert_equal 1, history.last["session_run"]
+  end
+
   def test_the_context_of_the_last_call_is_saved
     capture_io { runner("echo session=s-1 context=4200").dispatch("go") }
     assert_equal 4200, session.context_tokens
@@ -1274,6 +1290,23 @@ class TimeoutTest < Minitest::Test
 
   def test_the_flag_wins_over_the_team_section
     assert_equal 60, timeout("reviewer", "--timeout", "60", team: { timeouts: { reviewer: 2400 } })
+  end
+
+  def options(*argv, team: nil)
+    File.write(File.join(@dir, ".maf/config.json"), JSON.generate(team ? { team: team } : {}))
+    Dir.chdir(@dir) { Dispatcher::Options.parse(argv + ["--no-skill"], { "COORD_DIR" => @dir }) }
+  end
+
+  def test_the_team_section_sets_the_session_limits_of_a_role
+    limits = { limits: { reviewer: { max_context: 80_000, max_session_runs: 1, cache_window: 120 } } }
+    config = options("reviewer", "--harness", "codex", team: limits)
+    assert_equal [80_000, 1, 120], [config.max_context, config.max_session_runs, config.cache_window]
+    assert_equal [150_000, 5], options("tester", team: limits).then { [_1.max_context, _1.max_session_runs] }
+  end
+
+  def test_a_session_limit_flag_wins_over_the_team_section
+    team = { limits: { reviewer: { max_context: 80_000 } } }
+    assert_equal 60_000, options("reviewer", "--max-context", "60000", team: team).max_context
   end
 
   # A timed-out run tells the architect, because the task waits without a sign.

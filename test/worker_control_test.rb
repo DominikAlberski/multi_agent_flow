@@ -145,4 +145,36 @@ class WorkerControlTest < Minitest::Test
 
     refute Dir.exist?(File.join(@coord, "locks", "control-architect-1.d"))
   end
+  def test_start_saves_the_session_limits_of_the_role
+    register(dispatch: false)
+    spawn_worker
+    capture_io { Maf::WorkerControl.new(@root, "architect_1", limits: { "max_context" => 80_000 }).run("start") }
+
+    saved = JSON.parse(File.read(File.join(@root, ".maf", "config.json")))
+    assert_equal({ "architect" => { "max_context" => 80_000 } }, saved.dig("team", "limits"))
+  end
+end
+
+class RoleLimitsTest < Minitest::Test
+  def test_parse_reads_the_limit_flags
+    args = %w[restart reviewer_bot --max-session-runs 1 --cache-window 120]
+    assert_equal({ "max_session_runs" => 1, "cache_window" => 120 }, Maf::RoleLimits.parse(args))
+  end
+
+  def test_a_limit_needs_a_number
+    assert_raises(SystemExit) { capture_io { Maf::RoleLimits.parse(%w[--max-context lots]) } }
+  end
+
+  def test_save_keeps_the_other_keys
+    Dir.mktmpdir do |root|
+      FileUtils.mkdir_p(File.join(root, ".maf"))
+      path = File.join(root, ".maf", "config.json")
+      team = { "limits" => { "reviewer" => { "cache_window" => 9 } } }
+      File.write(path, JSON.generate("agents" => [1], "team" => team))
+      capture_io { Maf::RoleLimits.new(root).save("reviewer", "max_context" => 5) }
+      saved = JSON.parse(File.read(path))
+      assert_equal [1], saved["agents"]
+      assert_equal({ "cache_window" => 9, "max_context" => 5 }, saved.dig("team", "limits", "reviewer"))
+    end
+  end
 end

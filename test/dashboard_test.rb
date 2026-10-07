@@ -172,6 +172,24 @@ class DashboardWorkerTest < Minitest::Test
     assert_includes File.read(log), "args: worker restart architect-1"
   end
 
+  def test_a_restart_from_a_hint_passes_the_limit_flags
+    fake = File.join(@dir, "fake-maf")
+    File.write(fake, "#!/bin/sh\necho \"args: $@\"\n")
+    FileUtils.chmod(0o755, fake)
+
+    assert_nil Dashboard::ActionRunner.new(cfg("--maf", fake)).run("architect-1", "restart", "max_context" => 70_000)
+    log = File.join(@coord, "sessions", "architect-1.control.log")
+    30.times { break if File.read(log).include?("args:") || !sleep(0.1) }
+    assert_includes File.read(log), "args: worker restart architect-1 --max-context 70000"
+  end
+
+  def test_an_action_refuses_an_unknown_or_a_non_number_limit
+    runner = Dashboard::ActionRunner.new(cfg)
+
+    assert_equal "unknown limit", runner.run("architect-1", "restart", "rm_rf" => 1)
+    assert_equal "unknown limit", runner.run("architect-1", "restart", "max_context" => "1; rm")
+  end
+
   def test_an_action_refuses_an_unknown_worker_or_action
     runner = Dashboard::ActionRunner.new(cfg)
 
@@ -203,5 +221,56 @@ class DashboardWorkerTest < Minitest::Test
 
     assert_equal 403, foreign.status
     assert_equal :served, server.send(:local, Request.new("GET", {}, "localhost"), Response.new) { :served }
+  end
+end
+
+# TokenHints turns the run history of a worker into hints. The numbers come
+# from the TastingCompanion workers on 2026-10-07.
+class TokenHintsTest < Minitest::Test
+  LIMITS = { "max_context" => 150_000, "max_session_runs" => 5, "cache_window" => 3300 }.freeze
+  WEDNESDAY_NOON = Time.utc(2026, 10, 7, 12)
+
+  def run_line(session_run, input, context: nil, write: 0, limits: LIMITS, peak: nil)
+    { "session_run" => session_run, "input_tokens" => input, "context" => context,
+      "cache_write_input_tokens" => write, "limits" => limits, "peak" => peak }.compact
+  end
+
+  def hints(runs, now = WEDNESDAY_NOON) = Dashboard::TokenHints.new({ "id" => "w-bot", "runs" => runs }, now).list
+
+  def frontend = [run_line(1, 486_907, context: 33_000), run_line(2, 2_408_342, context: 90_000),
+                  run_line(3, 2_779_893, context: 120_000), run_line(4, 5_086_958, context: 164_833)]
+
+  def test_a_growing_session_with_context_data_gets_a_context_cap
+    hint = hints(frontend).first
+    assert_equal({ "max_context" => 70_000 }, hint[:limits])
+    assert_includes hint[:text], "a resumed run uses 5.7x the input of a fresh run (2.8M vs 487k)"
+  end
+
+  def test_a_growing_session_without_context_data_gets_fresh_runs
+    runs = [run_line(1, 296_608), run_line(2, 753_704), run_line(3, 1_375_290), run_line(4, 1_821_822)]
+    assert_equal({ "max_session_runs" => 1 }, hints(runs).first[:limits])
+  end
+
+  # A restart with the new limit starts a new history: the old runs no longer count.
+  def test_runs_with_older_limits_do_not_count
+    capped = LIMITS.merge("max_context" => 70_000)
+    assert_empty hints(frontend + [run_line(1, 400_000, context: 30_000, limits: capped)])
+  end
+
+  def test_cheap_resumes_give_no_hint
+    assert_empty hints([run_line(1, 300_000), run_line(2, 350_000), run_line(3, 400_000)])
+  end
+
+  def test_large_cache_writes_on_resumes_suggest_a_shorter_cache_window
+    runs = [run_line(1, 100_000), run_line(2, 120_000, write: 60_000), run_line(3, 110_000, write: 50_000)]
+    assert_equal({ "cache_window" => 1650 }, hints(runs).first[:limits])
+  end
+
+  def test_a_peak_rate_run_in_peak_hours_suggests_a_stop
+    runs = [run_line(1, 100_000, peak: true)]
+    hint = hints(runs, Time.utc(2026, 10, 7, 7, 30)).first
+    assert_includes hint[:text], "until 10:00 UTC"
+    assert_nil hint[:limits]
+    assert_empty hints(runs, Time.utc(2026, 10, 7, 11))
   end
 end
