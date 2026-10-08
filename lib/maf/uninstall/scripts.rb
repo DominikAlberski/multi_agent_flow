@@ -14,9 +14,19 @@ module Uninstall
     def initialize(project) = @project = project
 
     def steps
-      SIGNATURES.map { |name, signature| [File.join(@project, name), signature] }
-                .select { |path, signature| Owned.signed?(path, signature) }
-                .map { |path, _| Owned.remove(path) }
+      candidates.select { |path, signature| Owned.signed?(path, signature) }.map { |path, _| Owned.remove(path) }
+    end
+
+    private
+
+    def candidates
+      SIGNATURES.map { |name, signature| [File.join(@project, name), signature] } + shared
+    end
+
+    # The files of the shared library. A file without the signature stays.
+    def shared
+      dir = File.join(@project, Bootstrap::MAF_DIR, Bootstrap::SHARED_DIR)
+      Dir.glob(File.join(dir, "*.rb")).map { |path| [path, Bootstrap::SHARED_SIGNATURE] }
     end
   end
 end

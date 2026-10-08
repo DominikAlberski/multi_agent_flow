@@ -17,6 +17,13 @@ module Bootstrap
       @project = project
     end
 
+    # The shared library that the scripts load. Each file is planned as a script.
+    def shared
+      Dir.children(File.join(@project.assets, SHARED_SOURCE)).sort.map do |name|
+        script(File.join(SHARED_SOURCE, name), SHARED_SIGNATURE, @project.path(MAF_DIR, SHARED_DIR, name))
+      end
+    end
+
     def coord
       script("coord", COORD_SIGNATURE)
     end

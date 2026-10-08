@@ -27,7 +27,8 @@ module Uninstall
   # Removed after all steps if empty. Children come before parents.
   EMPTY_DIRS = [%w[.claude agents], %w[.claude], %w[.opencode agents], %w[.opencode plugins], %w[.opencode],
                 %w[.codex prompts], %w[.codex], %w[.maf bin], %w[.maf agents claude], %w[.maf agents opencode],
-                %w[.maf agents codex], %w[.maf agents], %w[.maf worktrees], %w[.maf]].freeze
+                %w[.maf agents codex], %w[.maf agents], %w[.maf worktrees],
+                %w[.maf lib maf shared], %w[.maf lib maf], %w[.maf lib], %w[.maf]].freeze
 
   GLOBAL_HOOKS = [File.join(Dir.home, ".hermes", "agent-hooks", "next-task.sh")].freeze
 

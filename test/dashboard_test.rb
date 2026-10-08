@@ -156,7 +156,7 @@ class DashboardWorkerTest < Minitest::Test
   end
 
   def test_the_live_process_with_its_start_time_is_live
-    started = Dashboard::WorkerReader.new(cfg).send(:started_at, Process.pid)
+    started = Maf::Shared::Processes.started_at(Process.pid)
     write("presence/architect-1.json", "pid" => Process.pid, "started" => started)
 
     assert worker["live"]

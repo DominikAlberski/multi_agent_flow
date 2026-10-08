@@ -7,6 +7,7 @@ require "rbconfig"
 require_relative "workers"
 require_relative "retire"
 require_relative "role_limits"
+require_relative "shared/processes"
 
 module Maf
   # WorkerControl stops, starts, or restarts one worker. Each action is
@@ -18,11 +19,6 @@ module Maf
     ACTIONS = %w[status stop start restart].freeze
     MAF = File.expand_path("../../bin/maf", __dir__)
     IDLE = 60
-    PS_ENV = { "TZ" => "UTC", "LC_ALL" => "C" }.freeze
-
-    # The start time of a process, as ps prints it. coord and the dispatcher
-    # record the same text in the presence file.
-    def self.started_at(pid) = IO.popen(PS_ENV, ["ps", "-o", "lstart=", "-p", pid.to_s], &:read).strip
 
     # force stops an interactive session also when maf cannot tell if it is idle.
     # limits are session limits of the role. start and restart save them first.
@@ -88,12 +84,12 @@ module Maf
     def coord_dir = File.join(@root, ".maf", "coordination")
     def presence = read(File.join(coord_dir, "presence", "#{@worker}.json"))
     def pid = presence["pid"].to_i
-    def live? = pid.positive? && RunningProcesses.alive?(pid) && started_matches?
+    def live? = Shared::Processes.alive?(pid) && started_matches?
 
     # A pid can belong to a new process. The start time tells them apart.
     def started_matches?
       recorded = presence["started"].to_s
-      recorded.empty? || recorded == self.class.started_at(pid)
+      recorded.empty? || recorded == Shared::Processes.started_at(pid)
     end
 
     # The context-watch hook records the transcript of Claude Code and Codex

@@ -1152,6 +1152,8 @@ class PollerTest < Minitest::Test
     FileUtils.mkdir_p(File.join(@dir, ".maf", "bin"))
     FileUtils.cp(File.expand_path("../assets/coord", __dir__), File.join(@dir, ".maf", "bin", "coord"))
     FileUtils.chmod("+x", File.join(@dir, ".maf", "bin", "coord"))
+    FileUtils.mkdir_p(File.join(@dir, ".maf", "lib", "maf"))
+    FileUtils.cp_r(File.expand_path("../lib/maf/shared", __dir__), File.join(@dir, ".maf", "lib", "maf"))
     @original_dir = Dir.pwd
     Dir.chdir(@dir)
     Coord::CLI.new(["init"], env: @env).run

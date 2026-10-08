@@ -223,7 +223,7 @@ class TaskwarriorTest < Minitest::Test
     presence = File.join(@env["COORD_DIR"], "presence")
     FileUtils.mkdir_p(presence)
     record = { worker: "backend-1", mode: "dispatch", pid: Process.pid,
-               started: Coord::Presence.started_at(Process.pid) }
+               started: Maf::Shared::Processes.started_at(Process.pid) }
     File.write(File.join(presence, "backend-1.json"), JSON.generate(record))
 
     capture_io { run_cli("reap", "--minutes", "0") }
@@ -1260,6 +1260,16 @@ class WorktreeFirstRunTest < Minitest::Test
     Coord::Worktree.new(@root).create("tester", nil)
 
     %w[coord dispatcher vault].each { |name| assert File.exist?(File.join(@worktree_dir, ".maf", "bin", name)), name }
+  end
+
+  # The scripts of the bin folder load the shared library from .maf/lib.
+  def test_worktree_copies_the_shared_library
+    lib = ".maf/lib/maf/shared/processes.rb"
+    FileUtils.mkdir_p(File.dirname(File.join(@root, lib)))
+    File.write(File.join(@root, lib), "# shared\n")
+    Coord::Worktree.new(@root).create("tester", nil)
+
+    assert File.exist?(File.join(@worktree_dir, lib))
   end
 
   HOOK_FILES = %w[.maf/coordination/harness-hooks/context-watch.rb .maf/coordination/harness-hooks/board-watch.rb

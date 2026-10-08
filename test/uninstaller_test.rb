@@ -66,6 +66,17 @@ class UninstallRemovesTest < UninstallerTestCase
     refute Dir.exist?(File.join(@hermes, "#{File.basename(@dir)}-reviewer"))
   end
 
+  def test_removes_the_shared_library_and_keeps_a_foreign_file
+    install
+    write(".maf/lib/maf/shared/mine.rb", "mine\n")
+
+    out, status = uninstall("--yes")
+
+    assert_equal 0, status, out
+    refute File.exist?(path(".maf", "lib", "maf", "shared", "processes.rb"))
+    assert_equal "mine\n", File.read(path(".maf", "lib", "maf", "shared", "mine.rb"))
+  end
+
   def test_removes_the_role_file_links_and_keeps_own_agents
     write(".claude/agents/mine.md", "mine\n")
     install

@@ -17,6 +17,11 @@ require "shellwords"
 require "rbconfig"
 require "optparse"
 require "open3"
+begin
+  require_relative "../lib/maf/shared/processes"
+rescue LoadError
+  abort "coord: the maf shared library is missing. Run maf update."
+end
 
 module Coord
   class Error < StandardError; end
@@ -813,7 +818,7 @@ module Coord
       return unless pid.positive? && recordable?(role, worker, env)
 
       write(worker, "role" => role, "worker" => worker, "mode" => "session", "pid" => pid,
-                     "started" => self.class.started_at(pid))
+                     "started" => Maf::Shared::Processes.started_at(pid))
     end
 
     def live?(role) = entries.any? { |entry| entry["role"] == role && self.class.live_entry?(entry) }
@@ -825,33 +830,18 @@ module Coord
     end
 
     LEGACY_LIVE_WINDOW = 3600
-    PS_ENV = { "TZ" => "UTC", "LC_ALL" => "C" }.freeze
-
-    def self.started_at(pid)
-      IO.popen(PS_ENV, ["ps", "-o", "lstart=", "-p", pid.to_s], err: File::NULL, &:read).to_s.strip
-    rescue SystemCallError
-      ""
-    end
 
     def self.live_entry?(entry)
-      return false unless alive?(entry["pid"])
+      return false unless Maf::Shared::Processes.alive?(entry["pid"])
 
       recorded = entry["started"].to_s
-      recorded.empty? ? legacy_live?(entry) : recorded == started_at(entry["pid"])
+      recorded.empty? ? legacy_live?(entry) : recorded == Maf::Shared::Processes.started_at(entry["pid"])
     end
 
     def self.legacy_live?(entry)
       Time.now - Time.parse(entry["seen_at"].to_s) < LEGACY_LIVE_WINDOW
     rescue ArgumentError
       false
-    end
-
-    def self.alive?(pid)
-      pid.to_i.positive? && Process.kill(0, pid.to_i) && true
-    rescue Errno::ESRCH
-      false
-    rescue Errno::EPERM
-      true
     end
 
     private
@@ -1498,7 +1488,7 @@ end
 
     def refuse_other!
       pid = File.exist?(@path) ? File.read(@path).to_i : 0
-      return unless pid.positive? && pid != Process.pid && Presence.alive?(pid)
+      return unless pid.positive? && pid != Process.pid && Maf::Shared::Processes.alive?(pid)
 
       raise Error, "another coord inbox --wait for #{@role} runs (pid #{pid}). Read the messages in that session."
     end
@@ -1920,11 +1910,9 @@ end
     end
 
     # Every script of .maf/bin, not only coord: dispatch mode needs the dispatcher.
+    # The scripts load the shared library from .maf/lib.
     def bin_files
-      bin = File.join(@root, MAF_DIR, "bin")
-      return [] unless Dir.exist?(bin)
-
-      Dir.children(bin).select { |name| File.file?(File.join(bin, name)) }.map { |name| "#{MAF_DIR}/bin/#{name}" }
+      Dir.glob("#{MAF_DIR}/{bin/*,lib/**/*.rb}", base: @root).select { |path| File.file?(File.join(@root, path)) }
     end
 
     # copy_to_worktree in .maf/config.json lists more host files for each

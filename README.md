@@ -54,6 +54,7 @@ The flow keeps every file that it owns in one folder, `.maf/`, in the project.
 ```
 .maf/
   bin/            coord, dispatcher, vault, dashboard, doc-graph-refresh
+  lib/maf/shared/ code that the scripts in bin/ load (maf update replaces it)
   coordination/   task board, inbox, locks, presence, sessions, hooks, logs
   worktrees/      one git worktree per worker
   graphify-out/   knowledge graph
@@ -152,6 +153,7 @@ multi_agent_flow/
     flow/mcp_config.rb        # writes the graphify MCP server into .maf/mcp/
     untrack.rb                # maf untrack: removes an older install from git
     local_exclude.rb          # the flow block in .git/info/exclude
+    shared/                   # stdlib-only code that the maf CLI and the scripts share (installed as .maf/lib/maf/shared/)
   scripts/
     check.rb                  # repo consistency check (UDA sync, markers, shared literals, worktree formula)
   templates/

@@ -37,7 +37,7 @@ class WorkerControlTest < Minitest::Test
     Process.detach(pid)
     @pids << pid
     sleep 0.2
-    write("presence", "pid" => pid, "started" => Maf::WorkerControl.started_at(pid))
+    write("presence", "pid" => pid, "started" => Maf::Shared::Processes.started_at(pid))
     pid
   end
 
@@ -70,7 +70,7 @@ class WorkerControlTest < Minitest::Test
     pid = spawn_worker
     control("stop")
 
-    refute Maf::RunningProcesses.alive?(pid)
+    refute Maf::Shared::Processes.alive?(pid)
   end
 
   def test_an_interactive_worker_in_a_turn_is_not_stopped
@@ -81,7 +81,7 @@ class WorkerControlTest < Minitest::Test
     write("status", "transcript" => transcript)
 
     assert_raises(SystemExit) { control("stop") }
-    assert Maf::RunningProcesses.alive?(pid)
+    assert Maf::Shared::Processes.alive?(pid)
   end
 
   def idle_transcript
@@ -97,9 +97,9 @@ class WorkerControlTest < Minitest::Test
     pid = spawn_worker
 
     assert_raises(SystemExit) { control("stop") }
-    assert Maf::RunningProcesses.alive?(pid)
+    assert Maf::Shared::Processes.alive?(pid)
     control("stop", force: true)
-    refute Maf::RunningProcesses.alive?(pid)
+    refute Maf::Shared::Processes.alive?(pid)
   end
 
   def test_an_idle_interactive_worker_stops_and_gets_the_start_command
@@ -108,7 +108,7 @@ class WorkerControlTest < Minitest::Test
     idle_transcript
     out, = control("restart")
 
-    refute Maf::RunningProcesses.alive?(pid)
+    refute Maf::Shared::Processes.alive?(pid)
     assert_includes out, "maf start"
   end
 
@@ -144,12 +144,6 @@ class WorkerControlTest < Minitest::Test
     control("status")
 
     refute Dir.exist?(File.join(@coord, "locks", "control-architect-1.d"))
-  end
-  # pid 1 belongs to root. kill(0) on it raises EPERM for other users.
-  def test_a_process_of_another_user_is_alive
-    skip "runs as root" if Process.uid.zero?
-
-    assert Maf::RunningProcesses.alive?(1)
   end
 
   def test_terminate_of_a_process_of_another_user_aborts

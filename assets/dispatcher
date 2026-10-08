@@ -125,6 +125,11 @@ require "fileutils"
 require "optparse"
 require "rbconfig"
 require "shellwords"
+begin
+  require_relative "../lib/maf/shared/processes"
+rescue LoadError
+  abort "dispatcher: the maf shared library is missing. Run maf update."
+end
 
 module Dispatcher
   MANIFEST = ".maf/config.json"
@@ -207,17 +212,10 @@ module Dispatcher
       File.write(File.join(dir, "#{config.worker}.json"), JSON.generate(record(config)))
     end
 
-    PS_ENV = { "TZ" => "UTC", "LC_ALL" => "C" }.freeze
-
-    def self.started_at(pid)
-      IO.popen(PS_ENV, ["ps", "-o", "lstart=", "-p", pid.to_s], err: File::NULL, &:read).to_s.strip
-    rescue SystemCallError
-      ""
-    end
-
     def self.record(config)
       { "role" => config.role, "worker" => config.worker, "mode" => "dispatch", "pid" => Process.pid,
-        "started" => started_at(Process.pid), "seen_at" => Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ") }
+        "started" => Maf::Shared::Processes.started_at(Process.pid),
+        "seen_at" => Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ") }
     end
   end
 
