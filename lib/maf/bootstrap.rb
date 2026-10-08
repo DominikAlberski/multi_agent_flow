@@ -29,6 +29,7 @@ module Bootstrap
   DISPATCHER_SIGNATURE = "dispatcher - task board and inbox monitor that starts one-shot agents."
   VAULT_SIGNATURE = "vault - shared knowledge base watcher (graphify + Obsidian + MCP)."
   DASHBOARD_SIGNATURE = "dashboard - local observability web UI for multi-agent coordination."
+  DASHBOARD_PAGE_SIGNATURE = "dashboard.html - page of the maf dashboard."
   ANALYST_SIGNATURE = "analyst - ask a small model for token hints about one dispatched worker."
   # The scripts in .maf/bin load the shared library from .maf/lib/maf/shared/.
   # Its source is lib/maf/shared/. The installer gives paths relative to assets/.

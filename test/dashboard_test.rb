@@ -310,7 +310,7 @@ class DashboardEscapeTest < Minitest::Test
 
   def run_js(body)
     skip "node not installed" unless system("node", "--version", out: File::NULL, err: File::NULL)
-    out, status = Open3.capture2("node", "-e", Dashboard::PAGE_HTML.scan(HELPERS).join("\n") + "\n" + body)
+    out, status = Open3.capture2("node", "-e", Dashboard::Page.html.scan(HELPERS).join("\n") + "\n" + body)
     assert status.success?
     out
   end

@@ -318,7 +318,6 @@ Metrics/MethodLength:
 # Configuration parameters: CountComments, Max, CountAsOne.
 Metrics/ModuleLength:
   Exclude:
-    - 'assets/dashboard'
     - 'lib/maf/flow/prompt_text.rb'
 
 # Offense count: 2
