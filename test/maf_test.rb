@@ -1,11 +1,11 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# test/maf_test.rb - tests for the maf command line tool (bin/maf).
+# test/maf_test.rb - tests for the maf command line tool (exe/maf).
 #
 # Run: ruby test/maf_test.rb
 #
-# The tests run bin/maf as a subprocess in a disposable project directory.
+# The tests run exe/maf as a subprocess in a disposable project directory.
 # maf uses the current directory as the project.
 require "minitest/autorun"
 require_relative "board_guard"
@@ -16,7 +16,7 @@ require "rbconfig"
 require_relative "../lib/maf/team"
 require "yaml"
 
-MAF = File.expand_path("../bin/maf", __dir__)
+MAF = File.expand_path("../exe/maf", __dir__)
 
 class MafTest < Minitest::Test
   def setup

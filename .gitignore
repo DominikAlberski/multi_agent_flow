@@ -1,0 +1,4 @@
+# Each Ruby version in CI resolves its own gem versions, so the lock file stays out of git.
+/Gemfile.lock
+/pkg/
+*.gem

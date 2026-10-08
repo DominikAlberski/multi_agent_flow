@@ -17,7 +17,7 @@ module Maf
   # only when the session is idle. maf then prints the start command.
   class WorkerControl
     ACTIONS = %w[status stop start restart].freeze
-    MAF = File.expand_path("../../bin/maf", __dir__)
+    MAF = File.expand_path("../../exe/maf", __dir__)
     IDLE = 60
 
     # force stops an interactive session also when maf cannot tell if it is idle.

@@ -1,12 +1,6 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# maf - multi-agent-flow command line tool.
-#
-# Run maf in the project root. maf uses the current directory as the project.
-# Link this file into a directory on PATH. maf resolves the link to find lib/.
-cli = File.expand_path("../lib/maf/cli.rb", File.dirname(File.realpath(__FILE__)))
-abort "maf: cannot find #{cli}. Link bin/maf into PATH with ln -s. Do not copy it." unless File.exist?(cli)
-require cli
-
-Maf::CLI.new(ARGV).run
+# Old location of the maf command. It keeps the links into PATH that point
+# here working. Link exe/maf instead. A later version removes this file.
+load File.expand_path("../exe/maf", __dir__)
