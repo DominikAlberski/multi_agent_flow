@@ -63,9 +63,13 @@ module Bootstrap
     end
   ].freeze
 
+  # The knowledge graph and the Obsidian vault, at the project root where graphify looks by default.
+  GRAPH_DIR = "graphify-out"
+
   # The paths that every install excludes from git. AgentLinks and CodexHooks
-  # add the harness paths they create.
-  EXCLUDED = [".maf/", OPENCODE_PLUGIN].freeze
+  # add the harness paths they create. The graph entry has no trailing slash,
+  # so it also hides the graph symlink in each worktree.
+  EXCLUDED = [".maf/", "/#{GRAPH_DIR}", OPENCODE_PLUGIN].freeze
 
   # The Claude Code settings of the flow. `maf start` passes them with --settings,
   # so the project's .claude/settings.json stays as it is.
@@ -147,6 +151,7 @@ require_relative "bootstrap/text_planner"
 require_relative "bootstrap/claude_settings"
 require_relative "bootstrap/hook_merger"
 require_relative "bootstrap/writer"
+require_relative "bootstrap/graph_home"
 require_relative "bootstrap/vault_starter"
 require_relative "bootstrap/installer"
 

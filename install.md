@@ -187,7 +187,7 @@ Confirm that every check from `hermes hooks doctor` passes. Then continue.
 `maf add` appends a flow block to the `post-commit` and `post-merge` git hooks.
 A markdown commit or merge starts `.maf/bin/doc-graph-refresh` detached.
 The script runs `graphify extract . --backend gemini` and re-exports
-`.maf/obsidian/`. It needs `GEMINI_API_KEY`:
+`graphify-out/obsidian/`. It needs `GEMINI_API_KEY`:
 
 ```sh
 export GEMINI_API_KEY=<key>

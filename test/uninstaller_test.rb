@@ -103,15 +103,15 @@ class UninstallRemovesTest < UninstallerTestCase
   def test_keeps_graphify_and_obsidian_and_their_local_excludes
     system("git", "init", "-q", @dir, exception: true)
     install
-    write(".maf/graphify-out/graph.json", "{}")
-    write(".maf/obsidian/note.md", "note")
+    write("graphify-out/graph.json", "{}")
+    write("graphify-out/obsidian/note.md", "note")
 
     uninstall("--yes")
 
-    assert File.exist?(path(".maf", "graphify-out", "graph.json"))
-    assert File.exist?(path(".maf", "obsidian", "note.md"))
-    assert_equal [".maf/graphify-out/", ".maf/obsidian/"], LocalExclude.listed(path(".git", "info", "exclude"))
-    assert_equal %w[graphify-out obsidian], Dir.children(path(".maf")).sort
+    assert File.exist?(path("graphify-out", "graph.json"))
+    assert File.exist?(path("graphify-out", "obsidian", "note.md"))
+    assert_equal ["graphify-out/"], LocalExclude.listed(path(".git", "info", "exclude"))
+    refute File.exist?(path(".maf"))
     refute File.exist?(path(".gitignore"))
   end
 

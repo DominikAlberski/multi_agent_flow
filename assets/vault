@@ -15,12 +15,12 @@
 # current CLI is subcommand-based:
 #   graphify extract . --code-only          initial code graph, no LLM
 #   graphify update .                       incremental code re-extract, no LLM
-#   graphify export obsidian --dir .maf/obsidian  Obsidian notes + graph.canvas
+#   graphify export obsidian --dir graphify-out/obsidian  Obsidian notes + graph.canvas
 #   graphify-mcp                            stdio MCP server, spawned by the client
 # The watcher polls `graphify update` and re-exports at VAULT_POLL seconds, so
-# it does not need graphify's optional `watchdog` dependency. Keep `.maf/obsidian/`
-# and `.maf/graphify-out/` in .gitignore (bootstrap adds them): graphify honors
-# .gitignore, so this stops the watcher from re-ingesting its own output.
+# it does not need graphify's optional `watchdog` dependency. The graph and the
+# vault live in graphify-out/ at the project root. graphify never reads that
+# folder as input, except graphify-out/memory/. Bootstrap excludes it from git.
 #
 # Started automatically by bootstrap.rb when graphify is on PATH. Run by hand
 # after installing graphify if it was not on PATH at bootstrap time.
@@ -32,11 +32,10 @@ require "rbconfig"
 abort "vault: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
 
 module Vault
-  # The Obsidian output dir must not share a name with this launcher script:
-  # `graphify export obsidian --dir vault` fails with FileExistsError because
-  # the `vault` file is already there.
-  DIR = File.join(".maf", "obsidian")
-  GRAPH_DIR = File.join(".maf", "graphify-out")
+  # The default folders of graphify. An agent that runs graphify export
+  # writes the same vault.
+  GRAPH_DIR = "graphify-out"
+  DIR = File.join(GRAPH_DIR, "obsidian")
   GRAPH = File.join(GRAPH_DIR, "graph.json")
   PID_FILE = ".maf/coordination/vault.pid"
   LOG_FILE = ".maf/coordination/vault.log"
@@ -117,12 +116,9 @@ module Vault
       spawn_detached
     end
 
-    # graphify export without --dir writes a second, incomplete vault into
-    # the graph folder. The graphify skill tells agents to run that, so remove the copy.
     def self.export
       return puts("vault: #{GRAPH} missing. Run `vault` to build it first.") unless File.exist?(GRAPH)
 
-      FileUtils.rm_rf(File.join(GRAPH_DIR, "obsidian"))
       system(*EXPORT_CMD) || warn("vault: obsidian export failed; see #{LOG_FILE}")
     end
 

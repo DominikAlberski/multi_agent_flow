@@ -41,7 +41,7 @@ end
 
 # The graph is one minute old. The first commit is two minutes old.
 def build_graph
-    path = File.join(@dir, ".maf", "graphify-out", "graph.json")
+    path = File.join(@dir, "graphify-out", "graph.json")
     FileUtils.mkdir_p(File.dirname(path))
     File.write(path, "{}")
     File.utime(Time.now - 60, Time.now - 60, path)
@@ -112,7 +112,7 @@ end
     git("worktree", "add", "-q", "-b", "w", ".maf/worktrees/w")
     out = IO.popen([RbConfig.ruby, VAULT, "status"], chdir: File.join(@dir, ".maf", "worktrees", "w"), err: [:child, :out], &:read)
 
-    assert_includes out, "graph: .maf/graphify-out/graph.json\n"
+    assert_includes out, "graph: graphify-out/graph.json\n"
     refute_includes out, "graph.json missing"
   end
 
