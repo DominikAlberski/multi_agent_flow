@@ -819,20 +819,55 @@ class MainTest < Minitest::Test
     - "cache prices" — `price.rb`
   MD
 
-  def test_lessons_list_the_dead_ends_and_corrections_newest_first
-    file = File.join(@dir, "LESSONS.md")
-    File.write(file, LESSONS_MD)
-    text = Dispatcher::Prefetch.lessons(file).values.first.call
+  CORRECTION = "correction: \"fix login\" → use the session store\n"
+  DEAD_END = "dead end: \"cache prices\" — `price.rb`\n"
 
-    assert_equal "correction: \"fix login\" → use the session store\ndead end: \"cache prices\" — `price.rb`\n", text
+  # A graphify-out folder with LESSONS_MD, one note for each lesson, and a graph
+  # with an absolute and a relative source path.
+  def lessons_dir
+    out = File.join(@dir, "graphify-out")
+    FileUtils.mkdir_p([File.join(out, "reflections"), File.join(out, "memory")])
+    File.write(File.join(out, "reflections", "LESSONS.md"), LESSONS_MD)
+    write_note(out, "cache prices", "price_rb")
+    write_note(out, "fix login", "login_rb")
+    nodes = [{ id: "price_rb", source_file: "app/price.rb" }, { id: "login_rb", source_file: "#{@dir}/app/login.rb" }]
+    File.write(File.join(out, "graph.json"), JSON.generate(nodes: nodes))
+    out
   end
 
-  def test_no_lessons_section_without_dead_ends_or_corrections
-    file = File.join(@dir, "LESSONS.md")
-    File.write(file, "# Lessons\n\n## Lessons\n\n_No marked outcomes yet._\n")
+  def write_note(out, question, node)
+    File.write(File.join(out, "memory", "#{node}.md"),
+               "---\nquestion: #{question.to_json}\nsource_nodes: [#{node.to_json}]\n---\n\n# Q: #{question}\n")
+  end
 
-    assert_empty Dispatcher::Prefetch.lessons(file)
-    assert_empty Dispatcher::Prefetch.lessons(File.join(@dir, "missing.md"))
+  def test_lessons_list_the_dead_ends_and_corrections_newest_first
+    assert_equal [CORRECTION, DEAD_END], Dispatcher::Lessons.for_task(lessons_dir, nil)
+  end
+
+  def test_lessons_keep_only_the_files_of_the_graph_query
+    query = "NODE .login() [src=app/login.rb loc=L3 community=Login]\n"
+    assert_equal [CORRECTION], Dispatcher::Lessons.for_task(lessons_dir, query)
+  end
+
+  def test_a_lesson_without_a_cited_node_stays
+    out = lessons_dir
+    FileUtils.rm(File.join(out, "memory", "login_rb.md"))
+    query = "NODE Price [src=app/price.rb loc=L1 community=Prices]\n"
+    assert_equal [CORRECTION, DEAD_END], Dispatcher::Lessons.for_task(out, query)
+  end
+
+  def test_no_lessons_section_without_lessons_for_the_task
+    query = "NODE Cart [src=app/cart.rb]\n"
+    run = Dispatcher::Prefetch.lessons(lessons_dir, -> { query }).values.first
+    refute Dispatcher::Prefetch.section("lessons", run)
+  end
+
+  def test_no_lessons_without_dead_ends_or_corrections
+    out = File.join(@dir, "graphify-out")
+    FileUtils.mkdir_p(File.join(out, "reflections"))
+    assert_empty Dispatcher::Lessons.for_task(out, nil)
+    File.write(File.join(out, "reflections", "LESSONS.md"), "# Lessons\n\n## Lessons\n\n_No marked outcomes yet._\n")
+    assert_empty Dispatcher::Lessons.for_task(out, nil)
   end
 
   def with_path(dir)

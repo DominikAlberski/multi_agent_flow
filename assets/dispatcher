@@ -342,6 +342,70 @@ module Dispatcher
     end
   end
 
+  # Lessons reads the dead ends and corrections of graphify-out/reflections/
+  # LESSONS.md for one task, newest first. coord done and coord lesson save the
+  # notes that LESSONS.md sums up. A lesson stays when its note cites a node of
+  # a file that the graph query of the task found, or cites no known node.
+  # Without query output all lessons stay. LESSONS.md shows no nodes for a
+  # correction, so the nodes come from the notes in graphify-out/memory/.
+  module Lessons
+    HEADS = { "**Known dead ends**" => "dead end", "**Corrections**" => "correction" }.freeze
+    QUESTION = /\A[^:]+: "(.*?)"(?: — `| → |$)/
+    SOURCE = /\[src=(.+?)(?: loc=| community=|\])/
+
+    def self.for_task(out_dir, query)
+      file = File.join(out_dir, "reflections", "LESSONS.md")
+      lines = File.exist?(file) ? lines(File.read(file)) : []
+      files = query.to_s.scan(SOURCE).flatten.map { |src| relative(src, out_dir) }
+      (files.empty? ? lines : on_topic(lines, out_dir, files)).reverse
+    end
+
+    # Only the overall section counts. "## By topic" repeats the same lessons.
+    def self.lines(text)
+      kind = nil
+      text.split(/^## By topic/).first.lines.filter_map do |line|
+        kind = HEADS.find { |head, _| line.start_with?(head) }&.last if line.start_with?("**")
+        "#{kind}: #{line.delete_prefix("- ")}" if kind && line.start_with?("- ")
+      end
+    end
+
+    def self.on_topic(lines, out_dir, files)
+      nodes = cited_nodes(File.join(out_dir, "memory"))
+      where = node_files(out_dir, nodes.values.flatten.uniq)
+      lines.select { |line| topic?(nodes[line[QUESTION, 1]].to_a.filter_map { |id| where[id] }, files) }
+    end
+
+    def self.topic?(cited, files) = cited.empty? || !(cited & files).empty?
+
+    # The question of a note maps to the nodes that its notes cite.
+    def self.cited_nodes(dir)
+      Dir.glob(File.join(dir, "*.md")).each_with_object({}) do |path, map|
+        text = File.read(path)
+        question = quoted(text[/^question: (".*")$/, 1])
+        (map[question] ||= []).concat(Array(quoted(text[/^source_nodes: (\[.*\])$/, 1]))) if question
+      end
+    end
+
+    def self.quoted(text)
+      text && JSON.parse(text)
+    rescue JSON::ParserError
+      nil
+    end
+
+    # graphify may store the source path relative to the project or absolute.
+    def self.node_files(out_dir, ids)
+      return {} if ids.empty?
+
+      nodes = JSON.parse(File.read(File.join(out_dir, "graph.json")))["nodes"] || []
+      nodes.select { |node| ids.include?(node["id"]) }
+           .to_h { |node| [node["id"], relative(node["source_file"], out_dir)] }
+    rescue JSON::ParserError, SystemCallError
+      {}
+    end
+
+    def self.relative(path, out_dir) = path.to_s.delete_prefix("#{File.dirname(out_dir)}/")
+  end
+
   # Prefetch adds live context to a dispatch prompt: the spec of the task the
   # run works on (`coord show ID`) and `git log --oneline -10`. Each part is
   # cut to LIMIT characters. A failed command is logged and left out. A run
@@ -373,31 +437,22 @@ module Dispatcher
       { "coord show #{task_id}" => -> { spec } }.merge(graph(poller.coord_dir, spec.to_s[/^description: (.+)$/, 1]))
     end
 
+    # The lessons section runs after the graph query and keeps the lessons of
+    # the files that the query found.
     def self.graph(coord_dir, words)
-      path = File.join(coord_dir, "..", "..", "graphify-out", "graph.json")
+      path = File.expand_path(File.join(coord_dir, "..", "..", "graphify-out", "graph.json"))
       return {} unless words && File.exist?(path)
 
-      { "graphify query <task description> --budget #{GRAPH_BUDGET}" => -> { graph_query(words, path) } }
-        .merge(lessons(File.join(File.dirname(path), "reflections", "LESSONS.md")))
+      query = nil
+      { "graphify query <task description> --budget #{GRAPH_BUDGET}" => -> { query = graph_query(words, path) } }
+        .merge(lessons(File.dirname(path), -> { query }))
     end
 
     LESSONS = "dead ends and corrections from graphify-out/reflections/LESSONS.md"
-    LESSON_HEADS = { "**Known dead ends**" => "dead end", "**Corrections**" => "correction" }.freeze
 
-    # coord done and coord lesson save the notes that LESSONS.md sums up. The
-    # list shows the newest lesson first. No lesson adds no section.
-    def self.lessons(file)
-      lines = File.exist?(file) ? lesson_lines(File.read(file)) : []
-      lines.empty? ? {} : { LESSONS => -> { lines.reverse.join } }
-    end
-
-    # Only the overall section counts. "## By topic" repeats the same lessons.
-    def self.lesson_lines(text)
-      kind = nil
-      text.split(/^## By topic/).first.lines.filter_map do |line|
-        kind = LESSON_HEADS.find { |head, _| line.start_with?(head) }&.last if line.start_with?("**")
-        "#{kind}: #{line.delete_prefix("- ")}" if kind && line.start_with?("- ")
-      end
+    # No lesson for the task adds no section.
+    def self.lessons(out_dir, query = -> {})
+      { LESSONS => -> { Lessons.for_task(out_dir, query.call).join } }
     end
 
     def self.graph_query(words, path)
@@ -421,7 +476,7 @@ module Dispatcher
     def self.section(label, run)
       text = run.call
       Log.line("prefetch failed: #{label}; the prompt goes out without it") unless text
-      text && "$ #{label}\n#{bound(text.strip)}\n"
+      text && !text.strip.empty? && "$ #{label}\n#{bound(text.strip)}\n"
     end
 
     def self.bound(text) = text.length > LIMIT ? "#{text[0, LIMIT]}\n[cut at #{LIMIT} characters]" : text
