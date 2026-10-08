@@ -370,7 +370,8 @@ Codex returns a long tool call to the model about every 30 seconds. A wait in a
 tool call, or a `sleep` loop, costs one model call over the whole context per
 return. So Codex role files use `coord await` instead. The agent runs
 `coord await` and ends its turn. The stop hook (`next-task.rb`) then waits for a
-waking message or a task without model calls, for up to 55 minutes. When work
+waking message or a task without model calls: 50 minutes by default
+(`coord await --timeout S`), never more than 55 minutes. When work
 arrives, the hook continues the session. Press Esc in Codex to end the wait.
 Codex uses project hooks in `.codex/hooks.json` for `SessionStart` and `Stop`.
 Codex runs the hooks only after you trust them, and each worktree needs its own trust.
@@ -454,7 +455,7 @@ maf start opencode frontend-developer --dispatch                    # terminal 6
 Expected startup line:
 
 ```
-dispatcher: started: role=tester harness=hermes interval=60s cache_window=3300s
+[<UTC time>] dispatcher: started: role=tester harness=hermes interval=60s cache_window=3300s max_session_runs=5 max_context=150000
 ```
 
 The dispatcher is then silent until there is work. When a message or a task
@@ -575,8 +576,11 @@ effort and lasts a few minutes.
   for the note. A run that changed nothing keeps the old note.
 
 **Prefetch.** A task run prompt holds the task spec (`coord show ID`) and
-`git log --oneline -10`, each cut to 2000 characters. A message run prompt holds
-only the git log. The agent needs fewer tool calls to start. If a command fails,
+`git log --oneline -10`. When the graph exists, it also holds a graph query on the
+task description (`graphify query ... --budget 500`) and the lessons of the files
+that the query found (see "Work memory"). Each part is cut to 2000 characters.
+A message run prompt holds only the git log. A lead run also gets the artifact
+list of the open goals. The agent needs fewer tool calls to start. If a command fails,
 the log shows `prefetch failed` and the prompt goes out without that part.
 
 **Token usage.** After each run, the dispatcher adds the token usage of the run
@@ -932,7 +936,7 @@ The graph also keeps what the team learned. graphify calls this work memory.
 - **Prompts.** The dispatcher adds the dead ends and the corrections of
   `LESSONS.md` to each task prompt, newest first. It keeps only the lessons
   whose note cites a file that the graph query of the task found. A lesson
-  without a cited node always stays. `graphify query` marks each node
+  without a cited node always stays. Without query output, all lessons stay. `graphify query` marks each node
   with a useful note as `learning=preferred`, `tentative`, or `contested`.
 - The next markdown refresh reads the notes into the graph as nodes.
 - Without a graph, nothing is saved. `coord lesson` then fails.
@@ -1097,7 +1101,7 @@ maf uninstall
 
 The uninstaller removes:
 
-- `.maf/bin/` (`coord`, `dispatcher`, `dashboard`, `vault`, `doc-graph-refresh`), `.maf/lib/maf/shared/`,
+- `.maf/bin/` (`coord`, `dispatcher`, `dashboard`, `analyst`, `vault`, `doc-graph-refresh`), `.maf/lib/maf/shared/`,
   and `.maf/env.sh`.
 - `.maf/coordination/`, with the task board, messages, locks, and message hooks.
 - Clean worktrees in `.maf/worktrees/`.

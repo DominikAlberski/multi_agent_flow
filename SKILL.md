@@ -66,8 +66,9 @@ foreign `coord`), `--model ROLE=MODEL`. `maf add` keeps the current agents in
 
 It creates and never destroys:
 
-- `.maf/coordination/{inbox,locks,exports,taskdata}/`
-- `coord`, `dispatcher`, `dashboard`, and `vault` (executable) in `.maf/bin/`, and
+- `.maf/coordination/{inbox,locks,exports,message-hooks,harness-hooks,taskdata}/`
+- `coord`, `dispatcher`, `dashboard`, `analyst`, `vault`, and `doc-graph-refresh`
+  (executable) in `.maf/bin/`, and
   `.maf/env.sh` (puts `.maf/bin` on `PATH`); `vault`
   is also started automatically if `graphify` is on PATH (see Shared memory)
 - `.maf/coordination/taskrc`: a project-local Taskwarrior config (own database,
@@ -101,8 +102,9 @@ Removes only files that carry the flow signature or marker. Keeps
 
 ```sh
 cd /path/to/project
+source .maf/env.sh   # puts .maf/bin on PATH
 coord init
-coord add --role local --scope "test/**" --title "example task"
+coord add --role backend-developer --scope "test/**" --title "example task"
 coord status
 coord board          # writes .maf/coordination/exports/board.md
 ```
@@ -156,13 +158,15 @@ an updated script needs a new approval.
 Set `COORD_ROLE` and `COORD_WORKER` so claims, messages, and locks are attributed:
 
 ```sh
-export COORD_ROLE=local COORD_WORKER=local-1
+export COORD_ROLE=backend-developer COORD_WORKER=backend-developer-1
 coord claim <id>
 coord annotate <id> "working on it"
-coord msg --from local deepseek "review test/foo.rb when free"
-coord inbox local
+coord msg --from backend-developer reviewer "review test/foo.rb when free"
+coord inbox backend-developer
 coord done <id>
 ```
+
+`coord msg` refuses a recipient that is no known role and no worker of one.
 
 Main commands: `next, show, claim, start-task, annotate, done, msg, inbox,
 escalate, goal, land, with-lock, status, who, log`. Run `coord help` for all
@@ -178,7 +182,7 @@ at a fixed interval instead of a hand-rolled poll loop.
 A single local-model host can only serve one generation at a time. Serialize:
 
 ```sh
-coord with-lock ollama -- opencode run --agent local "..."
+coord with-lock ollama -- opencode run --agent backend-developer "..."
 coord lock ollama --ttl 3600   # advisory, for long interactive runs
 coord unlock ollama
 ```

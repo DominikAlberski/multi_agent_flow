@@ -200,10 +200,13 @@ The hook starts no LLM call without the key. It logs a skip in
 
 ```sh
 cd "$PROJECT"
+source .maf/env.sh
 coord init
 coord status
 maf agents
 ```
+
+`source .maf/env.sh` puts `.maf/bin` on `PATH`, so the shell finds `coord`.
 
 Check that each role file exists:
 
@@ -280,8 +283,9 @@ ADRs use the decisions folder: `.agent/decisions/` if it exists, else `docs/deci
 ## Notes
 
 - One writer per path. The task scope defines the paths. `coord add`/`conflicts`
-  warns on overlap; roles marked "never edit" also get a restricted tool grant
-  where the harness supports one (Claude Code, opencode).
+  warns on overlap; roles with `can_edit: false` also get a restricted tool grant
+  where the harness supports one (Claude Code, opencode, Hermes), and the git
+  `pre-commit` guard refuses their commits.
 - Every generated role file requires Simplified Technical English in
   `coord msg`, `coord annotate`, and task titles: one instruction per
   sentence, active voice, named subject, no idioms.
