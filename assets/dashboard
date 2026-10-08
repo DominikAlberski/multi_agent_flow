@@ -20,6 +20,7 @@ require "rbconfig"
 require "securerandom"
 begin
   require_relative "../lib/maf/shared/processes"
+  require_relative "../lib/maf/shared/peak_rate"
 rescue LoadError
   abort "dashboard: the maf shared library is missing. Run maf update."
 end
@@ -220,14 +221,12 @@ end
   # better session limits. The page shows each hint with a button that
   # restarts the worker with the suggested limit. Only the runs with the
   # limits of the last run count, so a restart with new limits clears the
-  # hints of the old limits. NOTE: assets/dispatcher writes the history
-  # (RunHistory) and carries the same peak hours (PeakRate).
+  # hints of the old limits. assets/dispatcher writes the history (RunHistory).
   class TokenHints
     RATIO = 3
     MIN_RUNS = 2
     COLD_WRITE = 0.25
     MIN_CONTEXT = 40_000
-    PEAK_HOURS = [1...4, 6...10].freeze
 
     def initialize(worker, now = Time.now.utc)
       @id, @now = worker["id"], now
@@ -283,8 +282,8 @@ end
     end
 
     def peak
-      hours = PEAK_HOURS.find { |range| range.cover?(@now.hour) }
-      return unless @runs.last["peak"] && @now.wday.between?(1, 5) && hours
+      hours = Maf::Shared::PeakRate.hours(@now)
+      return unless @runs.last["peak"] && hours
 
       hint("info", "#{@id}: DeepSeek runs cost 2x the off-peak rate until #{hours.end}:00 UTC. " \
                    "Stop the worker to wait for the off-peak rate.").merge(action: "stop")

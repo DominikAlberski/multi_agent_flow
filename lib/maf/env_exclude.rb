@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "fileutils"
+require_relative "shared/git_exclude"
+
 # EnvExclude hides the .maf/env.sh of a worktree from git.
 # .maf/env.sh holds absolute host paths and must never be committed.
 # Git has no per-worktree exclude, so add the path to the shared local exclude.
@@ -9,18 +12,10 @@ module EnvExclude
   FILE = ".maf/env.sh"
 
   def self.add(dir)
-    path = exclude_path(dir)
+    path = Maf::Shared::GitExclude.path(dir)
     return if path.nil? || (File.exist?(path) && File.read(path).lines.map(&:strip).include?(FILE))
 
     FileUtils.mkdir_p(File.dirname(path))
     File.open(path, "a") { |file| file.puts(FILE) }
-  end
-
-  def self.exclude_path(dir)
-    path = IO.popen(["git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
-                    err: File::NULL, &:read).strip
-    path.empty? ? nil : path
-  rescue Errno::ENOENT
-    nil
   end
 end

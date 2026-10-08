@@ -9,7 +9,11 @@ require "minitest/autorun"
 require "rbconfig"
 require "open3"
 require_relative "../lib/maf/bootstrap"
+require "tmpdir"
 require_relative "../lib/maf/shared/processes"
+require_relative "../lib/maf/shared/project"
+require_relative "../lib/maf/shared/git_exclude"
+require_relative "../lib/maf/shared/peak_rate"
 
 SHARED_FILES = Dir[File.expand_path("../lib/maf/shared/*.rb", __dir__)]
 
@@ -67,5 +71,66 @@ class ProcessesTest < Minitest::Test
 
     refute_empty tokyo
     assert_equal tokyo, started_in("UTC")
+  end
+end
+
+class PeakRateTest < Minitest::Test
+  PeakRate = Maf::Shared::PeakRate
+
+  # 2026-10-07 is a Wednesday, 2026-10-10 a Saturday.
+  def at(text) = Time.utc(*text.split(/[- :]/).map(&:to_i))
+
+  def test_peak_hours_on_a_weekday
+    assert PeakRate.peak?(at("2026-10-07 01:00"))
+    assert PeakRate.peak?(at("2026-10-07 09:59"))
+    refute PeakRate.peak?(at("2026-10-07 04:00"))
+    refute PeakRate.peak?(at("2026-10-07 10:00"))
+  end
+
+  def test_the_weekend_is_off_peak
+    refute PeakRate.peak?(at("2026-10-10 07:00"))
+  end
+
+  def test_hours_gives_the_end_of_the_peak
+    assert_equal 10, PeakRate.hours(at("2026-10-07 07:30")).end
+    assert_nil PeakRate.hours(at("2026-10-07 12:00"))
+  end
+end
+
+class ProjectTest < Minitest::Test
+  Project = Maf::Shared::Project
+
+  def test_worktree_dir
+    assert_equal "/p/.maf/worktrees/tester-1", Project.worktree_dir("/p", "tester-1")
+  end
+
+  def git(dir, *args) = system("git", "-C", dir, "-c", "user.email=t@t", "-c", "user.name=t", *args, exception: true)
+
+  # From a linked worktree, root is the main checkout.
+  def test_root_from_a_worktree
+    Dir.mktmpdir do |dir|
+      root = File.realpath(dir)
+      [%w[init -q], %w[commit -q --allow-empty -m i], %w[worktree add -q wt]].each { |args| git(root, *args) }
+      assert_equal root, Dir.chdir(File.join(root, "wt")) { Project.root }
+    end
+  end
+
+  def test_manifest_is_empty_without_a_config
+    Dir.mktmpdir { |dir| assert_equal({}, Dir.chdir(dir) { Project.manifest }) }
+  end
+end
+
+class GitExcludeTest < Minitest::Test
+  # A relative path would break a caller that runs in another directory.
+  def test_the_path_is_absolute
+    Dir.mktmpdir do |dir|
+      system("git", "-C", dir, "init", "-q", exception: true)
+      path = Maf::Shared::GitExclude.path(dir)
+      assert File.absolute_path?(path) && path.end_with?(".git/info/exclude"), path
+    end
+  end
+
+  def test_no_path_outside_a_repository
+    Dir.mktmpdir { |dir| assert_nil Maf::Shared::GitExclude.path(dir) }
   end
 end

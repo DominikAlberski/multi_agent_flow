@@ -1524,17 +1524,6 @@ class PeakRateTest < Minitest::Test
   # 2026-10-07 is a Wednesday, 2026-10-10 a Saturday.
   def at(text) = Time.utc(*text.split(/[- :]/).map(&:to_i))
 
-  def test_peak_hours_on_a_weekday
-    assert Dispatcher::PeakRate.peak?(at("2026-10-07 01:00"))
-    assert Dispatcher::PeakRate.peak?(at("2026-10-07 09:59"))
-    refute Dispatcher::PeakRate.peak?(at("2026-10-07 04:00"))
-    refute Dispatcher::PeakRate.peak?(at("2026-10-07 10:00"))
-  end
-
-  def test_the_weekend_is_off_peak
-    refute Dispatcher::PeakRate.peak?(at("2026-10-10 07:00"))
-  end
-
   def test_notice_for_deepseek_on_opencode_at_peak
     cfg = config(harness: "opencode", model: "deepseek/deepseek-flash")
     assert_includes Dispatcher::PeakRate.notice(cfg, at("2026-10-07 07:30")), "DeepSeek peak hours (07:30 UTC)"
