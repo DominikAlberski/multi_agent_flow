@@ -1,6 +1,6 @@
 # ADR 0005: The flow stays out of the project's git
 
-Status: accepted. Date: 2026-10-05.
+Status: accepted. Date: 2026-10-05. Amended by ADR 0006 (work memory).
 
 ## Context
 

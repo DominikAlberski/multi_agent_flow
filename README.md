@@ -64,10 +64,11 @@ lives in `graphify-out/` at the project root, where graphify looks by default.
   mcp/            the graphify MCP server for Claude Code and opencode
   config.json     the agents and settings of the project
   roles.yml       project roles (you write it; maf role add NAME)
-graphify-out/     knowledge graph (excluded from git; each worktree has a symlink to it)
-  obsidian/       generated Obsidian vault
   workflow.md     stage instructions for the architect (you write it)
   env.sh          source it: puts .maf/bin on PATH
+graphify-out/     knowledge graph (excluded from git; each worktree has a symlink to it)
+  memory/         work memory notes: a worktree of the orphan branch maf/memory (ADR 0006)
+  obsidian/       generated Obsidian vault
 ```
 
 maf is a tool, not a part of the project. Nothing that runs maf goes into git:

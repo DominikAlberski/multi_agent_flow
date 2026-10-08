@@ -152,6 +152,7 @@ require_relative "bootstrap/claude_settings"
 require_relative "bootstrap/hook_merger"
 require_relative "bootstrap/writer"
 require_relative "bootstrap/graph_home"
+require_relative "bootstrap/memory_branch"
 require_relative "bootstrap/vault_starter"
 require_relative "bootstrap/installer"
 

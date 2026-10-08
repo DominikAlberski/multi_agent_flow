@@ -915,7 +915,12 @@ The graph also keeps what the team learned. graphify calls this work memory.
   with a useful note as `learning=preferred`, `tentative`, or `contested`.
 - The next markdown refresh reads the notes into the graph as nodes.
 - Without a graph, nothing is saved. `coord lesson` then fails.
-- `graphify-out/memory/` is not in git. The refresh never replaces it.
+- **Branch.** `graphify-out/memory/` is a worktree of the orphan branch `maf/memory`
+  (ADR 0006). `maf add` and `maf update` make it, or take the branch from origin.
+  Each note is one commit there. The branch shares no history with your branches,
+  so a note never shows in a pull request. `coord goal pr` merges the remote
+  `maf/memory` and pushes it. Without a `github` section, push it yourself:
+  `git push origin maf/memory`. The refresh never replaces the folder.
 
 ### MCP server
 
