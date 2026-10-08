@@ -1,15 +1,13 @@
 # frozen_string_literal: true
 
+require_relative "../shared/project"
+
 module SetupAgent
   class Worktree
-    # All worktrees live inside the project under .maf/worktrees/<slug>.
-    # This must match Coord::Worktree.dir_for; scripts/check.rb enforces it.
-    WORKTREES_DIR = ".maf/worktrees"
     COORD = ".maf/bin/coord"
 
-    def self.dir_for(root, slug)
-      File.join(root, WORKTREES_DIR, slug)
-    end
+    # coord creates the worktree with the same shared formula.
+    def self.dir_for(root, slug) = Maf::Shared::Project.worktree_dir(root, slug)
 
     # `coord worktree` is idempotent. Run it also for an existing worktree,
     # so the worktree gets runtime files that were added after it was created.

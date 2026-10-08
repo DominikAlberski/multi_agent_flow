@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require_relative "shared/git_exclude"
 
 # LocalExclude keeps the paths of the flow in the .git/info/exclude file of
 # the clone. The flow is a tool, not a part of the project, so nothing that
@@ -46,11 +47,5 @@ module LocalExclude
     first && last ? (lines[0...first] + lines[(last + 1)..]).join : text
   end
 
-  def self.exclude_path(dir)
-    path = IO.popen(["git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
-                    err: File::NULL, &:read).strip
-    path.empty? ? nil : path
-  rescue Errno::ENOENT
-    nil
-  end
+  def self.exclude_path(dir) = Maf::Shared::GitExclude.path(dir)
 end

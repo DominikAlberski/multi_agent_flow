@@ -19,6 +19,9 @@ require "optparse"
 require "open3"
 begin
   require_relative "../lib/maf/shared/processes"
+  require_relative "../lib/maf/shared/project"
+  require_relative "../lib/maf/shared/roles"
+  require_relative "../lib/maf/shared/git_exclude"
 rescue LoadError
   abort "coord: the maf shared library is missing. Run maf update."
 end
@@ -52,7 +55,7 @@ module Coord
 
   # Lead roles plan and talk to the user. They never own a task, so they wait
   # on their inbox, not on the task board.
-  LEADS = %w[project-manager architect].freeze
+  LEADS = Maf::Shared::Roles::LEADS
 
   USAGE = <<~TEXT
     coord - multi-agent coordination
@@ -1705,7 +1708,7 @@ end
     # `git worktree remove` both free the slot on the next assign.
     def live = read.select { |slug, _slot| Dir.exist?(worktree_dir(slug)) }
 
-    def worktree_dir(slug) = File.join(project_root, Worktree::WORKTREES_DIR, slug)
+    def worktree_dir(slug) = Worktree.dir_for(project_root, slug)
     def project_root = File.dirname(File.dirname(File.expand_path(@coord_dir)))
 
     def write(slots)
@@ -1811,19 +1814,16 @@ end
   #
   # All worktrees live inside the project under .maf/worktrees/<slug>.
   # .maf/worktrees/ is gitignored, so agents stay within the project directory
-  # and need no cross-directory file access permissions. maf start computes
-  # the same path; keep the two in sync (scripts/check.rb).
+  # and need no cross-directory file access permissions. maf start finds the
+  # worktree with the same shared formula.
   class Worktree
     ENV_FILE = WorktreeEnv::FILE
-    WORKTREES_DIR = ".maf/worktrees"
     RUNTIME_FILES = %w[.maf/bin/coord .maf/coordination/harness-hooks/next-task.rb
                        .maf/coordination/harness-hooks/board-watch.rb .maf/coordination/harness-hooks/session-guard.rb
                        .maf/coordination/harness-hooks/context-watch.rb .codex/hooks.json
                        .opencode/plugins/board-watch.js].freeze
 
-    def self.dir_for(root, slug)
-      File.join(root, WORKTREES_DIR, slug)
-    end
+    def self.dir_for(root, slug) = Maf::Shared::Project.worktree_dir(root, slug)
 
     def initialize(project_root)
       @root = project_root
@@ -1937,7 +1937,7 @@ end
     # only ever exists inside a worktree, so this cannot hide anything in the
     # main worktree.
     def exclude_env_file(dir)
-      exclude = local_exclude(dir)
+      exclude = Maf::Shared::GitExclude.path(dir)
       return if exclude.nil? || listed?(exclude)
 
       FileUtils.mkdir_p(File.dirname(exclude))
@@ -1945,11 +1945,6 @@ end
     end
 
     def listed?(exclude) = File.exist?(exclude) && File.read(exclude).lines.map(&:strip).include?(ENV_FILE)
-
-    def local_exclude(dir)
-      path = `git -C #{Shellwords.escape(dir)} rev-parse --git-path info/exclude 2>/dev/null`.strip
-      path.empty? ? nil : path
-    end
   end
 
   # CLI dispatches commands. Keep methods small; collaborators do the work.

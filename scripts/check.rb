@@ -25,16 +25,6 @@ module Check
     contract: File.join(ROOT, "assets", "agents-contract.md")
   }.freeze
 
-  # The worktree path is computed in two standalone scripts (coord creates the
-  # worktree, maf start finds it again) that share no load path, so the
-  # formula is duplicated on purpose. Keep the two identical.
-  WORKTREE_FILES = {
-    coord: File.join(ROOT, "assets", "coord"),
-    setup_agent: File.join(ROOT, "lib", "maf", "setup_agent", "worktree.rb")
-  }.freeze
-  WORKTREE_SUFFIX_DEF = 'WORKTREES_DIR = ".maf/worktrees"'
-  WORKTREE_DIR_EXPR = 'File.join(root, WORKTREES_DIR, slug)'
-
   # bootstrap.rb decides whether an existing script is "ours" by these signature
   # strings. If a script's header drifts, bootstrap stops recognizing its own
   # file and refuses to update it. Keep each signature in both places.
@@ -46,14 +36,6 @@ module Check
     "analyst" => "analyst - ask a small model for token hints about one dispatched worker.",
     "git-hooks/pre-commit" => "commit-guard - git pre-commit hook for the multi-agent flow.",
     "doc-graph-refresh" => "doc-graph-refresh - rebuild the knowledge graph after a markdown change."
-  }.freeze
-
-  # Standalone scripts repeat the lead role list and the read-only Hermes
-  # toolsets. Each file must carry the same literal.
-  SHARED_LITERALS = {
-    "LEADS = %w[project-manager architect].freeze" => %w[assets/coord assets/dispatcher lib/maf/flow.rb],
-    %(READ_ONLY_TOOLSETS = "terminal,web,skills,todo,memory,session_search,clarify") =>
-      %w[assets/dispatcher lib/maf/flow.rb]
   }.freeze
 
   module_function
@@ -100,15 +82,6 @@ module Check
       fail_with("lib/maf/bootstrap.rb defines TASKRC_BLOCK; it must read taskrc.append")
   end
 
-  def check_worktree_paths
-    bad = WORKTREE_FILES.reject { |_, path| worktree_synced?(path) }
-    bad.empty? || fail_with("worktree path definition out of sync in: #{bad.keys.join(", ")}")
-  end
-
-  def worktree_synced?(path)
-    File.exist?(path) && [WORKTREE_SUFFIX_DEF, WORKTREE_DIR_EXPR].all? { |text| File.read(path).include?(text) }
-  end
-
   def check_script_signatures
     bootstrap = File.read(FILES[:bootstrap])
     bad = SCRIPTS.reject { |name, signature| signed?(File.join(ROOT, "assets", name), signature, bootstrap) }
@@ -119,15 +92,7 @@ module Check
     File.exist?(path) && File.read(path).include?(signature) && bootstrap.include?(signature)
   end
 
-  def check_shared_literals
-    bad = SHARED_LITERALS.flat_map { |literal, files| files.reject { |rel| includes?(rel, literal) } }
-    bad.empty? || fail_with("shared literal out of sync in: #{bad.uniq.join(", ")}")
-  end
-
-  def includes?(rel, literal) = File.read(File.join(ROOT, rel)).include?(literal)
-
-CHECKS = %i[check_udas check_markers check_no_duplicate_block check_worktree_paths
-            check_script_signatures check_shared_literals].freeze
+CHECKS = %i[check_udas check_markers check_no_duplicate_block check_script_signatures].freeze
 
   def run
     ok = check_files_exist && CHECKS.map { |name| send(name) }.all?

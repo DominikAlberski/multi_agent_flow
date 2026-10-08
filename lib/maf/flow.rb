@@ -19,6 +19,7 @@ require "json"
 require "optparse"
 require "rbconfig"
 require "time"
+require_relative "shared/roles"
 
 abort "flow: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
 
@@ -35,13 +36,10 @@ module Flow
 
   # Roles that dispatch or coordinate instead of implementing. They are never
   # advertised as dispatch targets in the architect prompt.
-  LEADS = %w[project-manager architect].freeze
+  LEADS = Maf::Shared::Roles::LEADS
   DISPATCH_EXCLUDE = LEADS
 
-  # Hermes toolsets for a role with can_edit false: no file, code_execution,
-  # or delegation toolset. The shell stays, because the role needs coord and git.
-  # NOTE: assets/dispatcher carries the same list; both run standalone.
-  READ_ONLY_TOOLSETS = "terminal,web,skills,todo,memory,session_search,clarify"
+  READ_ONLY_TOOLSETS = Maf::Shared::Roles::READ_ONLY_TOOLSETS
 
   MAF_DIR = ".maf"
 

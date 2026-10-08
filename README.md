@@ -155,7 +155,7 @@ multi_agent_flow/
     local_exclude.rb          # the flow block in .git/info/exclude
     shared/                   # stdlib-only code that the maf CLI and the scripts share (installed as .maf/lib/maf/shared/)
   scripts/
-    check.rb                  # repo consistency check (UDA sync, markers, shared literals, worktree formula)
+    check.rb                  # repo consistency check (UDA sync, markers, script signatures)
   templates/
     roles.yml                 # role definitions + model hints
     role-stub.yml.erb         # stub that maf role add writes

@@ -127,12 +127,14 @@ require "rbconfig"
 require "shellwords"
 begin
   require_relative "../lib/maf/shared/processes"
+  require_relative "../lib/maf/shared/project"
+  require_relative "../lib/maf/shared/roles"
+  require_relative "../lib/maf/shared/peak_rate"
 rescue LoadError
   abort "dispatcher: the maf shared library is missing. Run maf update."
 end
 
 module Dispatcher
-  MANIFEST = ".maf/config.json"
   COORD_BIN = ".maf/bin/coord"
   MAX_ATTEMPTS = 3
   MAX_BACKOFF = 3600
@@ -158,26 +160,10 @@ module Dispatcher
     end
   end
 
-  # Project finds the main checkout from any worktree. `git rev-parse
-  # --git-common-dir` returns the main repo's .git dir (relative at the root,
-  # absolute in a worktree), so its parent is the main checkout.
-  # NOTE: lib/maf/setup_agent.rb carries the same logic; both run standalone.
-  module Project
-    def self.root
-      common = IO.popen(%w[git rev-parse --git-common-dir], err: File::NULL, &:read).to_s.strip
-      common.empty? ? Dir.pwd : File.dirname(File.expand_path(common))
-    end
-
-    def self.manifest
-      JSON.parse(File.read(File.join(root, MANIFEST)))
-    rescue Errno::ENOENT, JSON::ParserError
-      {}
-    end
-  end
-
-  # Lead roles own no tasks. They get an inbox prompt and no task polling.
-  # NOTE: assets/coord carries the same list; both run standalone.
-  LEADS = %w[project-manager architect].freeze
+  # Project finds the main checkout from any worktree. Lead roles own no
+  # tasks: they get an inbox prompt and no task polling.
+  Project = Maf::Shared::Project
+  LEADS = Maf::Shared::Roles::LEADS
 
   # FlowConfig finds the MCP config of the flow in .maf/mcp/ (next to the
   # coordination folder). The project's .mcp.json and opencode.json stay as
@@ -194,9 +180,8 @@ module Dispatcher
 
   # EditGrant reads each agent's can_edit from .maf/config.json. On Hermes,
   # a role with can_edit false starts without the file-writing toolsets.
-  # NOTE: lib/maf/flow.rb carries the same toolset list; both run standalone.
   module EditGrant
-    READ_ONLY_TOOLSETS = "terminal,web,skills,todo,memory,session_search,clarify"
+    READ_ONLY_TOOLSETS = Maf::Shared::Roles::READ_ONLY_TOOLSETS
 
     def self.read_only?(role)
       Project.manifest.fetch("agents", []).any? { |agent| agent["role"] == role && agent["can_edit"] == false }
@@ -737,18 +722,12 @@ module Dispatcher
   end
 
   # PeakRate tells when a dispatched opencode run uses DeepSeek at the peak
-  # rate. The off-peak rate is half the peak rate. Peak hours are 01:00-04:00
-  # and 06:00-10:00 UTC, Monday to Friday. All other hours are off-peak.
-  # Chinese public holidays are off-peak in full, but the dispatcher does not
-  # know them, so the notice can show on a holiday.
+  # rate (Maf::Shared::PeakRate). The notice can show on a Chinese holiday.
   module PeakRate
-    HOURS = [1...4, 6...10].freeze
-
-    def self.peak?(time) = time.wday.between?(1, 5) && HOURS.any? { |hours| hours.cover?(time.hour) }
     def self.deepseek?(config) = config.harness == "opencode" && OpencodeModel.for(config).to_s.include?("deepseek")
 
     def self.notice(config, time = Time.now.utc)
-      return unless peak?(time) && deepseek?(config)
+      return unless Maf::Shared::PeakRate.peak?(time) && deepseek?(config)
 
       "info: DeepSeek peak hours (#{time.strftime("%H:%M")} UTC): this run costs 2x the off-peak rate"
     end
@@ -948,7 +927,6 @@ module Dispatcher
   # final reply: <report>{"status":"done","tests":"pass","next":"..."}</report>.
   # parse returns nil when no block is present. Otherwise it returns a Parsed
   # with the data or with the validation error.
-  # NOTE: lib/maf/flow/prompt_text.rb carries the same REPORT_FORMAT; both run standalone.
   module ReportBlock
     REPORT_FORMAT = '<report>{"status":"<done|blocked|needs_review>","tests":"<pass|fail>","next":"<next>"}</report>'
     STATUSES = %w[done blocked needs_review].freeze
