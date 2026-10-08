@@ -25,7 +25,7 @@ This file lists the code and CLI name of each term in [flow-glossary.md](flow-gl
 | commit guard | `assets/git-hooks/pre-commit` |
 | lock | `coord lock`, lock field `worker` |
 | message hook | `coord hooks` |
-| harness hook | `next-task.rb`, `board-watch.rb`, `context-watch.rb`, `board-watch-opencode.js` |
+| harness hook | `next-task.rb`, `next-task-hermes.sh`, `board-watch.rb`, `session-guard.rb`, `context-watch.rb`, `board-watch-opencode.js` |
 | report block | `ReportBlock`, `REPORT_FORMAT` |
 | completion signal | `--completion-signal`, `Limits#complete` |
 | abort signal | `--abort-signal`, `Limits#abort` |

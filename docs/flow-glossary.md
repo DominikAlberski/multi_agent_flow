@@ -78,7 +78,7 @@ The names of the terms in code and in the CLI are in [flow-cli-names.md](flow-cl
 
 **Copy list**: Host files that `coord worktree` copies into each new or reused worktree, for example `.env`. Only existing files inside the project are copied. A file in the worktree is never overwritten.
 
-**Prefetch**: Live context that the dispatcher adds to a dispatch prompt: the spec of the claimed task (`coord show ID`) and `git log --oneline -10`, each cut to 2000 characters.
+**Prefetch**: Live context that the dispatcher adds to a dispatch prompt: the spec of the claimed task (`coord show ID`), `git log --oneline -10`, and, when the graph exists, a graph query on the task description and the lessons of the files that it found. Each part is cut to 2000 characters.
 
 **Flow folder**: The folder `.maf/` in a project. It holds every file that the flow owns. A few files stay outside it, because a tool reads them at a fixed path. Git does not track it: `.git/info/exclude` lists it.
 

@@ -110,8 +110,9 @@ Use `maf roles` to see all roles. Each argument is `HARNESS:ROLE`.
 
 1. Creates the folder `.maf/` in your project. The flow keeps all its files there.
    The folder holds `coordination/inbox`, `coordination/locks`, `coordination/exports`,
-   and `coordination/taskdata`.
-2. Copies `coord`, `dispatcher`, `vault`, and `dashboard` into `.maf/bin/`.
+   `coordination/message-hooks`, `coordination/harness-hooks`, and `coordination/taskdata`.
+2. Copies `coord`, `dispatcher`, `vault`, `dashboard`, `analyst`, and
+   `doc-graph-refresh` into `.maf/bin/`.
    Writes `.maf/env.sh`. The file puts `.maf/bin` on `PATH`.
 3. Creates `.maf/coordination/taskrc`: a project-local Taskwarrior config. Your
    global `~/.taskrc` is never touched; two projects never share one board.
@@ -426,7 +427,7 @@ take the same task.
 ## 18. Troubleshooting
 
 **`coord: Taskwarrior ('task') is not installed`**
-Run `brew install task`, or re-run the installer with `--install-deps`.
+Install Taskwarrior: `brew install task` on macOS, or the `taskwarrior` package on Linux.
 
 **`coord: locked by ...`**
 Another worker holds the lock. Wait, or release it with `coord unlock NAME`.

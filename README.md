@@ -55,7 +55,7 @@ lives in `graphify-out/` at the project root, where graphify looks by default.
 
 ```
 .maf/
-  bin/            coord, dispatcher, vault, dashboard, doc-graph-refresh
+  bin/            coord, dispatcher, vault, dashboard, analyst, doc-graph-refresh
   lib/maf/shared/ code that the scripts in bin/ load (maf update replaces it)
   coordination/   task board, inbox, locks, presence, sessions, hooks, logs
   worktrees/      one git worktree per worker
@@ -149,6 +149,7 @@ multi_agent_flow/
     uninstall.rb              # removes the flow from a project; keeps graphify-out/
     migrate.rb                # maf migrate: moves an old-layout install into .maf/
     team.rb                   # maf prepare: adds or replaces one worker
+    team_command.rb           # maf team: shows the team, or sets its budget
     retire.rb                 # maf retire: removes one worker and archives its state
     worker_control.rb         # maf worker: stops, starts, or restarts one worker
     flow/role_catalog.rb      # merges .maf/roles.yml over the built-in roles
@@ -172,12 +173,13 @@ multi_agent_flow/
     dispatcher                # polls task board + inbox, starts one-shot agents (Ruby)
     vault                     # graphify + Obsidian + MCP watcher control, graph age (Ruby)
     dashboard                 # web dashboard: workers table with actions, alerts, board (Ruby/WEBrick)
+    analyst                   # asks a small model for token hints about one worker (dashboard analyze button)
     doc-graph-refresh         # graphify rebuild runner called by the git hooks (Ruby)
     env.sh                    # shell environment: .maf/bin on PATH (installed as .maf/env.sh)
     git-hooks/                # pre-commit guard, post-commit/post-merge refresh blocks
     taskrc.append             # Taskwarrior UDA block
     agents-contract.md        # coordination contract at the end of each role prompt
-    harness-hooks/            # next-task, board-watch, and context-watch scripts, and the opencode plugin
+    harness-hooks/            # next-task, board-watch, session-guard, and context-watch scripts, and the opencode plugin
   test/
     coord_test.rb             # behavioral tests for the coord CLI
     installer_test.rb         # tests for bootstrap.rb, flow.rb, setup_agent.rb
@@ -196,6 +198,8 @@ multi_agent_flow/
     hook_config_test.rb       # tests for project hooks
     worker_control_test.rb    # tests for maf worker
     untrack_test.rb           # tests for maf untrack
+    analyst_test.rb           # tests for the analyst
+    shared_test.rb            # tests for lib/maf/shared/
 ```
 
 ---
@@ -292,6 +296,8 @@ ruby test/board_watch_test.rb        # covers the board watcher
 ruby test/context_watch_test.rb      # covers the context-watch hook
 ruby test/worker_control_test.rb     # covers maf worker
 ruby test/untrack_test.rb            # covers maf untrack
+ruby test/analyst_test.rb            # covers the analyst
+ruby test/shared_test.rb             # covers lib/maf/shared/
 ```
 
 Minitest, stdlib only. Tests that require `task`, `git`, or `node` skip (exit 0)
