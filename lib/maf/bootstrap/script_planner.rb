@@ -32,8 +32,9 @@ module Bootstrap
       script("dispatcher", DISPATCHER_SIGNATURE)
     end
 
+    # The dashboard reads its HTML page from the file next to it.
     def dashboard
-      script("dashboard", DASHBOARD_SIGNATURE)
+      [script("dashboard", DASHBOARD_SIGNATURE), script("dashboard.html", DASHBOARD_PAGE_SIGNATURE)]
     end
 
     def analyst

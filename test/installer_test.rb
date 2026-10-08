@@ -94,6 +94,26 @@ class BootstrapTest < InstallerTestCase
     assert_includes out, "Run maf update"
   end
 
+  def dashboard_page = run_ruby("-e", "load ARGV[0]; print Dashboard::Page.html", installed("dashboard"))
+
+  # The installed dashboard reads its page from the file next to it.
+  def test_installed_dashboard_reads_its_page
+    bootstrap
+    out, status = dashboard_page
+
+    assert_equal 0, status, out
+    assert_includes out, "__TOKEN__"
+  end
+
+  def test_a_dashboard_without_its_page_asks_for_maf_update
+    bootstrap
+    File.delete(installed("dashboard.html"))
+    out, status = dashboard_page
+
+    refute_equal 0, status
+    assert_includes out, "Run maf update"
+  end
+
   def exclude_lines = File.read(File.join(@dir, ".git", "info", "exclude")).lines.map(&:strip)
 
   # Nothing of the flow goes into git. The excludes are local to the clone.
