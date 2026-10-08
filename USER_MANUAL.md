@@ -930,7 +930,9 @@ The graph also keeps what the team learned. graphify calls this work memory.
   writes `graphify-out/reflections/LESSONS.md`. A refresh drops each lesson whose
   node is not in the new graph.
 - **Prompts.** The dispatcher adds the dead ends and the corrections of
-  `LESSONS.md` to each task prompt, newest first. `graphify query` marks each node
+  `LESSONS.md` to each task prompt, newest first. It keeps only the lessons
+  whose note cites a file that the graph query of the task found. A lesson
+  without a cited node always stays. `graphify query` marks each node
   with a useful note as `learning=preferred`, `tentative`, or `contested`.
 - The next markdown refresh reads the notes into the graph as nodes.
 - Without a graph, nothing is saved. `coord lesson` then fails.
