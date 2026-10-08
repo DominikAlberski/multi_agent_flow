@@ -1358,6 +1358,16 @@ class GoalTest < Minitest::Test
   end
 
   def add_goal = coord("goal", "add", "--title", "Show prices").lines.last.strip
+
+  # What bootstrap makes: graphify-out/memory/ as a worktree of the orphan branch maf/memory.
+  def memory_worktree
+    tree = IO.popen(["git", "-C", @root, "hash-object", "-w", "-t", "tree", File::NULL], &:read).strip
+    commit = IO.popen(["git", "-C", @root, "commit-tree", tree, "-m", "start"], &:read).strip
+    git(@root, "branch", "maf/memory", commit)
+    git(@root, "worktree", "add", "-q", File.join(@root, "graphify-out", "memory"), "maf/memory")
+    File.join(@root, "graphify-out", "memory")
+  end
+
   def short(uuid) = uuid[0, 8]
 
   def test_goal_add_creates_a_goal_branch_and_worktree_from_the_base_branch
@@ -1752,6 +1762,31 @@ class GoalPrTest < GoalTest
     end
   end
 
+  # Another clone pushed a note first. The goal pull request merges it and pushes both notes.
+  def test_goal_pr_merges_and_pushes_the_memory_branch
+    with_origin do |origin|
+      memory = memory_worktree
+      git(@root, "push", "-q", "origin", "maf/memory")
+      push_remote_note(origin)
+      File.write(File.join(memory, "query_local.md"), "local")
+      commit(memory, "local note")
+
+      goal_with_pr
+
+      assert_equal %w[query_local.md query_remote.md], `git -C #{origin} ls-tree --name-only maf/memory`.split.sort
+    end
+  end
+
+  def push_remote_note(origin)
+    other = Dir.mktmpdir("coord-memory-other")
+    git(other, "clone", "-q", "-b", "maf/memory", origin, ".")
+    File.write(File.join(other, "query_remote.md"), "remote")
+    commit(other, "remote note")
+    git(other, "push", "-q", "origin", "maf/memory")
+  ensure
+    FileUtils.rm_rf(other)
+  end
+
   def test_a_second_goal_pr_comments_and_asks_for_a_new_review
     with_origin do
       uuid = goal_with_pr
@@ -1821,7 +1856,12 @@ class WorkMemoryTest < GoalTest
     super
     @bin = File.join(@root, ".fake-bin")
     FileUtils.mkdir_p(@bin)
-    File.write(File.join(@bin, "graphify"), "#!/bin/sh\nprintf '%s\\n' \"$@\" '--' >> \"#{@root}/.graphify-calls\"\n")
+    File.write(File.join(@bin, "graphify"), <<~SH)
+      #!/bin/sh
+      printf '%s\n' "$@" '--' >> "#{@root}/.graphify-calls"
+      memory="#{@root}/graphify-out/memory"
+      if [ "$1" = save-result ] && [ -d "$memory" ]; then echo note > "$memory/query_$$.md"; fi
+    SH
     FileUtils.chmod(0o755, File.join(@bin, "graphify"))
     @path = ENV.fetch("PATH", nil)
     ENV["PATH"] = "#{@bin}:#{@path}"
@@ -1855,6 +1895,15 @@ class WorkMemoryTest < GoalTest
                  [save[0], arg(save, "--question"), arg(save, "--outcome"), arg(save, "--nodes")]
     assert_includes arg(save, "--answer"), "TESTS: 3 runs, 0 failures."
     assert_equal "reflect", reflect[0]
+  end
+
+  def test_done_commits_the_note_to_the_memory_branch
+    write_graph
+    memory = memory_worktree
+    done_task_with_work
+
+    assert_equal "memory: useful: Add price test", `git -C #{memory} log -1 --format=%s`.strip
+    assert_empty `git -C #{memory} status --porcelain`
   end
 
   def test_done_without_a_graph_saves_nothing

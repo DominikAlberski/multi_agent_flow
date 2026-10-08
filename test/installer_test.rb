@@ -1158,3 +1158,76 @@ class DocGraphHookTest < InstallerTestCase
     assert_equal 1, File.read(hook("post-commit")).scan(">>> multi-agent-flow >>>").size
   end
 end
+
+# MemoryBranchTest checks that bootstrap makes graphify-out/memory/ a
+# worktree of the orphan branch maf/memory (ADR 0006).
+class MemoryBranchTest < InstallerTestCase
+  def setup
+    super
+    @project = File.join(@dir, "project")
+    init_repo(@project)
+  end
+
+  def init_repo(dir)
+    FileUtils.mkdir_p(dir)
+    git(dir, "init", "-q", "-b", "main")
+    git(dir, "config", "user.email", "t@t")
+    git(dir, "config", "user.name", "t")
+    git(dir, "commit", "-q", "--allow-empty", "-m", "init")
+  end
+
+  def git(dir, *args) = system("git", "-C", dir, *args, out: File::NULL, err: File::NULL) || raise("git #{args}")
+  def git_out(dir, *args) = IO.popen(["git", "-C", dir, *args], err: File::NULL, &:read).strip
+  def memory = File.join(@project, "graphify-out", "memory")
+  def bootstrap = run_ruby(BOOTSTRAP, @project, "--roles", "architect")
+
+  def test_the_memory_folder_is_a_worktree_of_an_orphan_branch
+    out, status = bootstrap
+
+    assert_equal 0, status, out
+    assert_equal "maf/memory", git_out(memory, "branch", "--show-current")
+    refute system("git", "-C", @project, "merge-base", "main", "maf/memory", out: File::NULL)
+    assert_empty git_out(@project, "status", "--porcelain")
+  end
+
+  def test_the_notes_of_an_older_install_move_into_the_branch
+    FileUtils.mkdir_p(memory)
+    File.write(File.join(memory, "query_1.md"), "note")
+
+    bootstrap
+
+    assert_equal "query_1.md", git_out(memory, "ls-files")
+    refute File.exist?("#{memory}.old")
+  end
+
+  def test_a_second_install_keeps_the_worktree
+    bootstrap
+    out, status = bootstrap
+
+    assert_equal 0, status, out
+    assert_equal "1", git_out(@project, "rev-list", "--count", "maf/memory")
+  end
+
+  def test_a_clone_takes_the_branch_from_origin
+    bootstrap
+    File.write(File.join(memory, "query_1.md"), "note")
+    git(memory, "add", "-A")
+    git(memory, "commit", "-q", "-m", "note")
+    clone = File.join(@dir, "clone")
+    git(@dir, "clone", "-q", @project, clone)
+    git(clone, "config", "user.email", "t@t")
+
+    run_ruby(BOOTSTRAP, clone, "--roles", "architect")
+
+    assert_equal "note", File.read(File.join(clone, "graphify-out", "memory", "query_1.md"))
+  end
+
+  def test_a_folder_inside_another_repository_gets_no_branch
+    inner = File.join(@project, "sub")
+    FileUtils.mkdir_p(inner)
+
+    run_ruby(BOOTSTRAP, inner, "--roles", "architect")
+
+    refute system("git", "-C", @project, "show-ref", "--quiet", "refs/heads/maf/memory")
+  end
+end

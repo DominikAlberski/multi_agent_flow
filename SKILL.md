@@ -218,7 +218,8 @@ watcher, with its pid in `.maf/coordination/vault.pid` and its output in
 - Work memory: `coord done` saves a `graphify save-result` note in `graphify-out/memory/`,
   and `coord lesson ID dead_end|corrected TEXT` saves a failed approach or a correction.
   `graphify reflect` sums the notes up in `graphify-out/reflections/LESSONS.md`. The dispatcher
-  adds its dead ends and corrections to each task prompt.
+  adds its dead ends and corrections to each task prompt. `graphify-out/memory/` is a worktree of the
+  orphan branch `maf/memory` (ADR 0006); each note is one commit, and `coord goal pr` pushes the branch.
 - `graphify-out/obsidian/` is the human-facing Obsidian base (graph notes, canvas). It is
   regenerated and excluded from git — durable decisions belong in the decisions folder
   (`.agent/decisions/` if it exists, else `docs/decisions/`),

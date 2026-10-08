@@ -1028,6 +1028,7 @@ end
 # dispatcher puts its dead ends and corrections into each task prompt.
 # Without a graph, it saves nothing.
 class WorkMemory
+  BRANCH = "maf/memory"
   ANSWER_LIMIT = 2000
   NODE_LIMIT = 20
 
@@ -1043,8 +1044,10 @@ class WorkMemory
   # Returns false when there is no graph or graphify fails.
   def save(task, outcome, answer, correction = nil)
     return false unless File.exist?(graph)
+    return false unless write_note(task, outcome, answer.to_s[0, ANSWER_LIMIT], correction)
 
-    write_note(task, outcome, answer.to_s[0, ANSWER_LIMIT], correction) && reflect
+    commit("memory: #{outcome}: #{task["description"]}")
+    reflect
   end
 
   private
@@ -1052,6 +1055,14 @@ class WorkMemory
   def write_note(task, outcome, answer, correction)
     graphify("save-result", "--question", question(task, outcome, answer), "--outcome", outcome, "--answer", answer,
              "--memory-dir", folder("memory"), *correction_args(correction), *nodes_args(task))
+  end
+
+  # graphify-out/memory/ can be a worktree of the branch maf/memory (ADR 0006).
+  # Each note is one commit there. A commit fails while another one runs. The
+  # note then stays, and the next commit takes it.
+  def commit(message)
+    dir = folder("memory")
+    Git.run(dir, "add", "-A") && Git.run(dir, "commit", "-q", "-m", message) if File.exist?(File.join(dir, ".git"))
   end
 
   def reflect
@@ -1648,8 +1659,9 @@ end
     end
 
     # ssh_host is a Host alias of ~/.ssh/config with the key of the bot.
+    def remote = @settings["ssh_host"] ? "git@#{@settings["ssh_host"]}:#{repo}.git" : "origin"
+
     def push(branch)
-      remote = @settings["ssh_host"] ? "git@#{@settings["ssh_host"]}:#{repo}.git" : "origin"
       return if Git.run(@root, "push", "-q", remote, "#{branch}:#{branch}")
 
       raise Error, "git push of #{branch} to #{remote} failed"
@@ -2711,8 +2723,26 @@ end
     def publish_goal(goal, entry)
       branch = Goals.branch(goal["uuid"])
       github.push(branch)
+      push_memory
       entry = entry ? update_pr(goal, entry, branch) : { "url" => open_pr(goal, branch), "seen" => [] }
       review_state.put(goal["uuid"], entry.merge("head" => Git.out(main_root, "rev-parse", branch)))
+    end
+
+    # The notes go to the remote with each goal pull request. Another clone may
+    # have pushed notes first. Each note has its own file name, so the merge has
+    # no conflicts. A failed push only warns: the notes stay in the local branch.
+    def push_memory
+      return unless Git.branch?(main_root, WorkMemory::BRANCH)
+
+      merge_remote_memory(File.join(main_root, "graphify-out", "memory"))
+      github.push(WorkMemory::BRANCH)
+    rescue Error => e
+      warn "coord: #{e.message}. The notes stay in the local branch #{WorkMemory::BRANCH}."
+    end
+
+    def merge_remote_memory(dir)
+      fetched = File.exist?(File.join(dir, ".git")) && Git.run(dir, "fetch", "-q", github.remote, WorkMemory::BRANCH)
+      fetched && Git.run(dir, "merge", "-q", "--no-edit", "--allow-unrelated-histories", "FETCH_HEAD")
     end
 
     def create_pr(goal, branch)
