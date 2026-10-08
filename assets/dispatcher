@@ -86,6 +86,11 @@
 # reached the model. The dispatcher returns its messages without an attempt
 # and pauses new runs: 15 minutes, then a doubling pause up to MAX_BACKOFF.
 #
+# Unknown model: a run that fails because the harness does not know the
+# model never reached the model, and a retry fails the same way. The
+# dispatcher returns its messages without an attempt, starts no new run until
+# it restarts, and escalates once to the project manager. The claims stay.
+#
 # Tasks: when `coord next ROLE` lists unclaimed tasks, the dispatcher claims
 # one task for its worker and runs the agent on that task only. The claim is
 # atomic, so a run never starts for a task that another worker took. If the
@@ -1129,6 +1134,9 @@ module Dispatcher
     # The board shows a paused worker, not a live one that fails each cycle.
     def paused(time) = save("paused_until" => time&.utc&.strftime("%Y-%m-%dT%H:%M:%SZ"))
 
+    # A halted worker starts no run until its dispatcher restarts.
+    def halted(reason) = save("halted" => reason.to_s[0, 300])
+
     private
 
     def now = Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1153,6 +1161,16 @@ module Dispatcher
   # A timeout is never a limit: the output can be the agent's own text.
   module UsageLimit
     PATTERN = /usage limit|rate limit|hit your limit|limit reached|quota exceeded|too many requests/i
+
+    def self.hit?(result) = result.reason == :exit && result.output.lines.last(10).join.match?(PATTERN)
+  end
+
+  # ModelError spots a model name that the harness does not know, such as a
+  # typo in the roster. Such a run never reached the model, and each retry
+  # fails the same way. Only a fix of the model name helps.
+  module ModelError
+    PATTERN = /unrecognized_model|unknown\ model|model[_\ ]?not[_\ ]?found|invalid\ model|
+               model\b.{0,80}\b(?:does\ not\ exist|is\ not\ supported)/ix
 
     def self.hit?(result) = result.reason == :exit && result.output.lines.last(10).join.match?(PATTERN)
   end
@@ -1193,7 +1211,7 @@ module Dispatcher
       @status = WorkerStatus.new(config)
     end
 
-    # Returns the outcome of the run: :done, :waiting, or :failed.
+    # Returns the outcome of the run: :done, :waiting, :failed, :limited, or :broken.
     def dispatch(prompt) = run(prompt).tap { |outcome| @status.finished(outcome, Log.last, @model) }
 
     private
@@ -1289,10 +1307,12 @@ module Dispatcher
       outcome != :done || Verify.pass?(@config, @env) ? outcome : :failed
     end
 
-    # Returns :limited for a usage limit, else :failed.
+    # Returns :broken for an unknown model, :limited for a usage limit, else :failed.
     def failed(result)
       Log.line("agent #{failure_label(result.reason)}: #{result.output.lines.last(5).join.strip}")
       report_timeout if result.reason == :timeout
+      return :broken if ModelError.hit?(result)
+
       UsageLimit.hit?(result) ? :limited : :failed
     end
 
@@ -1454,7 +1474,7 @@ module Dispatcher
     def cycle
       Presence.write(@config)
       chores.run
-      return paused_cycle if @pause.active?
+      return held_cycle if held?
 
       worked = dispatch_messages || (@config.poll_tasks && (dispatch_claimed || dispatch_tasks))
       Log.line("no work this cycle") if @config.verbose && !worked
@@ -1466,9 +1486,34 @@ module Dispatcher
 
     def dispatch(prompt) = @runner.dispatch(prompt).tap { |outcome| pace(outcome) }
 
-    def pace(outcome) = outcome == :limited ? pause : unpause
+    def pace(outcome)
+      return halt if outcome == :broken
+
+      outcome == :limited ? pause : unpause
+    end
+
     def unpause = @pause.clear && @status.paused(nil)
-    def paused_cycle = @config.verbose && Log.line("paused for a usage limit until #{@pause.until.utc}")
+    def held? = @halted || @pause.active?
+    def held_cycle = @config.verbose && Log.line(held_label)
+
+    def held_label
+      @halted ? "halted: the harness does not know the model" : "paused for a usage limit until #{@pause.until.utc}"
+    end
+
+    HALT_NOTICE = "Dispatcher of %<worker>s halted: the %<harness>s harness does not know model %<model>s. " \
+                  "Each retry fails the same way. Fix the model in the role file and in " \
+                  ".maf/coordination/workers.json, then run `maf worker restart %<worker>s`. The claims stay."
+
+    # An unknown model never fixes itself. The dispatcher stops new runs and
+    # escalates once, so the work does not wait without a sign.
+    def halt
+      @halted = true
+      @status.halted(Log.last)
+      Log.line("unknown model: no new run until the dispatcher restarts")
+      text = format(HALT_NOTICE, worker: @config.worker, harness: @config.harness,
+                                 model: @config.model || "(default)")
+      CoordCall.run(Main.run_env(@config), "escalate", text)
+    end
 
     def pause
       @pause.start
@@ -1499,11 +1544,14 @@ module Dispatcher
     end
 
     # A run that waits for someone else handled its messages, so they are read.
-    # Only a failed run returns them for another try.
+    # Only a failed run returns them for another try. A usage limit or an
+    # unknown model returns them without an attempt.
+    SETTLE = { failed: :release, limited: :restore, broken: :restore }.freeze
+
     # Tasks still unclaimed after a message run count as dispatched, so the
     # next cycle backs off instead of starting another run for them.
     def settle(messages, outcome)
-      { failed: :release, limited: :restore }.fetch(outcome, :ack).then { |step| @mailbox.public_send(step, messages) }
+      @mailbox.public_send(SETTLE.fetch(outcome, :ack), messages)
       @watch.dispatched(@poller.unclaimed_task_ids) if @config.poll_tasks
       true
     end

@@ -1522,6 +1522,55 @@ class UsageLimitTest < Minitest::Test
   end
 end
 
+class ModelErrorTest < Minitest::Test
+  include DispatcherTestHelpers
+
+  def setup
+    @dir = Dir.mktmpdir("dispatcher-model-test")
+  end
+
+  def teardown
+    FileUtils.remove_entry(@dir)
+  end
+
+  UNKNOWN = %(echo 'agent failed: [claude-code:unrecognized_model] {"model":"claude-sonet-5-5"}'; exit 1)
+
+  def main(command) = Dispatcher::Main.new(config(command: command, poll_tasks: false, timeout: 5))
+  def status = JSON.parse(File.read(File.join(@dir, "status", "backend-developer-bot.json")))
+  def result(text) = Dispatcher::Result.new(text, false, false, :exit)
+
+  # A retry with the same model fails the same way: one run, one escalation, no attempt counted.
+  def test_an_unknown_model_halts_new_runs_and_escalates_once
+    write_message("backend-developer", "1.md", "architect", "first")
+    calls = []
+    runs = File.join(@dir, "runs")
+    dispatcher = main("echo run >> #{runs}; #{UNKNOWN}")
+    with_coord_calls(calls) { capture_io { 3.times { dispatcher.cycle } } }
+    assert_equal 1, File.readlines(runs).size
+    assert_equal ["1.md"], inbox.map { |path| File.basename(path) }
+    assert_equal "broken", status.dig("last_run", "outcome")
+    assert_includes status["halted"], "unrecognized_model"
+    assert_equal [["escalate"]], calls.map { |args| args.first(1) }
+    assert_includes calls.first.last, "maf worker restart backend-developer-bot"
+  end
+
+  def test_the_harness_texts_of_an_unknown_model_match
+    ["[claude-code:unrecognized_model]", "The model `gpt-9` does not exist or you do not have access to it.",
+     "ProviderModelNotFoundError", "Error: Unknown model: foo", "model is not supported when using Codex"]
+      .each { |text| assert Dispatcher::ModelError.hit?(result(text)), text }
+    refute Dispatcher::ModelError.hit?(result("rate limit"))
+    refute Dispatcher::ModelError.hit?(Dispatcher::Result.new("unknown model", false, false, :timeout))
+  end
+
+  def with_coord_calls(calls)
+    original = Dispatcher::CoordCall.method(:run)
+    Dispatcher::CoordCall.define_singleton_method(:run) { |_env, *args| calls << args }
+    yield
+  ensure
+    Dispatcher::CoordCall.define_singleton_method(:run, original)
+  end
+end
+
 # A dispatched Codex run starts without the user's extra tools. Only the
 # graphify server of this project stays.
 class CodexLeanTest < Minitest::Test
