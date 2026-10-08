@@ -13,6 +13,7 @@ require_relative "team"
 require_relative "team_command"
 require_relative "worker_control"
 require_relative "untrack"
+require_relative "version"
 
 module Maf
   MANIFEST = ".maf/config.json"
@@ -53,11 +54,14 @@ module Maf
       "uninstall" => "[--check] [--yes] [--force]             remove the flow from the project",
       "migrate" => "[--check] [--yes]                       move an old-layout install into .maf/",
       "untrack" => "[--check] [--yes]                       remove the flow from git; the files stay (then commit)",
-      "menu" => "                                        interactive mode (also: maf without a command)"
+      "menu" => "                                        interactive mode (also: maf without a command)",
+      "guide" => "                                        print the setup guide for an AI agent (install.md)",
+      "version" => "                                        print the maf version (also: --version)"
     }.freeze
 
     def initialize(argv)
       @command, *@args = argv
+      @command = "version" if %w[-v --version].include?(@command)
     end
 
     def run
@@ -74,7 +78,7 @@ module Maf
     # Every command except these needs the new layout.
     # maf uninstall --check previews the migration on an old layout.
     def old_layout?
-      return false if %w[migrate roles menu].include?(@command) || uninstall_check?
+      return false if %w[migrate roles menu guide version].include?(@command) || uninstall_check?
 
       Migrate.old_layout?(Dir.pwd)
     end
@@ -113,6 +117,8 @@ module Maf
     def run_retire = Retire.new(SetupAgent::Project.root, @args.first || abort("usage: maf retire ROLE[_WORKER]")).run
     def run_uninstall = Uninstall::Runner.new(["--project", Dir.pwd, *@args]).run
     def run_menu = Menu.new.run
+    def run_guide = puts(File.read(File.join(Flow::ROOT, "install.md")))
+    def run_version = puts("maf #{VERSION}")
     def run_untrack = Untrack.new(SetupAgent::Project.root, @args).run
     def run_migrate = Migrate::Runner.new(["--project", Dir.pwd, *@args]).run
 

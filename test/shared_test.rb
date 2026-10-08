@@ -29,7 +29,7 @@ class SharedLoadTest < Minitest::Test
 
   # The installer and the uninstaller know a shared file by this signature.
   def test_each_file_carries_the_signature
-    SHARED_FILES.each { |file| assert_includes File.read(file), Bootstrap::SHARED_SIGNATURE, file }
+    SHARED_FILES.each { |file| assert_includes File.read(file), Maf::Bootstrap::SHARED_SIGNATURE, file }
   end
 end
 

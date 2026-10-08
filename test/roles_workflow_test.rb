@@ -6,7 +6,7 @@
 #
 # Run: ruby test/roles_workflow_test.rb
 #
-# The tests run bin/maf as a subprocess in a disposable project directory.
+# The tests run exe/maf as a subprocess in a disposable project directory.
 require "minitest/autorun"
 require_relative "board_guard"
 require "tmpdir"
@@ -14,7 +14,7 @@ require "fileutils"
 require "yaml"
 require "rbconfig"
 
-MAF = File.expand_path("../bin/maf", __dir__)
+MAF = File.expand_path("../exe/maf", __dir__)
 
 class RolesWorkflowTestCase < Minitest::Test
   def setup

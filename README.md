@@ -16,25 +16,49 @@ vendor dependency.
 
 ---
 
+## Requirements
+
+The `maf` gem holds the flow. Install these tools yourself:
+
+| Tool | Why | Install |
+|---|---|---|
+| Ruby 3.0+ | runs `maf`, `coord`, and the other scripts | macOS: `brew install mise && mise install ruby`. Linux: your package manager or [mise](https://mise.jdx.dev) |
+| git | worktrees, hooks, the local exclude file | macOS: `xcode-select --install` or `brew install git`. Linux: `apt install git` |
+| Taskwarrior | the task board | macOS: `brew install task`. Linux: `apt install taskwarrior` |
+| One or more harnesses | the agents | [Claude Code](https://docs.claude.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [opencode](https://opencode.ai), [Hermes](https://github.com/NousResearch/hermes-agent) |
+| graphify (optional) | the shared knowledge graph | `uv tool install graphifyy` |
+
+Install the gem:
+
+```sh
+gem install maf
+maf version
+```
+
+Upgrade the gem. Then run `maf update` in each project: it replaces the flow files with the new versions.
+
+```sh
+gem update maf
+cd ~/Projects/my-app && maf update
+```
+
 ## Fast path — agent-driven
 
-1. Clone this repo anywhere.
+1. Install the gem: `gem install maf`.
 2. Open any AI coding agent in your project folder and say:
 
-   > Here is the multi-agent flow setup: `<path>/install.md`. Read it and implement it.
+   > Run `maf guide`. Read the output and implement it.
 
 The agent asks which harnesses and roles to use, runs `maf add`, and prints
 the `maf start` commands to start each session.
 
-See **[install.md](install.md)** for the exact instructions the agent follows.
+`maf guide` prints **[install.md](install.md)**: the exact instructions that the agent follows.
 
 ## Manual path - the maf command
 
-Link `bin/maf` into a folder on `PATH` once. Then run `maf` in the project root.
+Run `maf` in the project root.
 
 ```sh
-ln -sf "$PWD/bin/maf" ~/.local/bin/maf
-
 cd ~/Projects/my-app
 maf roles                                             # list the roles
 maf add claude:architect opencode:backend-developer   # install the flow and add agents
@@ -137,9 +161,18 @@ multi_agent_flow/
   docs/flow-cli-names.md      # code and CLI name of each flow term
   GETTING_STARTED.md          # first-time walkthrough (concepts + manual setup)
   USER_MANUAL.md              # full team setup reference
+  maf.gemspec                 # the gem: files, version, the webrick dependency
+  Gemfile                     # development gems: rake, minitest, rubocop
+  CHANGELOG.md                # changes per version
+  exe/
+    maf                       # the maf command line tool (gem install maf puts it on PATH)
   bin/
-    maf                       # the maf command line tool; link it into PATH
+    maf                       # old path of the command; loads exe/maf
+    setup                     # bundle install
+    console                   # irb with maf loaded
+  lib/maf.rb                  # require "maf" loads the command line tool
   lib/maf/
+    version.rb                # Maf::VERSION
     cli.rb                    # maf subcommands
     menu.rb                   # interactive menu (maf without a command)
     prompt.rb                 # numbered terminal questions for the menu
@@ -200,6 +233,7 @@ multi_agent_flow/
     untrack_test.rb           # tests for maf untrack
     analyst_test.rb           # tests for the analyst
     shared_test.rb            # tests for lib/maf/shared/
+    gemspec_test.rb           # tests that the gem holds every runtime file
 ```
 
 ---
@@ -216,6 +250,7 @@ cp -R "$PWD" ~/.config/opencode/skills/multi-agent-flow
 cp -R "$PWD" ~/.claude/skills/multi-agent-flow
 ```
 
+The skill runs the `maf` command. Install the gem first: `gem install maf`.
 Restart the agent to load the skill. You can also hand `SKILL.md` plus `assets/`
 to any agent as direct context.
 
@@ -254,15 +289,37 @@ and `lib/maf/setup_agent/worktree.rb`; each script carries its signature; and th
 literals that the standalone scripts share (lead roles, read-only toolsets,
 the report format, the presence start time) are identical.
 
+Install the development gems once:
+
+```sh
+bin/setup                          # bundle install
+```
+
 Run the checks and all tests:
 
 ```sh
-rake                               # scripts/check.rb, RuboCop, then all tests
-rake lint                          # RuboCop only
-rake test TEST=test/coord_test.rb  # one test file
+bundle exec rake                               # scripts/check.rb, RuboCop, then all tests
+bundle exec rake lint              # RuboCop only
+bundle exec rake test TEST=test/coord_test.rb  # one test file
 ```
 
-RuboCop (`gem install rubocop -v 1.91.0`) uses `.rubocop.yml`. It sets the
+To use maf from the clone, link `exe/maf` into a folder on `PATH`:
+
+```sh
+ln -sf "$PWD/exe/maf" ~/.local/bin/maf
+```
+
+Build and install the gem from the clone:
+
+```sh
+bundle exec rake build             # writes pkg/maf-VERSION.gem
+bundle exec rake install           # builds and installs the gem
+```
+
+To release, change `Maf::VERSION` in `lib/maf/version.rb` and add a
+`CHANGELOG.md` entry.
+
+RuboCop (pinned in the `Gemfile`) uses `.rubocop.yml`. It sets the
 size rules: a class at most 100 lines, a method at most 5 lines and 4
 parameters, a line at most 120 characters. `.rubocop_todo.yml` lists the code
 that broke a rule before the config existed. Fix an entry, then delete it.

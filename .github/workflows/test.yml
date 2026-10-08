@@ -1,5 +1,6 @@
 # Runs scripts/check.rb, RuboCop, and all tests on each push to main and each
-# pull request. Ruby 3.0 is the lowest version the flow supports.
+# pull request. Then it builds the maf gem, installs it, and runs it in an
+# empty project. Ruby 3.0 is the lowest version the flow supports.
 name: test
 
 on:
@@ -15,8 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # A new RuboCop version can add cops. Raise the pin on purpose, then fix
-  # or list the new offenses.
+  # The Gemfile pins RuboCop. A new RuboCop version can add cops. Raise the
+  # pin on purpose, then fix or list the new offenses.
   lint:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -26,12 +27,10 @@ jobs:
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "4.0"
-
-      - name: Install RuboCop
-        run: gem install --no-document rubocop -v 1.91.0
+          bundler-cache: true
 
       - name: Run RuboCop
-        run: rake lint
+        run: bundle exec rake lint
 
   test:
     name: ${{ matrix.os }} / Ruby ${{ matrix.ruby }}
@@ -44,12 +43,15 @@ jobs:
           - { os: ubuntu-24.04, ruby: "3.0" }
           - { os: ubuntu-24.04, ruby: "4.0" }
           - { os: macos-15, ruby: "4.0" }
+    env:
+      BUNDLE_WITHOUT: lint
     steps:
       - uses: actions/checkout@v5
 
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
 
       # Tests that need task, git, or node skip without them. CI installs all.
       - name: Install Taskwarrior (Linux)
@@ -59,9 +61,6 @@ jobs:
       - name: Install Taskwarrior (macOS)
         if: runner.os == 'macOS'
         run: brew install task
-
-      - name: Install webrick
-        run: gem install --no-document webrick
 
       - name: Configure git
         run: |
@@ -73,4 +72,42 @@ jobs:
         run: ruby -v && task --version && git --version && node --version
 
       - name: Run checks and tests
-        run: rake check test
+        run: bundle exec rake check test
+
+  # The tests run maf from the clone. This job runs maf as a user gets it.
+  package:
+    name: gem / Ruby ${{ matrix.ruby }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ["3.0", "4.0"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+
+      - name: Install Taskwarrior
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq taskwarrior
+
+      - name: Build and install the gem
+        run: gem build maf.gemspec && gem install --no-document ./maf-*.gem
+
+      - name: Run maf in an empty project
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.com
+          git config --global init.defaultBranch main
+          cd "$(mktemp -d)"
+          git init -q && git commit -q --allow-empty -m init
+          maf version
+          maf help
+          maf guide | head -1
+          maf add claude:architect
+          test -x .maf/bin/coord
+          test -z "$(find . -type l -lname "*$(gem env gemdir)*")"
+          ruby -e 'require "webrick"'
+          maf uninstall --yes

@@ -9,27 +9,37 @@ You set up a shared coordination layer for multiple coding agents in one project
 
 ## Step 1 - Install the maf command
 
-This file lives in the flow folder. Call that folder `FLOW`.
-Link `FLOW/bin/maf` into a folder on `PATH`:
-
-```sh
-export FLOW=/path/to/multi_agent_flow
-mkdir -p ~/.local/bin
-ln -sf "$FLOW/bin/maf" ~/.local/bin/maf
-maf help
-```
-
-If `maf help` fails, add `~/.local/bin` to `PATH`.
-If the link exists already, keep it.
-
 Check the tools. `maf` and the `coord` tool are Ruby scripts.
 
 ```sh
 ruby -v
+git --version
 task --version
 ```
 
-If `task` is missing, install it (`brew install task`).
+If Ruby is older than 3.0, stop. Tell the user to install Ruby 3.0 or later.
+If `task` is missing, install it. On macOS, run `brew install task`.
+On Linux, run `sudo apt-get install taskwarrior`.
+
+Install the maf gem:
+
+```sh
+gem install maf
+maf version
+```
+
+If `maf version` works already, do not install the gem again.
+If `maf version` fails after the install, add the gem bin folder to `PATH`.
+`gem env` shows the folder under EXECUTABLE DIRECTORY.
+
+The flow folder holds the templates. Call that folder `FLOW`:
+
+```sh
+export FLOW="$(dirname "$(dirname "$(gem which maf)")")"
+ls "$FLOW/templates"
+```
+
+If maf runs from a clone of the repository, `FLOW` is the clone folder.
 
 ## Step 2 - Ask the user for the project folder
 

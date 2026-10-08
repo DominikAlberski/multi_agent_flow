@@ -21,7 +21,7 @@ require "rbconfig"
 ROOT = File.expand_path("..", __dir__)
 LIB = File.join(ROOT, "lib", "maf")
 BOOTSTRAP = File.join(LIB, "bootstrap.rb")
-FLOW = ["-r", File.join(LIB, "flow.rb"), "-e", "Flow::Generator.new(ARGV).run", "--"].freeze
+FLOW = ["-r", File.join(LIB, "flow.rb"), "-e", "Maf::Flow::Generator.new(ARGV).run", "--"].freeze
 require File.join(LIB, "setup_agent")
 require File.join(LIB, "flow")
 load File.join(ROOT, "assets", "vault")
@@ -408,11 +408,11 @@ class FlowTest < InstallerTestCase
     FileUtils.mkdir_p(File.join(@dir, ".claude", "agents"))
     File.write(File.join(@dir, ".claude", "agents", "mine.md"), "mine")
     flow("--agent", "claude:architect")
-    LocalExclude.remove(@dir)
+    Maf::LocalExclude.remove(@dir)
 
     flow("--agent", "claude:architect")
 
-    assert_includes LocalExclude.listed(File.join(@dir, ".git", "info", "exclude")), ".claude/agents/architect.md"
+    assert_includes Maf::LocalExclude.listed(File.join(@dir, ".git", "info", "exclude")), ".claude/agents/architect.md"
   end
 
   # Nothing of the flow goes into git: each harness link is excluded in this clone.
@@ -420,7 +420,7 @@ class FlowTest < InstallerTestCase
     system("git", "init", "-q", @dir, exception: true)
     flow("--agent", "opencode:tester", "--agent", "codex:architect")
 
-    listed = LocalExclude.listed(File.join(@dir, ".git", "info", "exclude"))
+    listed = Maf::LocalExclude.listed(File.join(@dir, ".git", "info", "exclude"))
     assert_includes listed, ".opencode/agents"
     assert_includes listed, ".codex/prompts"
     assert_includes listed, ".codex/hooks.json"
@@ -678,18 +678,18 @@ end
 class SetupAgentTest < Minitest::Test
   # A lead role owns no task. Its launch prompt must not tell it to claim one.
   def test_hermes_prompt_for_a_lead_role_forbids_a_claim
-    prompt = SetupAgent::Launcher::Hermes.prompt("project-manager")
+    prompt = Maf::SetupAgent::Launcher::Hermes.prompt("project-manager")
 
     assert_includes prompt, "Never claim a task"
     assert_includes prompt, "coord inbox --wait"
   end
 
   def test_hermes_prompt_for_a_worker_role_claims_tasks
-    assert_includes SetupAgent::Launcher::Hermes.prompt("tester"), "Claim a task"
+    assert_includes Maf::SetupAgent::Launcher::Hermes.prompt("tester"), "Claim a task"
   end
 
   def test_role_without_a_worker_suffix_defaults_to_one
-    parsed = SetupAgent::Args.parse(%w[opencode backend-developer])
+    parsed = Maf::SetupAgent::Args.parse(%w[opencode backend-developer])
 
     assert_equal "opencode", parsed.harness
     assert_equal "backend-developer", parsed.role
@@ -699,7 +699,7 @@ class SetupAgentTest < Minitest::Test
   end
 
   def test_role_with_a_worker_suffix_and_a_model
-    parsed = SetupAgent::Args.parse(["claude", "reviewer_2", "model:openrouter/x"])
+    parsed = Maf::SetupAgent::Args.parse(["claude", "reviewer_2", "model:openrouter/x"])
 
     assert_equal "reviewer", parsed.role
     assert_equal "2", parsed.worker_id
@@ -708,7 +708,7 @@ class SetupAgentTest < Minitest::Test
   end
 
   def test_model_flag
-    parsed = SetupAgent::Args.parse(["opencode", "reviewer", "--model", "openrouter/x"])
+    parsed = Maf::SetupAgent::Args.parse(["opencode", "reviewer", "--model", "openrouter/x"])
 
     assert_equal "openrouter/x", parsed.model
     refute parsed.dispatch
@@ -718,14 +718,14 @@ class SetupAgentTest < Minitest::Test
   # A dispatched instance defaults to worker "bot", so it never shares a
   # worktree with the interactive instance <role>-1.
   def test_dispatch_defaults_the_worker_to_bot
-    parsed = SetupAgent::Args.parse(%w[hermes tester --dispatch])
+    parsed = Maf::SetupAgent::Args.parse(%w[hermes tester --dispatch])
 
     assert parsed.dispatch
     assert_equal "tester-bot", parsed.worker
   end
 
   def test_dispatch_forwards_other_flags_to_the_dispatcher
-    parsed = SetupAgent::Args.parse(%w[hermes tester_2 --dispatch --model m --cache-window 1500 --once])
+    parsed = Maf::SetupAgent::Args.parse(%w[hermes tester_2 --dispatch --model m --cache-window 1500 --once])
 
     assert_equal "m", parsed.model
     assert_equal "tester-2", parsed.worker
@@ -733,7 +733,7 @@ class SetupAgentTest < Minitest::Test
   end
 
   def test_dispatch_may_come_first
-    parsed = SetupAgent::Args.parse(%w[--dispatch hermes tester])
+    parsed = Maf::SetupAgent::Args.parse(%w[--dispatch hermes tester])
 
     assert parsed.dispatch
     assert_equal "hermes", parsed.harness
@@ -741,16 +741,16 @@ class SetupAgentTest < Minitest::Test
 
   # Regression: a trailing `--model` with no value became the model name.
   def test_model_flag_needs_a_value
-    assert_raises(SystemExit) { capture_io { SetupAgent::Args.parse(%w[hermes tester --dispatch --model]) } }
-    assert_raises(SystemExit) { capture_io { SetupAgent::Args.parse(%w[hermes tester --dispatch --model --once]) } }
+    assert_raises(SystemExit) { capture_io { Maf::SetupAgent::Args.parse(%w[hermes tester --dispatch --model]) } }
+    assert_raises(SystemExit) { capture_io { Maf::SetupAgent::Args.parse(%w[hermes tester --dispatch --model --once]) } }
   end
 
   def test_dispatcher_flags_need_dispatch
-    assert_raises(SystemExit) { capture_io { SetupAgent::Args.parse(%w[claude reviewer --interval 5]) } }
+    assert_raises(SystemExit) { capture_io { Maf::SetupAgent::Args.parse(%w[claude reviewer --interval 5]) } }
   end
 
   def test_dispatch_runs_the_main_dispatcher_with_harness_model_and_flags
-    parsed = SetupAgent::Args.parse(%w[claude reviewer --dispatch --interval 30])
+    parsed = Maf::SetupAgent::Args.parse(%w[claude reviewer --dispatch --interval 30])
     ran = nil
     root = nil
     Dir.mktmpdir do |dir|
@@ -758,7 +758,7 @@ class SetupAgentTest < Minitest::Test
         root = Dir.pwd
         FileUtils.mkdir_p(".maf/bin")
         FileUtils.touch(".maf/bin/dispatcher")
-        with_exec_stub(->(cmd) { ran = cmd }) { SetupAgent::Dispatch.launch(parsed, "sonnet") }
+        with_exec_stub(->(cmd) { ran = cmd }) { Maf::SetupAgent::Dispatch.launch(parsed, "sonnet") }
       end
     end
     assert_equal [RbConfig.ruby, File.join(root, ".maf/bin/dispatcher"), "reviewer", "--harness", "claude",
@@ -775,7 +775,7 @@ class SetupAgentTest < Minitest::Test
       worktree = File.realpath(dir)
       log = File.join(worktree, "out.log")
       Dir.chdir(worktree) do
-        SetupAgent::Dispatch.spawn_detached(["printenv", "PWD"], log)
+        Maf::SetupAgent::Dispatch.spawn_detached(["printenv", "PWD"], log)
         wait_for_log(log)
       end
       assert_equal worktree, File.read(log).strip
@@ -783,15 +783,15 @@ class SetupAgentTest < Minitest::Test
   end
 
   def test_dispatch_aborts_without_a_committed_dispatcher
-    parsed = SetupAgent::Args.parse(%w[claude reviewer --dispatch])
+    parsed = Maf::SetupAgent::Args.parse(%w[claude reviewer --dispatch])
     Dir.mktmpdir do |dir|
-      Dir.chdir(dir) { assert_raises(SystemExit) { capture_io { SetupAgent::Dispatch.launch(parsed, nil) } } }
+      Dir.chdir(dir) { assert_raises(SystemExit) { capture_io { Maf::SetupAgent::Dispatch.launch(parsed, nil) } } }
     end
   end
 
   def with_exec_stub(stub)
-    launcher = SetupAgent::Launcher.singleton_class
-    original = SetupAgent::Launcher.method(:exec_or_die)
+    launcher = Maf::SetupAgent::Launcher.singleton_class
+    original = Maf::SetupAgent::Launcher.method(:exec_or_die)
     launcher.define_method(:exec_or_die) { |cmd| stub.call(cmd) }
     yield
   ensure
@@ -805,7 +805,7 @@ class SetupAgentTest < Minitest::Test
       FileUtils.mkdir_p(File.join(dir, ".codex", "prompts"))
       File.write(File.join(dir, ".codex", "prompts", "tester.md"), "prompt")
       with_exec_stub(->(cmd) { calls << cmd }) do
-        Dir.chdir(dir) { SetupAgent::Launcher::Codex.launch("tester", "tester-1", nil) }
+        Dir.chdir(dir) { Maf::SetupAgent::Launcher::Codex.launch("tester", "tester-1", nil) }
       end
       assert_equal ["--add-dir", File.join(File.realpath(dir), ".maf", "coordination")], calls.first[1, 2]
     end
@@ -828,7 +828,7 @@ class SetupAgentTest < Minitest::Test
     old = ENV["CODEX_HOME"]
     ENV["CODEX_HOME"] = dir
     _, err = capture_io do
-      with_exec_stub(->(_cmd) {}) { Dir.chdir(dir) { SetupAgent::Launcher::Codex.launch("tester", "t-1", nil) } }
+      with_exec_stub(->(_cmd) {}) { Dir.chdir(dir) { Maf::SetupAgent::Launcher::Codex.launch("tester", "t-1", nil) } }
     end
     err
   ensure
@@ -843,7 +843,7 @@ class SetupAgentTest < Minitest::Test
         FileUtils.mkdir_p(File.dirname(File.join(dir, ".maf", rel)))
         File.write(File.join(dir, ".maf", rel), "{}")
       end
-      launch = -> { Dir.chdir(dir) { SetupAgent::Launcher::Claude.launch("tester", "t", nil) } }
+      launch = -> { Dir.chdir(dir) { Maf::SetupAgent::Launcher::Claude.launch("tester", "t", nil) } }
       with_exec_stub(->(cmd) { calls << cmd }, &launch)
       flow = File.join(File.realpath(dir), ".maf")
       expected = ["--settings", "#{flow}/claude/settings.json", "--mcp-config", "#{flow}/mcp/claude.json"]
@@ -855,11 +855,11 @@ class SetupAgentTest < Minitest::Test
   # Worktrees live inside the project, under <project>/.maf/worktrees/<slug>.
   def test_worktree_dir_is_inside_the_project
     assert_equal "/tmp/myproject/.maf/worktrees/tester-1",
-                 SetupAgent::Worktree.dir_for("/tmp/myproject", "tester-1")
+                 Maf::SetupAgent::Worktree.dir_for("/tmp/myproject", "tester-1")
   end
 
   def test_manifest_verifies_a_known_agent_and_its_model
-    manifest = SetupAgent::Manifest.new(
+    manifest = Maf::SetupAgent::Manifest.new(
       [{ "harness" => "opencode", "role" => "backend-developer", "model" => "m" }]
     )
 
@@ -868,14 +868,14 @@ class SetupAgentTest < Minitest::Test
   end
 
   def test_manifest_rejects_an_unknown_agent
-    manifest = SetupAgent::Manifest.new([])
+    manifest = Maf::SetupAgent::Manifest.new([])
 
     assert_raises(SystemExit) { capture_io { manifest.verify!("opencode", "nope") } }
   end
 
   # maf add keeps the current agents, so the hint names only the missing agent.
   def test_manifest_rejection_prints_the_maf_add_command
-    manifest = SetupAgent::Manifest.new([{ "harness" => "claude", "role" => "reviewer" }])
+    manifest = Maf::SetupAgent::Manifest.new([{ "harness" => "claude", "role" => "reviewer" }])
 
     _out, err = capture_io { assert_raises(SystemExit) { manifest.verify!("opencode", "frontend-developer") } }
     assert_includes err, "maf add opencode:frontend-developer"
@@ -883,8 +883,8 @@ class SetupAgentTest < Minitest::Test
   end
 
   def test_hermes_launcher_is_registered
-    SetupAgent::Launcher.register_defaults
-    assert_kind_of Module, SetupAgent::Launcher.for("hermes")
+    Maf::SetupAgent::Launcher.register_defaults
+    assert_kind_of Module, Maf::SetupAgent::Launcher.for("hermes")
   end
 
   # The skill name uses the main checkout's name, from the project root and
@@ -892,8 +892,8 @@ class SetupAgentTest < Minitest::Test
   def test_hermes_skill_name_is_the_same_in_root_and_worktree
     skip "git not installed" unless system("git", "--version", out: File::NULL)
     in_project_with_worktree do |root, worktree|
-      Dir.chdir(root) { assert_equal "myproject-tester", SetupAgent::HermesSkill.name("tester") }
-      Dir.chdir(worktree) { assert_equal "myproject-tester", SetupAgent::HermesSkill.name("tester") }
+      Dir.chdir(root) { assert_equal "myproject-tester", Maf::SetupAgent::HermesSkill.name("tester") }
+      Dir.chdir(worktree) { assert_equal "myproject-tester", Maf::SetupAgent::HermesSkill.name("tester") }
     end
   end
 
@@ -905,7 +905,7 @@ class SetupAgentTest < Minitest::Test
       File.write(File.join(root, ".maf/config.json"), JSON.generate(hermes_dir: File.join(root, "skills")))
       FileUtils.mkdir_p(File.join(root, "skills", "myproject-tester"))
       FileUtils.touch(File.join(root, "skills", "myproject-tester", "SKILL.md"))
-      Dir.chdir(worktree) { assert SetupAgent::HermesSkill.installed?("tester") }
+      Dir.chdir(worktree) { assert Maf::SetupAgent::HermesSkill.installed?("tester") }
     end
   end
 
@@ -946,23 +946,23 @@ class HermesHookTest < Minitest::Test
   def test_declared_when_the_config_names_the_script
     File.write(@config, "hooks:\n  on_session_end:\n    - command: #{@script}\n")
 
-    assert Flow::HermesHook.declared?(@config, @script)
+    assert Maf::Flow::HermesHook.declared?(@config, @script)
   end
 
   def test_not_declared_without_a_config_file
-    refute Flow::HermesHook.declared?(@config, @script)
+    refute Maf::Flow::HermesHook.declared?(@config, @script)
   end
 
   def test_not_declared_when_the_config_names_another_hook
     File.write(@config, "hooks:\n  on_session_end:\n    - command: /tmp/other-hook.sh\n")
 
-    refute Flow::HermesHook.declared?(@config, @script)
+    refute Maf::Flow::HermesHook.declared?(@config, @script)
   end
 
   def test_approved_for_a_matching_entry
     write_allowlist(recorded: recorded)
 
-    assert Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+    assert Maf::Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
   end
 
   # Hermes records the approval time rounded to microseconds. Ruby reports the
@@ -970,39 +970,39 @@ class HermesHookTest < Minitest::Test
   def test_approved_when_the_recorded_time_is_one_microsecond_late
     write_allowlist(recorded: recorded(0.000_001))
 
-    assert Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+    assert Maf::Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
   end
 
   def test_not_approved_after_the_script_changes
     write_allowlist(recorded: recorded(-60))
 
-    refute Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+    refute Maf::Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
   end
 
   def test_not_approved_for_another_event
     write_allowlist(recorded: recorded, event: "pre_tool_call")
 
-    refute Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+    refute Maf::Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
   end
 
   def test_not_approved_without_an_allowlist_file
-    refute Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+    refute Maf::Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
   end
 
   def test_not_approved_without_a_recorded_time
     write_allowlist(recorded: nil)
 
-    refute Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+    refute Maf::Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
   end
 
   def test_not_approved_when_the_allowlist_is_corrupt
     File.write(@allowlist, "{ not json")
 
-    refute Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
+    refute Maf::Flow::HermesHook.approved?(@allowlist, @script, File.mtime(@script))
   end
 
   def test_config_command_names_the_hook_and_the_event
-    command = Flow::HermesHook.config_command(@script)
+    command = Maf::Flow::HermesHook.config_command(@script)
 
     assert_includes command, "hermes config set hooks.on_session_end"
     assert_includes command, @script

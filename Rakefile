@@ -7,6 +7,7 @@
 #   rake lint                          RuboCop (CI pins the version)
 #   rake test                          all test files
 #   rake test TEST=test/coord_test.rb  one test file
+#   rake build / install / release    gem tasks of Bundler (pkg/maf-VERSION.gem)
 #
 # Each test file runs in its own Ruby process, as `ruby test/x_test.rb` does.
 # The processes run in parallel. A failed file prints its full output.
@@ -15,6 +16,7 @@
 # New git versions start a detached `git maintenance` after a commit. It can
 # hold a lock file in a test repository while the test deletes it. The tests
 # turn automatic maintenance off.
+require "bundler/gem_tasks"
 require "etc"
 require "open3"
 require "rbconfig"

@@ -23,35 +23,37 @@ require_relative "shared/roles"
 
 abort "flow: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
 
-module Flow
-  ROOT = File.expand_path("../..", __dir__)
-  TEMPLATES = File.join(ROOT, "templates")
-  ASSETS = File.join(ROOT, "assets")
-  HARNESSES = %w[opencode claude codex hermes].freeze
-  DEFAULT_HERMES_DIR = File.join(Dir.home, ".hermes", "skills")
+module Maf
+  module Flow
+    ROOT = File.expand_path("../..", __dir__)
+    TEMPLATES = File.join(ROOT, "templates")
+    ASSETS = File.join(ROOT, "assets")
+    HARNESSES = %w[opencode claude codex hermes].freeze
+    DEFAULT_HERMES_DIR = File.join(Dir.home, ".hermes", "skills")
 
-  # Model a harness gets when neither --agent nor --model names one.
-  # Other harnesses have no safe default, so their CLI picks the model.
-  DEFAULT_MODELS = { "claude" => "claude-opus-5-5" }.freeze
+    # Model a harness gets when neither --agent nor --model names one.
+    # Other harnesses have no safe default, so their CLI picks the model.
+    DEFAULT_MODELS = { "claude" => "claude-opus-5-5" }.freeze
 
-  # Roles that dispatch or coordinate instead of implementing. They are never
-  # advertised as dispatch targets in the architect prompt.
-  LEADS = Maf::Shared::Roles::LEADS
-  DISPATCH_EXCLUDE = LEADS
+    # Roles that dispatch or coordinate instead of implementing. They are never
+    # advertised as dispatch targets in the architect prompt.
+    LEADS = Maf::Shared::Roles::LEADS
+    DISPATCH_EXCLUDE = LEADS
 
-  READ_ONLY_TOOLSETS = Maf::Shared::Roles::READ_ONLY_TOOLSETS
+    READ_ONLY_TOOLSETS = Maf::Shared::Roles::READ_ONLY_TOOLSETS
 
-  MAF_DIR = ".maf"
+    MAF_DIR = ".maf"
 
-  # The folder where a harness looks for role files. It is a symlink into
-  # .maf/agents/<harness>/, where the flow keeps the role files.
-  HARNESS_DIRS = { "opencode" => ".opencode/agents", "claude" => ".claude/agents",
-                   "codex" => ".codex/prompts" }.freeze
+    # The folder where a harness looks for role files. It is a symlink into
+    # .maf/agents/<harness>/, where the flow keeps the role files.
+    HARNESS_DIRS = { "opencode" => ".opencode/agents", "claude" => ".claude/agents",
+                     "codex" => ".codex/prompts" }.freeze
 
-  # The role file path inside the project. Hermes keeps role files outside
-  # the project, so it has no path here.
-  def self.role_path(harness, role)
-    HARNESS_DIRS.key?(harness) ? File.join(MAF_DIR, "agents", harness, "#{role}.md") : nil
+    # The role file path inside the project. Hermes keeps role files outside
+    # the project, so it has no path here.
+    def self.role_path(harness, role)
+      HARNESS_DIRS.key?(harness) ? File.join(MAF_DIR, "agents", harness, "#{role}.md") : nil
+    end
   end
 end
 

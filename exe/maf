@@ -1,0 +1,14 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# maf - multi-agent-flow command line tool.
+#
+# Run maf in the project root. maf uses the current directory as the project.
+# Install it with: gem install maf. In a clone, link this file into a
+# directory on PATH. __dir__ follows the link to find lib/.
+lib = File.expand_path("../lib/maf.rb", __dir__)
+abort "maf: cannot find #{lib}. Run: gem install maf. Or link exe/maf into PATH with ln -s. Do not copy it." \
+  unless File.exist?(lib)
+require lib
+
+Maf::CLI.new(ARGV).run

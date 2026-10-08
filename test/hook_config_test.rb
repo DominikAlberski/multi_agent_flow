@@ -22,14 +22,14 @@ end
 
 class CodexProjectHooksTest < HookConfigCase
   def test_installs_project_hooks_without_global_files
-    Flow::CodexHooks.new(@dir).install
+    Maf::Flow::CodexHooks.new(@dir).install
     assert_equal %w[SessionStart Stop], read.fetch("hooks").keys
     refute File.exist?(File.join(@dir, ".codex/hooks/next-task.rb"))
   end
 
   def test_preserves_other_hooks_and_is_idempotent
     write("hooks" => { "Stop" => [{ "hooks" => [foreign_hook] }] }, "description" => "User hooks")
-    2.times { Flow::CodexHooks.new(@dir).install }
+    2.times { Maf::Flow::CodexHooks.new(@dir).install }
     assert_equal 3, read.dig("hooks", "Stop").size
     assert_equal foreign_hook, read.dig("hooks", "Stop", 0, "hooks", 0)
     assert_equal "User hooks", read.fetch("description")
@@ -38,20 +38,20 @@ class CodexProjectHooksTest < HookConfigCase
   def test_corrupt_configuration_is_not_overwritten
     write({})
     File.write(path, "broken")
-    assert_raises(JSON::ParserError) { Flow::CodexHooks.new(@dir).install }
+    assert_raises(JSON::ParserError) { Maf::Flow::CodexHooks.new(@dir).install }
     assert_equal "broken", File.read(path)
   end
 
   def test_uninstall_removes_only_maf_project_hooks
     write("hooks" => { "Stop" => [{ "hooks" => [foreign_hook] }] })
-    Flow::CodexHooks.new(@dir).install
-    Uninstall::CodexHooks.new(@dir).steps.each(&:run)
+    Maf::Flow::CodexHooks.new(@dir).install
+    Maf::Uninstall::CodexHooks.new(@dir).steps.each(&:run)
     assert_equal({ "hooks" => { "Stop" => [{ "hooks" => [foreign_hook] }] } }, read)
   end
 
   def test_uninstall_removes_an_empty_owned_hook_file
-    Flow::CodexHooks.new(@dir).install
-    Uninstall::CodexHooks.new(@dir).steps.each(&:run)
+    Maf::Flow::CodexHooks.new(@dir).install
+    Maf::Uninstall::CodexHooks.new(@dir).steps.each(&:run)
     refute File.exist?(path)
   end
 end
@@ -67,7 +67,7 @@ class LegacyCodexHookTest < HookConfigCase
   end
 
   def remove_legacy
-    capture_io { Flow::LegacyCodexHook.new(@dir).remove }
+    capture_io { Maf::Flow::LegacyCodexHook.new(@dir).remove }
   end
 
   def test_removes_only_the_owned_global_registration

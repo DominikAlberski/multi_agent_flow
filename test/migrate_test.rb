@@ -16,7 +16,7 @@ require "rbconfig"
 
 ROOT = File.expand_path("..", __dir__)
 LIB = File.join(ROOT, "lib", "maf")
-MIGRATE = ["-r", File.join(LIB, "migrate.rb"), "-e", "Migrate::Runner.new(ARGV).run", "--"].freeze
+MIGRATE = ["-r", File.join(LIB, "migrate.rb"), "-e", "Maf::Migrate::Runner.new(ARGV).run", "--"].freeze
 MAF = File.join(ROOT, "bin", "maf")
 
 class MigrateTestCase < Minitest::Test

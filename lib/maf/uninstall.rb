@@ -21,20 +21,22 @@ require_relative "env_exclude"
 require_relative "local_exclude"
 require_relative "migrate"
 
-module Uninstall
-  KEPT_DIRS = %w[graphify-out].freeze
+module Maf
+  module Uninstall
+    KEPT_DIRS = %w[graphify-out].freeze
 
-  # Removed after all steps if empty. Children come before parents.
-  EMPTY_DIRS = [%w[.claude agents], %w[.claude], %w[.opencode agents], %w[.opencode plugins], %w[.opencode],
-                %w[.codex prompts], %w[.codex], %w[.maf bin], %w[.maf agents claude], %w[.maf agents opencode],
-                %w[.maf agents codex], %w[.maf agents], %w[.maf worktrees],
-                %w[.maf lib maf shared], %w[.maf lib maf], %w[.maf lib], %w[.maf]].freeze
+    # Removed after all steps if empty. Children come before parents.
+    EMPTY_DIRS = [%w[.claude agents], %w[.claude], %w[.opencode agents], %w[.opencode plugins], %w[.opencode],
+                  %w[.codex prompts], %w[.codex], %w[.maf bin], %w[.maf agents claude], %w[.maf agents opencode],
+                  %w[.maf agents codex], %w[.maf agents], %w[.maf worktrees],
+                  %w[.maf lib maf shared], %w[.maf lib maf], %w[.maf lib], %w[.maf]].freeze
 
-  GLOBAL_HOOKS = [File.join(Dir.home, ".hermes", "agent-hooks", "next-task.sh")].freeze
+    GLOBAL_HOOKS = [File.join(Dir.home, ".hermes", "agent-hooks", "next-task.sh")].freeze
 
-  # Step is one removal. --check prints the label and runs nothing.
-  Step = Struct.new(:label, :work) do
-    def run = work.call
+    # Step is one removal. --check prints the label and runs nothing.
+    Step = Struct.new(:label, :work) do
+      def run = work.call
+    end
   end
 end
 

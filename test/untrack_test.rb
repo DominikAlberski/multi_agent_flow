@@ -70,7 +70,7 @@ class UntrackTest < Minitest::Test
     assert_equal 0, status, out
     assert_empty tracked.grep(%r{\A\.maf/|\A\.claude/agents})
     assert File.exist?(File.join(@dir, ".maf", "bin", "coord"))
-    assert_includes LocalExclude.listed(File.join(@dir, ".git", "info", "exclude")), ".maf/"
+    assert_includes Maf::LocalExclude.listed(File.join(@dir, ".git", "info", "exclude")), ".maf/"
   end
 
   def test_untrack_keeps_the_project_text_and_drops_the_flow_text
