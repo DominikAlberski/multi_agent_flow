@@ -29,6 +29,7 @@ coord show ID                                # one task: its fields and annotati
 coord next [ROLE] [--wait] | --mine          # unclaimed tasks, or your claimed tasks
 coord claim ID | start-task ID | done ID     # take a task, check out its branch, finish it
 coord annotate ID TEXT                       # add a note to a task
+coord lesson ID dead_end|corrected TEXT      # an approach that failed, or the right way: the graph keeps it
 coord escalate [--task ID] TEXT              # a problem you cannot fix: the project manager asks the user
 coord msg --from A [--task ID] [--fyi] TO TEXT   # message a role or a worker; --task also notes the task
                                              # --fyi: no run starts; the next run of TO reads it

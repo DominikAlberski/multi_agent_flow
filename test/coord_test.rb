@@ -1811,3 +1811,87 @@ class GoalPrTest < GoalTest
     end
   end
 end
+
+# WorkMemoryTest checks the graphify memory notes of coord done and coord
+# lesson against a fake graphify. The fake logs each call, one argument a line.
+class WorkMemoryTest < GoalTest
+  def self.runnable_methods = public_instance_methods(false).grep(/\Atest_/).map(&:to_s)
+
+  def setup
+    super
+    @bin = File.join(@root, ".fake-bin")
+    FileUtils.mkdir_p(@bin)
+    File.write(File.join(@bin, "graphify"), "#!/bin/sh\nprintf '%s\\n' \"$@\" '--' >> \"#{@root}/.graphify-calls\"\n")
+    FileUtils.chmod(0o755, File.join(@bin, "graphify"))
+    @path = ENV.fetch("PATH", nil)
+    ENV["PATH"] = "#{@bin}:#{@path}"
+  end
+
+  def teardown
+    ENV["PATH"] = @path
+    super
+  end
+
+  def write_graph
+    nodes = [{ id: "price_test", label: "price_test.rb", source_file: "price_test.rb" },
+             { id: "price_test_helper", label: "helper", source_file: "price_test.rb" }]
+    FileUtils.mkdir_p(File.join(@root, "graphify-out"))
+    File.write(File.join(@root, "graphify-out", "graph.json"), JSON.generate(nodes: nodes))
+  end
+
+  def calls
+    path = File.join(@root, ".graphify-calls")
+    File.exist?(path) ? File.read(path).split("--\n").map { |call| call.lines(chomp: true) } : []
+  end
+
+  def arg(call, flag) = call[call.index(flag) + 1]
+
+  def test_done_saves_a_useful_note_on_the_changed_files_and_reflects
+    write_graph
+    done_task_with_work
+    save, reflect = calls
+
+    assert_equal ["save-result", "Add price test", "useful", "price_test"],
+                 [save[0], arg(save, "--question"), arg(save, "--outcome"), arg(save, "--nodes")]
+    assert_includes arg(save, "--answer"), "TESTS: 3 runs, 0 failures."
+    assert_equal "reflect", reflect[0]
+  end
+
+  def test_done_without_a_graph_saves_nothing
+    done_task_with_work
+
+    assert_empty calls
+  end
+
+  def test_lesson_dead_end_saves_the_text_as_the_answer
+    write_graph
+    _uuid, task, = done_task_with_work
+    coord("lesson", task, "dead_end", "a cache in the model failed")
+    save = calls[2]
+
+    assert_equal "dead_end", arg(save, "--outcome")
+    assert_equal "a cache in the model failed", arg(save, "--answer")
+    assert_equal "Add price test: a cache in the model failed", arg(save, "--question")
+  end
+
+  def test_lesson_corrected_saves_the_text_as_the_correction
+    write_graph
+    _uuid, task, = done_task_with_work
+    coord("lesson", task, "corrected", "use the price service")
+
+    assert_equal "use the price service", arg(calls[2], "--correction")
+  end
+
+  def test_lesson_without_a_graph_is_refused
+    task = coord("add", "--role", "tester", "--scope", "test/**", "--title", "t").strip
+
+    assert_raises(SystemExit) { capture_io { coord("lesson", task, "dead_end", "x") } }
+  end
+
+  def test_lesson_refuses_an_unknown_outcome
+    write_graph
+    task = coord("add", "--role", "tester", "--scope", "test/**", "--title", "t").strip
+
+    assert_raises(SystemExit) { capture_io { coord("lesson", task, "useful", "x") } }
+  end
+end

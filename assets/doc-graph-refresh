@@ -195,6 +195,7 @@ module DocGraph
       return Log.write("extract failed; kept the old graph") unless build(tmp, tree)
 
       Swap.move(File.join(tmp, GRAPH), DocGraph.graph_path)
+      Reflect.run
       Export.run
     end
 
@@ -238,6 +239,18 @@ module DocGraph
     rescue SystemCallError
       FileUtils.mv(old, dest) if File.exist?(old)
       raise
+    end
+  end
+
+  # Reflect rebuilds reflections/LESSONS.md from the saved notes in memory/.
+  # With the new graph, reflect drops each lesson node that the graph lost.
+  module Reflect
+    def self.run
+      graph = DocGraph.graph_path
+      return unless File.directory?(File.join(graph, "memory"))
+
+      system({ "GRAPHIFY_OUT" => nil }, "graphify", "reflect", "--graph", File.join(graph, "graph.json"),
+             "--memory-dir", File.join(graph, "memory"), "--out", File.join(graph, "reflections", "LESSONS.md"))
     end
   end
 
