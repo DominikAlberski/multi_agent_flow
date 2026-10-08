@@ -40,7 +40,7 @@ module Maf
       pid = entry["pid"]
       return "-" unless pid
 
-      RunningProcesses.alive?(pid) ? "running (pid #{pid})" : "stopped"
+      Shared::Processes.alive?(pid) ? "running (pid #{pid})" : "stopped"
     end
 
     # The budget keys replace the old budget. Keep every other manifest key,

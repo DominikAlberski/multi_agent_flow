@@ -3,6 +3,7 @@
 require_relative "setup_agent"
 require_relative "workers"
 require_relative "worker_archive"
+require_relative "shared/processes"
 
 module Maf
   class Retire
@@ -36,7 +37,7 @@ module Maf
 
     def stop_dispatcher
       pid = Workers.at(@root).find(@worker)&.fetch("pid", nil)
-      return unless pid && RunningProcesses.alive?(pid)
+      return unless pid && Shared::Processes.alive?(pid)
 
       puts "Stopping the dispatcher of #{@worker} (pid #{pid}). A running agent finishes first."
       RunningProcesses.terminate(pid)
@@ -93,16 +94,6 @@ module Maf
       []
     end
 
-    # EPERM means the process exists but belongs to another user.
-    def self.alive?(pid)
-      Process.kill(0, pid)
-      true
-    rescue Errno::ESRCH
-      false
-    rescue Errno::EPERM
-      true
-    end
-
     # TERM lets a running agent finish its run first.
     def self.terminate(pid)
       Process.kill("TERM", pid)
@@ -113,8 +104,8 @@ module Maf
     # A dispatcher run can take up to its --timeout (default 1500 seconds).
     def self.wait_for_exit(pid, timeout: Integer(ENV.fetch("MAF_STOP_TIMEOUT", "1800")))
       deadline = Time.now + timeout
-      sleep 0.5 while alive?(pid) && Time.now < deadline
-      !alive?(pid)
+      sleep 0.5 while Shared::Processes.alive?(pid) && Time.now < deadline
+      !Shared::Processes.alive?(pid)
     end
 
     def self.pairs(out)

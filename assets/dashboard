@@ -19,6 +19,11 @@ require "optparse"
 require "rbconfig"
 require "securerandom"
 begin
+  require_relative "../lib/maf/shared/processes"
+rescue LoadError
+  abort "dashboard: the maf shared library is missing. Run maf update."
+end
+begin
   require "webrick"
 rescue LoadError
   abort "dashboard: webrick is required. Install it with: gem install webrick"
@@ -104,7 +109,6 @@ end
   # dispatcher or the context-watch hook writes, token usage, the last log
   # lines, and the result of the last dashboard action.
   class WorkerReader
-    PS_ENV = { "TZ" => "UTC", "LC_ALL" => "C" }.freeze
     LOG_LINES = 5
     HISTORY = 20
 
@@ -135,18 +139,8 @@ end
     # A pid can belong to a new process. The recorded start time tells them apart.
     def live?(presence)
       pid = presence["pid"].to_i
-      pid.positive? && alive?(pid) && [nil, "", started_at(pid)].include?(presence["started"])
+      Maf::Shared::Processes.alive?(pid) && [nil, "", Maf::Shared::Processes.started_at(pid)].include?(presence["started"])
     end
-
-    def alive?(pid)
-      Process.kill(0, pid) && true
-    rescue Errno::ESRCH
-      false
-    rescue Errno::EPERM
-      true
-    end
-
-    def started_at(pid) = IO.popen(PS_ENV, ["ps", "-o", "lstart=", "-p", pid.to_s], err: File::NULL, &:read).strip
 
     def tail(name)
       path = File.join(sessions, name)

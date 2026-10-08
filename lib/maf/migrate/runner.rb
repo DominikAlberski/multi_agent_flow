@@ -50,17 +50,7 @@ module Migrate
       paths = [".maf/coordination", "coordination"].map { |dir| File.join(project, dir, "workers.json") }
       path = paths.find { |file| File.exist?(file) }
       pids = path ? JSON.parse(File.read(path)).values.filter_map { |entry| entry["pid"] } : []
-      pids.select { |pid| alive?(pid) }
-    end
-
-    # EPERM means the process exists but belongs to another user.
-    def alive?(pid)
-      Process.kill(0, pid)
-      true
-    rescue Errno::ESRCH
-      false
-    rescue Errno::EPERM
-      true
+      pids.select { |pid| Maf::Shared::Processes.alive?(pid) }
     end
 
     # Regenerate the files of the current agents: scripts, role files, symlinks,

@@ -1050,7 +1050,8 @@ maf uninstall
 
 The uninstaller removes:
 
-- `.maf/bin/` (`coord`, `dispatcher`, `dashboard`, `vault`, `doc-graph-refresh`) and `.maf/env.sh`.
+- `.maf/bin/` (`coord`, `dispatcher`, `dashboard`, `vault`, `doc-graph-refresh`), `.maf/lib/maf/shared/`,
+  and `.maf/env.sh`.
 - `.maf/coordination/`, with the task board, messages, locks, and message hooks.
 - Clean worktrees in `.maf/worktrees/`.
 - Generated role files in `.maf/agents/`, the symlinks `.claude/agents`,

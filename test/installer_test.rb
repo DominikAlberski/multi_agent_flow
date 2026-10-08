@@ -68,7 +68,30 @@ class BootstrapTest < InstallerTestCase
 
     assert_equal 0, status, out
     assert_equal %w[.maf], Dir.children(@dir)
-    assert_equal %w[bin claude coordination env.sh], Dir.children(File.join(@dir, ".maf")).sort
+    assert_equal %w[bin claude coordination env.sh lib], Dir.children(File.join(@dir, ".maf")).sort
+  end
+
+  def installed(name) = File.join(@dir, ".maf", "bin", name)
+
+  # The installed scripts load the shared library from .maf/lib, not from this repo.
+  def test_installed_scripts_run_with_the_shared_library
+    out, status = bootstrap
+
+    assert_equal 0, status, out
+    assert File.exist?(File.join(@dir, ".maf", "lib", "maf", "shared", "processes.rb"))
+    [%w[coord help], %w[dispatcher --help]].each do |name, arg|
+      out, status = run_ruby(installed(name), arg)
+      assert_equal 0, status, "#{name}: #{out}"
+    end
+  end
+
+  def test_a_script_without_the_shared_library_asks_for_maf_update
+    bootstrap
+    FileUtils.rm_rf(File.join(@dir, ".maf", "lib"))
+    out, status = run_ruby(installed("coord"), "help")
+
+    refute_equal 0, status
+    assert_includes out, "Run maf update"
   end
 
   def exclude_lines = File.read(File.join(@dir, ".git", "info", "exclude")).lines.map(&:strip)
