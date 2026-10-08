@@ -17,8 +17,8 @@ require_relative "../lib/maf/local_exclude"
 
 ROOT = File.expand_path("..", __dir__)
 LIB = File.join(ROOT, "lib", "maf")
-FLOW = ["-r", File.join(LIB, "flow.rb"), "-e", "Flow::Generator.new(ARGV).run", "--"].freeze
-UNINSTALL = ["-r", File.join(LIB, "uninstall.rb"), "-e", "Uninstall::Runner.new(ARGV).run", "--"].freeze
+FLOW = ["-r", File.join(LIB, "flow.rb"), "-e", "Maf::Flow::Generator.new(ARGV).run", "--"].freeze
+UNINSTALL = ["-r", File.join(LIB, "uninstall.rb"), "-e", "Maf::Uninstall::Runner.new(ARGV).run", "--"].freeze
 
 class UninstallerTestCase < Minitest::Test
   def setup
@@ -110,7 +110,7 @@ class UninstallRemovesTest < UninstallerTestCase
 
     assert File.exist?(path("graphify-out", "graph.json"))
     assert File.exist?(path("graphify-out", "obsidian", "note.md"))
-    assert_equal ["graphify-out/"], LocalExclude.listed(path(".git", "info", "exclude"))
+    assert_equal ["graphify-out/"], Maf::LocalExclude.listed(path(".git", "info", "exclude"))
     refute File.exist?(path(".maf"))
     refute File.exist?(path(".gitignore"))
   end

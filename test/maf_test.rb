@@ -233,7 +233,7 @@ q
   def test_agent_args_value_flags_come_from_the_flow_option_parser
     require File.expand_path("../lib/maf/cli", __dir__)
 
-    assert_equal Flow::Generator.value_flags.sort, Maf::AgentArgs.value_flags.sort
+    assert_equal Maf::Flow::Generator.value_flags.sort, Maf::AgentArgs.value_flags.sort
     assert_includes Maf::AgentArgs.value_flags, "--model"
   end
 
@@ -418,7 +418,7 @@ class MafTeamTest < Minitest::Test
     FileUtils.mkdir_p(File.join(@project, ".maf", "agents", "claude"))
     File.write(File.join(@project, ".maf", "agents", "claude", "architect.md"), "role\n")
 
-    SetupAgent::RoleFile.copy(@project, dir, "claude", "architect")
+    Maf::SetupAgent::RoleFile.copy(@project, dir, "claude", "architect")
 
     assert_equal "role\n", File.read(File.join(dir, ".claude", "agents", "architect.md"))
     assert_equal "mine\n", File.read(File.join(dir, ".claude", "agents", "mine.md"))

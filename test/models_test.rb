@@ -10,29 +10,29 @@ require_relative "../lib/maf/cli"
 class ModelsTest < Minitest::Test
   def test_claude_accepts_aliases_and_full_ids
     %w[opus sonnet[1m] opusplan claude-sonnet-5-5 claude-opus-5-5[1m] us.anthropic.claude-haiku-5-5-v1:0]
-      .each { |name| assert Flow::Models.known?("claude", name), name }
+      .each { |name| assert Maf::Flow::Models.known?("claude", name), name }
   end
 
   # The typo that stopped a tester: every dispatched run failed with unrecognized_model.
   def test_claude_rejects_a_misspelled_family
-    refute Flow::Models.known?("claude", "claude-sonet-5-5")
-    refute Flow::Models.known?("claude", "sonet")
+    refute Maf::Flow::Models.known?("claude", "claude-sonet-5-5")
+    refute Maf::Flow::Models.known?("claude", "sonet")
   end
 
   def test_codex_reads_the_listed_models_of_its_cache
     models = [{ slug: "gpt-a", visibility: "list" }, { slug: "gpt-x", visibility: "hide" }]
     Dir.mktmpdir do |dir|
       cache = File.join(dir, "models_cache.json").tap { |path| File.write(path, JSON.generate(models: models)) }
-      with_const(:CODEX_CACHE, cache) { assert_equal ["gpt-a"], Flow::Models.codex }
+      with_const(:CODEX_CACHE, cache) { assert_equal ["gpt-a"], Maf::Flow::Models.codex }
     end
   end
 
   def test_a_harness_without_a_list_knows_every_name
-    assert Flow::Models.known?("hermes", "anything")
+    assert Maf::Flow::Models.known?("hermes", "anything")
   end
 
   def with_const(name, value)
-    old = Flow::Models.const_get(name)
+    old = Maf::Flow::Models.const_get(name)
     swap_const(name, value)
     yield
   ensure
@@ -40,8 +40,8 @@ class ModelsTest < Minitest::Test
   end
 
   def swap_const(name, value)
-    Flow::Models.send(:remove_const, name)
-    Flow::Models.const_set(name, value)
+    Maf::Flow::Models.send(:remove_const, name)
+    Maf::Flow::Models.const_set(name, value)
   end
 end
 
@@ -50,8 +50,8 @@ class MenuAddTest < Minitest::Test
     flows = @flows = []
     stub(Maf, :flow) { |*args| flows << args }
     stub(Maf, :role_names) { %w[architect tester] }
-    stub(Flow::Models, :installed) { %w[claude codex] }
-    stub(Flow::Models, :for) { |harness| harness == "codex" ? %w[gpt-a gpt-b] : nil }
+    stub(Maf::Flow::Models, :installed) { %w[claude codex] }
+    stub(Maf::Flow::Models, :for) { |harness| harness == "codex" ? %w[gpt-a gpt-b] : nil }
   end
 
   def teardown

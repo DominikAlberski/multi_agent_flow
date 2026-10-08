@@ -31,68 +31,70 @@ require_relative "shared/git_identity"
 
 abort "setup_agent: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
 
-module SetupAgent
-  MANIFEST = ".maf/config.json"
+module Maf
+  module SetupAgent
+    MANIFEST = ".maf/config.json"
 
-  def self.run(argv)
-    args = Args.parse(argv)
-    manifest = Manifest.load(MANIFEST).tap { |m| m.verify!(args.harness, args.role) }
-    worktree = enter_worktree(args)
-    register(args, manifest.model_for(args.harness, args.role))
-    launch(args, manifest, worktree)
-  end
+    def self.run(argv)
+      args = Args.parse(argv)
+      manifest = Manifest.load(MANIFEST).tap { |m| m.verify!(args.harness, args.role) }
+      worktree = enter_worktree(args)
+      register(args, manifest.model_for(args.harness, args.role))
+      launch(args, manifest, worktree)
+    end
 
-  # `maf start` without arguments, inside a worktree that `maf prepare` made.
-  def self.run_here
-    root = Project.root
-    entry = Maf::Workers.at(root).find(File.basename(Dir.pwd))
-    abort "maf: #{Dir.pwd} is not a prepared worktree. Run: maf start HARNESS ROLE[_WORKER]" unless entry
+    # `maf start` without arguments, inside a worktree that `maf prepare` made.
+    def self.run_here
+      root = Project.root
+      entry = Maf::Workers.at(root).find(File.basename(Dir.pwd))
+      abort "maf: #{Dir.pwd} is not a prepared worktree. Run: maf start HARNESS ROLE[_WORKER]" unless entry
 
-    Dir.chdir(root)
-    run(start_args(entry))
-  end
+      Dir.chdir(root)
+      run(start_args(entry))
+    end
 
-  def self.start_args(entry)
-    args = [entry["harness"], "#{entry["role"]}_#{entry["worker_id"]}"]
-    args += ["--model", entry["model"]] if entry["model"]
-    entry["dispatch"] ? args + ["--dispatch"] : args
-  end
+    def self.start_args(entry)
+      args = [entry["harness"], "#{entry["role"]}_#{entry["worker_id"]}"]
+      args += ["--model", entry["model"]] if entry["model"]
+      entry["dispatch"] ? args + ["--dispatch"] : args
+    end
 
-  def self.register(args, saved_model)
-    entry = { "role" => args.role, "worker_id" => args.worker_id, "harness" => args.harness,
-              "model" => args.model || saved_model, "dispatch" => args.dispatch, "dir" => Dir.pwd }
-    Maf::Workers.at(Project.root).add(args.worker, entry.compact)
-  end
+    def self.register(args, saved_model)
+      entry = { "role" => args.role, "worker_id" => args.worker_id, "harness" => args.harness,
+                "model" => args.model || saved_model, "dispatch" => args.dispatch, "dir" => Dir.pwd }
+      Maf::Workers.at(Project.root).add(args.worker, entry.compact)
+    end
 
-  def self.enter_worktree(args)
-    worktree = prepare_worktree(args)
-    Dir.chdir(worktree.dir)
-    worktree.export_env!
-    worktree
-  end
+    def self.enter_worktree(args)
+      worktree = prepare_worktree(args)
+      Dir.chdir(worktree.dir)
+      worktree.export_env!
+      worktree
+    end
 
-  def self.prepare_worktree(args)
-    worktree = Worktree.ensure(args.role, args.worker_id, args.harness)
-    RoleFile.copy(Dir.pwd, worktree.dir, args.harness, args.role)
-    RuntimeHooks.install(worktree.dir, args.harness)
-    worktree
-  end
+    def self.prepare_worktree(args)
+      worktree = Worktree.ensure(args.role, args.worker_id, args.harness)
+      RoleFile.copy(Dir.pwd, worktree.dir, args.harness, args.role)
+      RuntimeHooks.install(worktree.dir, args.harness)
+      worktree
+    end
 
-  def self.launch(args, manifest, _worktree)
-    identify(args)
-    model = args.model || manifest.model_for(args.harness, args.role)
-    return Dispatch.launch(args, model) if args.dispatch
+    def self.launch(args, manifest, _worktree)
+      identify(args)
+      model = args.model || manifest.model_for(args.harness, args.role)
+      return Dispatch.launch(args, model) if args.dispatch
 
-    MafSession.register(Project.root, args.harness)
-    Launcher.for(args.harness).launch(args.role, args.worker, model)
-  end
+      MafSession.register(Project.root, args.harness)
+      Launcher.for(args.harness).launch(args.role, args.worker, model)
+    end
 
-  # The session and the dispatcher pass the environment to each child, so
-  # each commit of the agent uses the git persona of the agents.
-  def self.identify(args)
-    ENV["COORD_ROLE"] = args.role
-    ENV["COORD_WORKER"] = args.worker
-    Maf::Shared::GitIdentity.apply(Project.manifest)
+    # The session and the dispatcher pass the environment to each child, so
+    # each commit of the agent uses the git persona of the agents.
+    def self.identify(args)
+      ENV["COORD_ROLE"] = args.role
+      ENV["COORD_WORKER"] = args.worker
+      Maf::Shared::GitIdentity.apply(Project.manifest)
+    end
   end
 end
 
