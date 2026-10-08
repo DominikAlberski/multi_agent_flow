@@ -29,7 +29,8 @@ module Maf
   # Prepare makes a worker ready to start. With --replace, it retires the
   # old worker, so the old worker's tasks return to the pool. If the old and
   # the new worker have the same id (only the harness or the model changes),
-  # the worker keeps its worktree and its claims.
+  # the worker keeps its worktree and its claims. A new harness archives the
+  # session and the token data of the old one.
   class Prepare
     # The architect never talks to the user. A dispatched architect gets fresh
     # sessions with a handoff note, so its context stays small.
@@ -74,7 +75,15 @@ module Maf
       Maf.flow("--agent", spec) unless Maf.agent_specs.include?("#{@args.harness}:#{@args.role}")
       worktree = SetupAgent::Worktree.ensure(@args.role, @args.worker_id, @args.harness)
       SetupAgent::RoleFile.copy(@root, worktree.dir, @args.harness, @args.role)
+      archive_on_harness_change
       Workers.at(@root).add(@args.worker, entry(worktree.dir))
+    end
+
+    # The same worker on a new harness keeps its work, but not the session
+    # and the token data of the old harness. The dashboard shows them.
+    def archive_on_harness_change
+      old = Workers.at(@root).find(@args.worker)
+      WorkerArchive.new(@root, @args.worker).harness_change if old && old["harness"] != @args.harness
     end
 
     def spec = [@args.harness, @args.role, @args.model].compact.join(":")

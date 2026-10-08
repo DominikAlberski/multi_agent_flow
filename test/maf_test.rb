@@ -749,6 +749,30 @@ class MafRetireArchiveTest < Minitest::Test
     assert_removed
   end
 
+  # Regression: after a harness change, the dashboard showed the token data
+  # of the old harness, and the dispatcher tried to resume its session.
+  def test_prepare_with_a_new_harness_archives_the_session_and_the_token_data
+    seed_state
+    %w[usage/architect-2.runs.jsonl hints/architect-2.json status/architect-2.json sessions/architect-2.session
+       sessions/architect-2.handoff.md].each { |rel| write_state(state_path(rel), rel) }
+    assert_maf("prepare", "claude", "architect_2", "--interactive", "--replace", "architect_2")
+
+    assert_equal 1, archives.size
+    %w[usage.json usage.runs.jsonl hints.json status.json sessions/architect-2.session].each do |name|
+      assert_path_exists File.join(archives.first, name)
+    end
+    assert_equal "mail", File.read(state_path("inbox", WORKER, "unread.md"))
+    assert_path_exists state_path("sessions", "architect-2.handoff.md")
+  end
+
+  def test_retire_archives_the_run_history_and_the_hints
+    %w[usage/architect-2.runs.jsonl hints/architect-2.json].each { |rel| write_state(state_path(rel), rel) }
+    assert_maf("retire", "architect_2")
+
+    assert_path_exists File.join(archives.fetch(0), "usage.runs.jsonl")
+    assert_path_exists File.join(archives.first, "hints.json")
+  end
+
   def test_prepare_with_the_same_worker_id_keeps_active_files
     seed_state
     assert_maf("prepare", "opencode", "architect_2", "--interactive", "--replace", "architect_2")
