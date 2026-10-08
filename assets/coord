@@ -57,56 +57,59 @@ module Coord
   # on their inbox, not on the task board.
   LEADS = Maf::Shared::Roles::LEADS
 
-  USAGE = <<~TEXT
-    coord - multi-agent coordination
+  # Usage holds the help text of coord.
+  module Usage
+    TEXT = <<~TEXT
+      coord - multi-agent coordination
 
-      coord init
-      coord add --role R --scope S --title T [--project P] [--ref R] [--goal ID]
-      coord goal add --title T [--ref R] [--base BRANCH]   create a goal, its branch and its worktree
-      coord goal list                      list open goals
-      coord goal show ID                   show a goal and its tasks
-      coord goal sync ID                   merge the base branch into the goal branch
-      coord goal done ID                   close a goal (refused while a task is open or the goal lacks the base head)
-      coord goal pr ID                     push the goal branch as the GitHub bot and open or update its pull request
-      coord review-watch [--once] [--interval S]
-                                           send new reviews of goal pull requests to the architect;
-                                           close a goal and run gc --yes after its pull request merges
-      coord land ID [--subject TEXT]       squash a done task branch into its goal branch, then delete the task branch
-      coord reap [--minutes N]             release the claims of workers not seen for N minutes
-                                           (default: team.reap_minutes, else 90; a live dispatcher is never released)
-      coord gc [--yes]                     list (or with --yes delete) merged flow branches and finished goal worktrees
-      coord show ID                        show one task: its fields and its annotations
-      coord start-task ID                  check out branch task/<id> from its goal branch
-      coord next [ROLE] [--mine] [--wait [--interval S] [--timeout S]]
-      coord conflicts                      list pending tasks with overlapping scopes
-      coord claim ID [--force]             claim for COORD_WORKER (atomic; refused for lead roles)
-      coord unclaim ID                     release a claim without finishing it
-      coord done ID [--force]              complete (refused while the task branch lacks the goal head,
-                                           or while the verify command fails)
-      coord annotate ID TEXT...
-      coord msg [--from A] [--task ID] [--fyi] TO TEXT...
-                                           TO is a role or a worker; a worker's mail goes to its role inbox.
-                                           --task also saves the text as a note on the task.
-                                           --fyi wakes no one: the next run of TO reads the message.
-      coord escalate [--task ID] TEXT...   report a problem you cannot fix to the project manager
-                                           (copy to the architect)
-      coord broadcast [--from A] [--to workers|leads|all] TEXT...
-                                           send to a group of roles (default: workers)
-      coord inbox [ROLE] [--peek] [--all] [--wait [--interval S] [--timeout S]]
-      coord await [--timeout S]            interactive session: arm the stop hook, then end the turn.
-                                           The hook waits for work without model calls (default: 3000s)
-      coord hooks [ROLE]                          show message hooks for a role or all
-      coord log [N]                               show last N coordination events
-      coord lock NAME [--ttl SECONDS] [--worker W]
-      coord unlock NAME
-      coord with-lock NAME [--ttl SECONDS] -- CMD...
-      coord worktree ROLE [WORKER]          create a git worktree + branch for a role
-      coord status
-      coord who                            list workers with their presence (live or gone)
-      coord board
-      coord export
-      coord help
-  TEXT
+        coord init
+        coord add --role R --scope S --title T [--project P] [--ref R] [--goal ID]
+        coord goal add --title T [--ref R] [--base BRANCH]   create a goal, its branch and its worktree
+        coord goal list                      list open goals
+        coord goal show ID                   show a goal and its tasks
+        coord goal sync ID                   merge the base branch into the goal branch
+        coord goal done ID                   close a goal (refused while a task is open or the goal lacks the base head)
+        coord goal pr ID                     push the goal branch as the GitHub bot and open or update its pull request
+        coord review-watch [--once] [--interval S]
+                                             send new reviews of goal pull requests to the architect;
+                                             close a goal and run gc --yes after its pull request merges
+        coord land ID [--subject TEXT]       squash a done task branch into its goal branch, then delete the task branch
+        coord reap [--minutes N]             release the claims of workers not seen for N minutes
+                                             (default: team.reap_minutes, else 90; a live dispatcher is never released)
+        coord gc [--yes]                     list (or with --yes delete) merged flow branches and finished goal worktrees
+        coord show ID                        show one task: its fields and its annotations
+        coord start-task ID                  check out branch task/<id> from its goal branch
+        coord next [ROLE] [--mine] [--wait [--interval S] [--timeout S]]
+        coord conflicts                      list pending tasks with overlapping scopes
+        coord claim ID [--force]             claim for COORD_WORKER (atomic; refused for lead roles)
+        coord unclaim ID                     release a claim without finishing it
+        coord done ID [--force]              complete (refused while the task branch lacks the goal head,
+                                             or while the verify command fails)
+        coord annotate ID TEXT...
+        coord msg [--from A] [--task ID] [--fyi] TO TEXT...
+                                             TO is a role or a worker; a worker's mail goes to its role inbox.
+                                             --task also saves the text as a note on the task.
+                                             --fyi wakes no one: the next run of TO reads the message.
+        coord escalate [--task ID] TEXT...   report a problem you cannot fix to the project manager
+                                             (copy to the architect)
+        coord broadcast [--from A] [--to workers|leads|all] TEXT...
+                                             send to a group of roles (default: workers)
+        coord inbox [ROLE] [--peek] [--all] [--wait [--interval S] [--timeout S]]
+        coord await [--timeout S]            interactive session: arm the stop hook, then end the turn.
+                                             The hook waits for work without model calls (default: 3000s)
+        coord hooks [ROLE]                          show message hooks for a role or all
+        coord log [N]                               show last N coordination events
+        coord lock NAME [--ttl SECONDS] [--worker W]
+        coord unlock NAME
+        coord with-lock NAME [--ttl SECONDS] -- CMD...
+        coord worktree ROLE [WORKER]          create a git worktree + branch for a role
+        coord status
+        coord who                            list workers with their presence (live or gone)
+        coord board
+        coord export
+        coord help
+    TEXT
+  end
 
   COMMANDS = {
       "init" => :cmd_init, "add" => :cmd_add, "next" => :cmd_next,
@@ -2009,8 +2012,9 @@ end
     end
   end
 
-  # Commands implements each coord subcommand. State lives on the CLI instance.
-  module Commands
+  # Each *Commands module implements coord subcommands. State lives on the CLI instance.
+  # Task commands add, list, show, and export tasks.
+  module TaskCommands
     def cmd_init
       setup.ensure_dirs
       setup.ensure_taskrc
@@ -2073,6 +2077,67 @@ end
 
     def cmd_conflicts = conflicts.report
 
+    def cmd_show
+      puts TaskView.lines(find_task!(@args.require_arg("show", "ID")))
+    end
+
+    def cmd_start_task
+      task = find_task!(@args.require_arg("start-task", "ID"))
+      base = task["goalid"] ? Goals.branch(task["goalid"]) : Git.base_branch(@project_root, manifest)
+      TaskBranch.new(@project_root).start(task["uuid"], base)
+      event_log.append("start-task", @worker, task["uuid"])
+    end
+
+    def cmd_status = board.status
+    def cmd_who = presence.report
+    def cmd_board = board.board
+
+    def cmd_export
+      tasks.export_to(paths.export_path)
+      puts "export -> #{paths.export_path}"
+    end
+
+    def cmd_help = puts(Usage::TEXT)
+
+    private
+
+    UNSTAFFED = "No worker runs role %s."
+
+    # With a worker registry (.maf/coordination/workers.json), a task for a role
+    # without a worker waits forever. Tell the project manager once per role.
+    def report_unstaffed(role, id)
+      return if role.nil? || staffed?(role) || unstaffed_notice?(role)
+
+      event_log.append("unstaffed", @worker, role)
+      text = "#{format(UNSTAFFED, role)} Task #{id} waits. Add a worker: maf prepare HARNESS #{role}_1 --dispatch"
+      return warn("coord: #{text}") unless manifest.agents.any? { |a| a["role"] == "project-manager" }
+
+      deliver("project-manager", "coord", text)
+    end
+
+    def staffed?(role)
+      path = File.join(paths.coord_dir, "workers.json")
+      !File.exist?(path) || JSON.parse(File.read(path)).values.any? { |entry| entry["role"] == role }
+    end
+
+    # The event log records each notice. A message in the inbox is not enough:
+    # a project without a project-manager role gets no message at all, and the
+    # log is the only place the notice is remembered.
+    def unstaffed_notice?(role)
+      path = paths.log_path
+      return false unless File.exist?(path)
+
+      File.readlines(path).any? { |line| unstaffed_line?(line, role) }
+    end
+
+    def unstaffed_line?(line, role)
+      _time, action, _worker, detail = line.split("\t")
+      action == "unstaffed" && detail.to_s.strip == role
+    end
+  end
+
+  # Claim commands take, release, note, and finish a task.
+  module ClaimCommands
     def cmd_claim
       id = @args.require_arg("claim", "ID")
       force = @args.flag?("--force")
@@ -2131,6 +2196,59 @@ end
       puts "annotated #{id}"
     end
 
+    def find_task!(id)
+      task = tasks.find(id)
+      raise Error, "no task found" if task["uuid"].nil?
+
+      task
+    end
+
+    private
+
+    STALE = "coord: branch %<task>s lacks the head of %<goal>s. In your worktree, run `git merge %<goal>s`. " \
+            "Run the task tests again. Then run coord done again. Use --force only if the merge is not wanted."
+
+    # A stalled run can wake up after its claim was released. It must not close
+    # a task that is closed or that another worker holds now.
+    def refuse_foreign!(task, force)
+      status = task["status"]
+      raise Error, "task #{task["uuid"]} is already #{status}. Stop work on it." if status && status != "pending"
+
+      holder = task["worker"].to_s
+      return if force || holder.empty? || holder == @worker
+
+      raise Error, "task #{task["uuid"]} belongs to #{holder} now. Stop work on it (use --force to close it anyway)."
+    end
+
+    def refuse_stale!(task)
+      goal, branch = TaskSync.new(@project_root).stale(task)
+      abort format(STALE, task: branch, goal: goal) if goal
+    end
+
+    VERIFY_FAILED = "coord: the verify command failed: %<command>s\n%<tail>s\n" \
+                    "Fix the failures. Then run coord done again. --force does not skip this check."
+
+    # The verify command in .maf/config.json is a mechanical gate for done.
+    # It runs in the current worktree. No key means no check.
+    def refuse_unverified!
+      command = manifest.verify
+      return if command.empty?
+
+      output = IO.popen(["sh", "-c", command], err: %i[child out], &:read)
+      abort format(VERIFY_FAILED, command: command, tail: output.lines.last(20).join.strip) unless $?.success?
+    end
+
+    def notify_prior_holder(id, holder)
+      warn "coord: task #{id} was claimed from #{holder.worker} by #{@worker}"
+      # Send to the role's inbox (what agents poll with `coord inbox`), not the
+      # worker id, which no agent reads. Name the exact worker in the body.
+      to = holder.role.empty? ? holder.worker : holder.role
+      messages.send_message(to, @worker, "task #{id} was claimed from worker #{holder.worker} by #{@worker}")
+    end
+  end
+
+  # Message commands send messages and push them to a role.
+  module MessageCommands
     def cmd_msg
       from = require_role!(@args.value_of("--from") || @role, "msg --from A, or export COORD_ROLE")
       task = @args.value_of("--task")&.then { |id| find_task!(id) }
@@ -2166,6 +2284,73 @@ end
       role ? [role, name] : raise(Error, "unknown recipient '#{name}'. Use a role or a worker: #{roles.join(", ")}")
     end
 
+    # Broadcast sends a message to every known role except the sender (see
+    # Roster). The architect uses this for scope changes or blockers that
+    # affect everyone, instead of messaging each role individually.
+    def cmd_broadcast
+      from = require_role!(@args.value_of("--from") || @role, "broadcast --from A, or export COORD_ROLE")
+      audience = Audiences.pick(@args.value_of("--to") || "workers")
+      text = @args.require_text("broadcast")
+      deliver_broadcast(from, text, broadcast_roles(from, audience))
+    end
+
+    def broadcast_roles(from, audience)
+      roles = Roster.new(paths, tasks).roles.select(&audience) - [from]
+      abort "coord: no other roles to broadcast to" if roles.empty?
+
+      roles
+    end
+
+    # Hooks shows which role hooks are installed. With a ROLE argument, shows
+    # just that role's hook. The hooks themselves are plain shell scripts at
+    # .maf/coordination/message-hooks/<role>.sh, fired by `coord msg` and `coord broadcast`.
+    def cmd_hooks
+      return puts("no message hooks directory (run coord init)") unless Dir.exist?(paths.message_hooks_dir)
+
+      found = hook_files(@args.shift)
+      return puts("no hooks installed") if found.empty?
+
+      found.each { |path| puts hook_line(path) }
+    end
+
+    private
+
+    def deliver(to, from, text)
+      path = messages.send_message(to, from, text)
+      push(to, from, path)
+    end
+
+    def deliver_broadcast(from, text, roles)
+      results = messages.broadcast(from, text, roles)
+      results.each { |role, path| push(role, from, path) }
+      event_log.append("broadcast", @worker, text)
+    end
+
+    NO_PUSH = "coord: %<role>s has no live session and no message hook. The message waits until a %<role>s " \
+              "session starts. Fix: maf start HARNESS %<role>s --dispatch --detach, " \
+              "or add an executable .maf/coordination/message-hooks/%<role>s.sh"
+
+    # A message is pushed by a hook or read by a live session. Without both,
+    # it waits unseen. Say so at send time, not hours later.
+    def push(role, from, path)
+      return if hooks.run(role, from: from, message_path: path) || presence.live?(role)
+
+      warn format(NO_PUSH, role: role)
+    end
+
+    def hook_files(role)
+      found = Dir.glob(File.join(paths.message_hooks_dir, "*.sh")).sort
+      role ? found.select { |path| File.basename(path, ".sh") == role } : found
+    end
+
+    def hook_line(path)
+      status = File.executable?(path) ? "active" : "inactive (chmod +x)"
+      "#{File.basename(path)}\t#{status}\t#{path}"
+    end
+  end
+
+  # Inbox commands escalate problems and wait for messages.
+  module InboxCommands
     ESCALATE_PM = "project-manager"
 
     # A worker cannot fix a problem outside its task, such as a missing tool
@@ -2233,75 +2418,10 @@ end
         messages.inbox(role, peek: flags[:peek], all: flags[:all])
       end
     end
+  end
 
-    def cmd_lock
-      name = @args.require_arg("lock", "NAME")
-      worker = require_worker!(@args.value_of("--worker") || @worker, "lock NAME --worker W, or export COORD_WORKER")
-      locks.lock(name, ttl: @args.ttl, worker: worker)
-    end
-
-    def cmd_unlock = locks.unlock(@args.require_arg("unlock", "NAME"))
-
-    def cmd_with_lock
-      name = @args.require_arg("with-lock", "NAME")
-      command = @args.take_command
-      abort "usage: coord with-lock NAME [--ttl SECONDS] -- CMD..." if command.nil? || command.empty?
-
-      exit(run_with_lock(name, command) ? 0 : 1)
-    end
-
-    def run_with_lock(name, command)
-      started = Time.now
-      ok = locks.with_lock(name, ttl: @args.ttl, command: command, worker: @worker)
-      event_log.append("with-lock", @worker, "#{name} #{ok ? "ok" : "failed"} #{(Time.now - started).round}s")
-      ok
-    end
-
-    # Broadcast sends a message to every known role except the sender (see
-    # Roster). The architect uses this for scope changes or blockers that
-    # affect everyone, instead of messaging each role individually.
-    def cmd_broadcast
-      from = require_role!(@args.value_of("--from") || @role, "broadcast --from A, or export COORD_ROLE")
-      audience = Audiences.pick(@args.value_of("--to") || "workers")
-      text = @args.require_text("broadcast")
-      deliver_broadcast(from, text, broadcast_roles(from, audience))
-    end
-
-    def broadcast_roles(from, audience)
-      roles = Roster.new(paths, tasks).roles.select(&audience) - [from]
-      abort "coord: no other roles to broadcast to" if roles.empty?
-
-      roles
-    end
-
-    # Log shows the shared coordination history: claims, completions, unclaims,
-    # and broadcasts, newest last. Optional N limits to the last N entries.
-    def cmd_log
-      raw = @args.shift
-      count = raw && Integer(raw, exception: false)
-      abort "coord: log N (positive integer)" if raw && (count.nil? || count < 1)
-      event_log.read(count)
-    end
-
-    # Hooks shows which role hooks are installed. With a ROLE argument, shows
-    # just that role's hook. The hooks themselves are plain shell scripts at
-    # .maf/coordination/message-hooks/<role>.sh, fired by `coord msg` and `coord broadcast`.
-    def cmd_hooks
-      return puts("no message hooks directory (run coord init)") unless Dir.exist?(paths.message_hooks_dir)
-
-      found = hook_files(@args.shift)
-      return puts("no hooks installed") if found.empty?
-
-      found.each { |path| puts hook_line(path) }
-    end
-
-    def cmd_worktree
-      role = @args.require_arg("worktree", "ROLE")
-      worker = @args.shift
-      warn_missing_role_files(role)
-      Worktree.new(@project_root).create(role, worker)
-    end
-
+  # Goal commands create, sync, land, and close goals.
+  module GoalCommands
     GOAL_COMMANDS = { "add" => :goal_add, "list" => :goal_list, "show" => :goal_show, "done" => :goal_done,
                       "sync" => :goal_sync, "pr" => :goal_pr }.freeze
 
@@ -2328,41 +2448,67 @@ end
       puts "landed #{land.branch}: #{where}"
     end
 
-    def cmd_gc = sweep(@args.flag?("--yes"))
+    private
 
-    REAPED = "Released the claim of task %<id>s. Worker %<worker>s was not seen for %<minutes>s minutes. " \
-             "Check the task branch before the next worker continues."
+    def goals = @goals ||= Goals.new(tasks)
 
-    def cmd_reap
-      minutes = Integer(@args.value_of("--minutes") || manifest.reap_minutes)
-      stale = Reaper.new(tasks, paths, minutes).stale
-      return puts("no stale claims") if stale.empty?
+    def goal_list = goals.list
 
-      stale.each { |task| reap(task, format(REAPED, id: task["uuid"], worker: task["worker"], minutes: minutes)) }
+    # Older taskrc files lack the `goal` UDA. Add it before the first use.
+    def goal_uuid(id)
+      setup.ensure_taskrc
+      goals.find!(id)["uuid"]
+    end
+    def goal_show = goals.show(@args.require_arg("goal show", "ID"))
+
+    def goal_sync
+      goal = goals.find!(@args.require_arg("goal sync", "ID"))
+      goal_sync_for(goal).run
+      event_log.append("goal-sync", @worker, goal["description"])
     end
 
-    def reap(task, text)
-      tasks.unclaim(task["uuid"])
-      tasks.annotate(task["uuid"], "RELEASED: #{text}")
-      event_log.append("reap", @worker, "#{task["uuid"]} #{task["worker"]}")
-      deliver("architect", "coord", text)
+    def goal_sync_for(goal) = GoalSync.new(main_root, goal["uuid"], Git.base_branch(main_root, manifest))
+
+    def goal_done
+      id = @args.require_arg("goal done", "ID")
+      refuse_unsynced!(goals.find!(id))
+      goal = goals.done(id)
+      event_log.append("goal-done", @worker, goal["description"])
+      puts "goal #{id} done. The goal branch is #{Goals.branch(goal["uuid"])}."
     end
 
-    def sweep(apply)
-      items = Sweep.new(main_root, tasks, Git.base_branch(main_root, manifest)).items
-      return puts("nothing to clean") if items.empty?
-
-      items.each { |item| puts sweep_line(item, apply) }
-      apply ? Git.run(main_root, "worktree", "prune") : puts("Dry run. Run coord gc --yes to delete.")
+    def goal_add
+      opts = @args.parse_options(GOAL_OPTS)
+      opts[:title] ||= @args.join unless @args.empty?
+      abort "usage: coord goal add --title T [--ref R] [--base BRANCH]" if opts[:title].to_s.empty?
+      setup.ensure_taskrc
+      create_goal(opts, opts[:base] || Git.base_branch(main_root, manifest))
     end
 
-    def sweep_line(item, apply)
-      return "keep    #{item.label}: #{item.reason}" if item.reason
-      return "delete  #{item.label}" unless apply
+    def create_goal(opts, base)
+      raise Error, "base branch #{base} does not exist" unless Git.branch?(main_root, base)
 
-      item.action.call ? "deleted #{item.label}" : "failed  #{item.label}"
+      uuid = tasks.add(title: opts[:title], role: Goals::ROLE, ref: opts[:ref])
+      Worktree.new(main_root).checkout(Goals.slug(uuid), Goals.branch(uuid), base)
+      event_log.append("goal", @worker, opts[:title])
+      puts uuid
     end
 
+    UNSYNCED = "coord: %<branch>s lacks the head of %<ref>s. Run coord goal sync %<id>s. " \
+               "Run the merge suite again. Then run coord goal done again."
+
+    # A goal without its branch (an old goal) has nothing to check.
+    def refuse_unsynced!(goal)
+      sync = goal_sync_for(goal)
+      branch = Goals.branch(goal["uuid"])
+      return unless Git.branch?(main_root, branch) && sync.behind?
+
+      abort format(UNSYNCED, branch: branch, ref: sync.ref, id: goal["uuid"])
+    end
+  end
+
+  # Review commands open goal pull requests and forward their reviews.
+  module ReviewCommands
     # The architect dispatcher runs `coord review-watch --once` on a timer.
     def cmd_review_watch
       once = @args.flag?("--once")
@@ -2419,90 +2565,8 @@ end
       Notify.user("Goal merged", tasks.find(uuid)["description"])
     end
 
-    def cmd_show
-      puts TaskView.lines(find_task!(@args.require_arg("show", "ID")))
-    end
-
-    def cmd_start_task
-      task = find_task!(@args.require_arg("start-task", "ID"))
-      base = task["goalid"] ? Goals.branch(task["goalid"]) : Git.base_branch(@project_root, manifest)
-      TaskBranch.new(@project_root).start(task["uuid"], base)
-      event_log.append("start-task", @worker, task["uuid"])
-    end
-
-    def find_task!(id)
-      task = tasks.find(id)
-      raise Error, "no task found" if task["uuid"].nil?
-
-      task
-    end
-
-    def cmd_status = board.status
-    def cmd_who = presence.report
-    def cmd_board = board.board
-
-    def cmd_export
-      tasks.export_to(paths.export_path)
-      puts "export -> #{paths.export_path}"
-    end
-
-    def cmd_help = puts(USAGE)
-
     private
 
-    def goals = @goals ||= Goals.new(tasks)
-    def manifest = @manifest ||= Manifest.new(paths.manifest_path)
-    def main_root = File.dirname(File.dirname(File.expand_path(@coord_dir)))
-    def goal_list = goals.list
-
-    UNSTAFFED = "No worker runs role %s."
-
-    # With a worker registry (.maf/coordination/workers.json), a task for a role
-    # without a worker waits forever. Tell the project manager once per role.
-    def report_unstaffed(role, id)
-      return if role.nil? || staffed?(role) || unstaffed_notice?(role)
-
-      event_log.append("unstaffed", @worker, role)
-      text = "#{format(UNSTAFFED, role)} Task #{id} waits. Add a worker: maf prepare HARNESS #{role}_1 --dispatch"
-      return warn("coord: #{text}") unless manifest.agents.any? { |a| a["role"] == "project-manager" }
-
-      deliver("project-manager", "coord", text)
-    end
-
-    def staffed?(role)
-      path = File.join(paths.coord_dir, "workers.json")
-      !File.exist?(path) || JSON.parse(File.read(path)).values.any? { |entry| entry["role"] == role }
-    end
-
-    # The event log records each notice. A message in the inbox is not enough:
-    # a project without a project-manager role gets no message at all, and the
-    # log is the only place the notice is remembered.
-    def unstaffed_notice?(role)
-      path = paths.log_path
-      return false unless File.exist?(path)
-
-      File.readlines(path).any? { |line| unstaffed_line?(line, role) }
-    end
-
-    def unstaffed_line?(line, role)
-      _time, action, _worker, detail = line.split("\t")
-      action == "unstaffed" && detail.to_s.strip == role
-    end
-
-    # Older taskrc files lack the `goal` UDA. Add it before the first use.
-    def goal_uuid(id)
-      setup.ensure_taskrc
-      goals.find!(id)["uuid"]
-    end
-    def goal_show = goals.show(@args.require_arg("goal show", "ID"))
-
-    def goal_sync
-      goal = goals.find!(@args.require_arg("goal sync", "ID"))
-      goal_sync_for(goal).run
-      event_log.append("goal-sync", @worker, goal["description"])
-    end
-
-    def goal_sync_for(goal) = GoalSync.new(main_root, goal["uuid"], Git.base_branch(main_root, manifest))
     def github = @github ||= GitHub.new(main_root, manifest.github)
     def review_state = @review_state ||= ReviewState.new(paths)
 
@@ -2553,31 +2617,85 @@ end
       event_log.append("goal-pr", @worker, url)
       puts "#{title}: #{url}"
     end
+  end
 
-    def goal_done
-      id = @args.require_arg("goal done", "ID")
-      refuse_unsynced!(goals.find!(id))
-      goal = goals.done(id)
-      event_log.append("goal-done", @worker, goal["description"])
-      puts "goal #{id} done. The goal branch is #{Goals.branch(goal["uuid"])}."
+  # Upkeep commands handle locks, the event log, worktrees, and cleanup.
+  module UpkeepCommands
+    def cmd_lock
+      name = @args.require_arg("lock", "NAME")
+      worker = require_worker!(@args.value_of("--worker") || @worker, "lock NAME --worker W, or export COORD_WORKER")
+      locks.lock(name, ttl: @args.ttl, worker: worker)
     end
 
-    def goal_add
-      opts = @args.parse_options(GOAL_OPTS)
-      opts[:title] ||= @args.join unless @args.empty?
-      abort "usage: coord goal add --title T [--ref R] [--base BRANCH]" if opts[:title].to_s.empty?
-      setup.ensure_taskrc
-      create_goal(opts, opts[:base] || Git.base_branch(main_root, manifest))
+    def cmd_unlock = locks.unlock(@args.require_arg("unlock", "NAME"))
+
+    def cmd_with_lock
+      name = @args.require_arg("with-lock", "NAME")
+      command = @args.take_command
+      abort "usage: coord with-lock NAME [--ttl SECONDS] -- CMD..." if command.nil? || command.empty?
+
+      exit(run_with_lock(name, command) ? 0 : 1)
     end
 
-    def create_goal(opts, base)
-      raise Error, "base branch #{base} does not exist" unless Git.branch?(main_root, base)
-
-      uuid = tasks.add(title: opts[:title], role: Goals::ROLE, ref: opts[:ref])
-      Worktree.new(main_root).checkout(Goals.slug(uuid), Goals.branch(uuid), base)
-      event_log.append("goal", @worker, opts[:title])
-      puts uuid
+    def run_with_lock(name, command)
+      started = Time.now
+      ok = locks.with_lock(name, ttl: @args.ttl, command: command, worker: @worker)
+      event_log.append("with-lock", @worker, "#{name} #{ok ? "ok" : "failed"} #{(Time.now - started).round}s")
+      ok
     end
+
+    # Log shows the shared coordination history: claims, completions, unclaims,
+    # and broadcasts, newest last. Optional N limits to the last N entries.
+    def cmd_log
+      raw = @args.shift
+      count = raw && Integer(raw, exception: false)
+      abort "coord: log N (positive integer)" if raw && (count.nil? || count < 1)
+      event_log.read(count)
+    end
+
+    def cmd_worktree
+      role = @args.require_arg("worktree", "ROLE")
+      worker = @args.shift
+      warn_missing_role_files(role)
+      Worktree.new(@project_root).create(role, worker)
+    end
+
+    def cmd_gc = sweep(@args.flag?("--yes"))
+
+    REAPED = "Released the claim of task %<id>s. Worker %<worker>s was not seen for %<minutes>s minutes. " \
+             "Check the task branch before the next worker continues."
+
+    def cmd_reap
+      minutes = Integer(@args.value_of("--minutes") || manifest.reap_minutes)
+      stale = Reaper.new(tasks, paths, minutes).stale
+      return puts("no stale claims") if stale.empty?
+
+      stale.each { |task| reap(task, format(REAPED, id: task["uuid"], worker: task["worker"], minutes: minutes)) }
+    end
+
+    def reap(task, text)
+      tasks.unclaim(task["uuid"])
+      tasks.annotate(task["uuid"], "RELEASED: #{text}")
+      event_log.append("reap", @worker, "#{task["uuid"]} #{task["worker"]}")
+      deliver("architect", "coord", text)
+    end
+
+    def sweep(apply)
+      items = Sweep.new(main_root, tasks, Git.base_branch(main_root, manifest)).items
+      return puts("nothing to clean") if items.empty?
+
+      items.each { |item| puts sweep_line(item, apply) }
+      apply ? Git.run(main_root, "worktree", "prune") : puts("Dry run. Run coord gc --yes to delete.")
+    end
+
+    def sweep_line(item, apply)
+      return "keep    #{item.label}: #{item.reason}" if item.reason
+      return "delete  #{item.label}" unless apply
+
+      item.action.call ? "deleted #{item.label}" : "failed  #{item.label}"
+    end
+
+    private
 
     # A worker started in a harness that has no file for its role runs
     # without its duties. Name each harness that lacks the role file. maf sets
@@ -2590,6 +2708,14 @@ end
       warn "coord: #{role} has no role file for #{missing.join(", ")}. " \
            "Fix: maf add #{missing.map { |harness| "#{harness}:#{role}" }.join(" ")}"
     end
+  end
+
+  # CommandHelpers holds the guards and lookups that many commands share.
+  module CommandHelpers
+    private
+
+    def manifest = @manifest ||= Manifest.new(paths.manifest_path)
+    def main_root = File.dirname(File.dirname(File.expand_path(@coord_dir)))
 
     def require_role!(value, usage) = require_set!(value, "role", "COORD_ROLE", usage)
     def require_worker!(value, usage) = require_set!(value, "worker", "COORD_WORKER", usage)
@@ -2600,96 +2726,10 @@ end
       abort "coord: no #{term} set. Pass one explicitly or `export #{env_name}=<#{term}>` (usage: #{usage})"
     end
 
-    def deliver(to, from, text)
-      path = messages.send_message(to, from, text)
-      push(to, from, path)
-    end
-
-    def deliver_broadcast(from, text, roles)
-      results = messages.broadcast(from, text, roles)
-      results.each { |role, path| push(role, from, path) }
-      event_log.append("broadcast", @worker, text)
-    end
-
-    NO_PUSH = "coord: %<role>s has no live session and no message hook. The message waits until a %<role>s " \
-              "session starts. Fix: maf start HARNESS %<role>s --dispatch --detach, " \
-              "or add an executable .maf/coordination/message-hooks/%<role>s.sh"
-
-    # A message is pushed by a hook or read by a live session. Without both,
-    # it waits unseen. Say so at send time, not hours later.
-    def push(role, from, path)
-      return if hooks.run(role, from: from, message_path: path) || presence.live?(role)
-
-      warn format(NO_PUSH, role: role)
-    end
-
     LEAD_HINT = "coord: role %<role>s is a lead role and %<what>s. Wait for messages with coord inbox --wait."
 
     def refuse_lead!(role, what)
       abort format(LEAD_HINT, role: role, what: what) if LEADS.include?(role)
-    end
-
-    STALE = "coord: branch %<task>s lacks the head of %<goal>s. In your worktree, run `git merge %<goal>s`. " \
-            "Run the task tests again. Then run coord done again. Use --force only if the merge is not wanted."
-
-    UNSYNCED = "coord: %<branch>s lacks the head of %<ref>s. Run coord goal sync %<id>s. " \
-               "Run the merge suite again. Then run coord goal done again."
-
-    # A goal without its branch (an old goal) has nothing to check.
-    def refuse_unsynced!(goal)
-      sync = goal_sync_for(goal)
-      branch = Goals.branch(goal["uuid"])
-      return unless Git.branch?(main_root, branch) && sync.behind?
-
-      abort format(UNSYNCED, branch: branch, ref: sync.ref, id: goal["uuid"])
-    end
-
-    # A stalled run can wake up after its claim was released. It must not close
-    # a task that is closed or that another worker holds now.
-    def refuse_foreign!(task, force)
-      status = task["status"]
-      raise Error, "task #{task["uuid"]} is already #{status}. Stop work on it." if status && status != "pending"
-
-      holder = task["worker"].to_s
-      return if force || holder.empty? || holder == @worker
-
-      raise Error, "task #{task["uuid"]} belongs to #{holder} now. Stop work on it (use --force to close it anyway)."
-    end
-
-    def refuse_stale!(task)
-      goal, branch = TaskSync.new(@project_root).stale(task)
-      abort format(STALE, task: branch, goal: goal) if goal
-    end
-
-    VERIFY_FAILED = "coord: the verify command failed: %<command>s\n%<tail>s\n" \
-                    "Fix the failures. Then run coord done again. --force does not skip this check."
-
-    # The verify command in .maf/config.json is a mechanical gate for done.
-    # It runs in the current worktree. No key means no check.
-    def refuse_unverified!
-      command = manifest.verify
-      return if command.empty?
-
-      output = IO.popen(["sh", "-c", command], err: %i[child out], &:read)
-      abort format(VERIFY_FAILED, command: command, tail: output.lines.last(20).join.strip) unless $?.success?
-    end
-
-    def hook_files(role)
-      found = Dir.glob(File.join(paths.message_hooks_dir, "*.sh")).sort
-      role ? found.select { |path| File.basename(path, ".sh") == role } : found
-    end
-
-    def hook_line(path)
-      status = File.executable?(path) ? "active" : "inactive (chmod +x)"
-      "#{File.basename(path)}\t#{status}\t#{path}"
-    end
-
-    def notify_prior_holder(id, holder)
-      warn "coord: task #{id} was claimed from #{holder.worker} by #{@worker}"
-      # Send to the role's inbox (what agents poll with `coord inbox`), not the
-      # worker id, which no agent reads. Name the exact worker in the body.
-      to = holder.role.empty? ? holder.worker : holder.role
-      messages.send_message(to, @worker, "task #{id} was claimed from worker #{holder.worker} by #{@worker}")
     end
 
     # Polls at `interval` seconds until `check` returns a non-empty result, then
@@ -2709,7 +2749,14 @@ end
 
   # CLI parses arguments and dispatches to a command.
   class CLI
-    include Commands
+    include TaskCommands
+    include ClaimCommands
+    include MessageCommands
+    include InboxCommands
+    include GoalCommands
+    include ReviewCommands
+    include UpkeepCommands
+    include CommandHelpers
     include Wiring
 
     def initialize(argv, env: ENV)
@@ -2731,7 +2778,7 @@ end
 
     def dispatch(command)
       method = COMMANDS[command]
-      abort "coord: unknown command '#{command}'\n\n#{USAGE}" unless method
+      abort "coord: unknown command '#{command}'\n\n#{Usage::TEXT}" unless method
 
       send(method)
     end
