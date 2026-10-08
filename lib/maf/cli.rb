@@ -36,7 +36,8 @@ module Maf
 
   class CLI
     COMMANDS = {
-      "add" => "HARNESS:ROLE ... [--model ROLE=MODEL]  add agents and install the flow",
+      "add" => "[HARNESS:ROLE[:MODEL] ...] [--model ROLE=MODEL]  add agents and install the flow; " \
+               "without arguments it asks",
       "remove" => "HARNESS:ROLE ...                        remove agents",
       "update" => "                                        regenerate the files of the current agents",
       "agents" => "                                        list the current agents",
@@ -85,7 +86,8 @@ module Maf
       COMMANDS.each { |name, text| puts "  maf #{name.ljust(10)}#{text}" }
     end
 
-    def run_add = Maf.flow(*AgentArgs.convert(@args, "--agent"))
+    # Without arguments on a terminal, maf add asks for the harness, the roles, and the models.
+    def run_add = @args.empty? && $stdin.tty? ? Menu.new.add : Maf.flow(*AgentArgs.convert(@args, "--agent"))
     def run_remove = Maf.flow(*AgentArgs.convert(@args, "--remove"))
     def run_update = Maf.flow(*@args)
     def run_roles = Maf.flow("--list-roles")

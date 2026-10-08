@@ -11,7 +11,8 @@ module Flow
 
     def print(results)
       puts "", "Generated role files:", results.map { |result| generated_line(result) }
-      %i[print_missing_models print_unembeddable print_sessions].each { |name| send(name, results) }
+      %i[print_missing_models print_unknown_models print_unembeddable print_sessions]
+        .each { |name| send(name, results) }
       print_hermes_reminder
     end
 
@@ -37,6 +38,16 @@ module Flow
 
       puts "", "No model chosen for these roles. maf leaves the choice to you. Suggestions:", missing,
            "  Set one with: --model <role>=<provider/model>"
+    end
+
+    # A dispatched run with an unknown model fails before it reaches the model.
+    def print_unknown_models(results)
+      unknown = results.select { |r| r[:model] && !Models.known?(r[:agent][:harness], r[:model]) }
+      return if unknown.empty?
+
+      puts "", "WARNING: the harness does not list these models. Check the name for a typo:",
+           unknown.map { |r| "  #{r[:agent][:harness]}:#{r[:agent][:role]} -> #{r[:model]}" },
+           "  Fix one with: maf add HARNESS:ROLE:MODEL"
     end
 
     def model_hint(result)

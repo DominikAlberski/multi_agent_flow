@@ -1088,11 +1088,19 @@ git worktree remove .maf/worktrees/<name>
 `maf` keeps the agents in `.maf/config.json`. Give only the changes:
 
 ```sh
+maf add                               # ask for the harness, roles, and models
 maf add opencode:frontend-developer   # add an agent
 maf remove claude:architect           # remove an agent
 maf agents                            # list the current agents
 maf update                            # regenerate the current agents
 ```
+
+Without arguments on a terminal, `maf add` asks. It offers only the harnesses
+on `PATH`, and the models that each harness lists: Claude Code aliases and IDs,
+the Codex model cache (`~/.codex/models_cache.json`), and `opencode models`. Hermes
+lists no models, so you type a name. A name that the harness does not list needs
+a confirmation. `maf add` and `maf update` also warn about such a name in the
+roster, because a typo makes every dispatched run fail.
 
 `maf remove` does not delete the generated role file.
 The generator skips unchanged files and updates changed files in place. There is nothing to commit:
@@ -1385,6 +1393,7 @@ This section holds the board details for the operator.
 | A worktree has no `coord` | Run `maf update` in the main project, then `maf start` again. `coord worktree` copies `.maf/bin/` into each worktree. |
 | `git status` shows `.maf/` files | An older maf version committed them. Run `maf untrack`, then commit. |
 | A dispatcher logs `agent failed` | Read the last log lines. Usual causes: missing CLI login, or a model name the harness does not accept. |
+| A worker status shows `halted` and the PM got an escalation | The harness does not know the model. Fix the name with `maf add HARNESS:ROLE:MODEL` and in the worker entry of `.maf/coordination/workers.json`, then run `maf worker restart WORKER`. The claims stay. |
 | Two dispatchers for one role share a session | Set a different `COORD_WORKER` for each dispatcher. |
 | Hermes reports an unknown skill | Run `maf add hermes:ROLE` to generate the skill file. |
 

@@ -21,6 +21,16 @@ module Maf
       end
     end
 
+    # Only the installed harnesses are choices. Each role gets its own model.
+    def add
+      harness = @prompt.choose("Harness", Flow::Models.installed) or return
+      roles = @prompt.choose_many("Roles", Maf.role_names)
+      return if roles.empty?
+
+      models = show_models(harness)
+      Maf.flow(*roles.flat_map { |role| ["--agent", agent_spec(harness, role, models)] })
+    end
+
     private
 
     def show_menu
@@ -46,15 +56,30 @@ module Maf
       @prompt.say("error: #{e.message}")
     end
 
-    def add
-      harness = @prompt.choose("Harness", Flow::HARNESSES) or return
-      roles = @prompt.choose_many("Roles", Maf.role_names)
-      Maf.flow(*roles.flat_map { |role| ["--agent", agent_spec(harness, role)] }) unless roles.empty?
+    def agent_spec(harness, role, models)
+      model = ask_model(harness, role, models).to_s
+      [harness, role, model].reject(&:empty?).join(":")
     end
 
-    def agent_spec(harness, role)
-      model = @prompt.ask("Model for #{role} (Enter = default):").to_s
-      [harness, role, model].reject(&:empty?).join(":")
+    # The answer is a number of the list, a model name, or Enter for the default.
+    # A name that the harness does not list needs a confirmation: a typo makes
+    # every dispatched run fail.
+    def ask_model(harness, role, models)
+      answer = @prompt.ask("Model for #{role} (number or name, Enter = #{default_label(harness)}):").to_s
+      number = Integer(answer, exception: false)
+      return models[number - 1] if number&.between?(1, models.size)
+      return answer if answer.empty? || Flow::Models.known?(harness, answer)
+
+      @prompt.confirm?("#{harness} does not list #{answer}. Use it anyway?") ? answer : ask_model(harness, role, models)
+    end
+
+    def default_label(harness) = Flow::DEFAULT_MODELS.fetch(harness, "the harness default")
+
+    def show_models(harness)
+      models = Flow::Models.for(harness).to_a
+      @prompt.say(models.empty? ? "#{harness} lists no models. Type a name." : "Models of #{harness}:")
+      models.each_with_index { |model, i| @prompt.say("  #{i + 1}) #{model}") }
+      models
     end
 
     def remove
