@@ -227,7 +227,8 @@ The refresh runs `graphify extract . --backend gemini` and then
 `graphify export obsidian --dir graphify-out/obsidian`. The graph lives in `graphify-out/`
 at the project root. It builds in a temp dir and swaps the derived files on
 success, so a failed extract keeps the old graph. The swap never replaces
-`graphify-out/memory/` or `graphify-out/obsidian/`. It needs `GEMINI_API_KEY`.
+`graphify-out/memory/` or `graphify-out/obsidian/`. It then runs `graphify reflect` on the
+saved notes. It needs `GEMINI_API_KEY`.
 Without the key it logs a skip in `.maf/coordination/doc-graph.log` and exits. A
 non-markdown commit makes no LLM call. A refresh started in a worktree writes
 the shared graph in the main checkout.

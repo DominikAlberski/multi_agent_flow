@@ -128,6 +128,7 @@ module Flow
     6. Before you trust a done task, inspect its diff and its TESTS line:
        `git diff goal/<goal-short-id>...task/<task-short-id>`. Do not rerun the task tests.
        If something is wrong, open a new task for the fix. Name the old task branch in Inputs.
+       Save the reason: `coord lesson <task-id> dead_end "<what failed>"` or `corrected "<the right way>"`.
     7. Land each accepted task: `coord land <task-id> --subject "<type>(<area>): <summary>"`.
        The command squashes the task branch into the goal branch as one commit and deletes the task branch.
        Use a Conventional Commits subject. If the command reports a conflict, open a fix task.

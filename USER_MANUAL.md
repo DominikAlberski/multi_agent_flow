@@ -896,6 +896,27 @@ artifacts (see "Give the team work").
   or the dashboard. The architect checks it before the merge suite.
 - **A missing, stale, or unreadable graph never fails a run.**
 
+### Work memory
+
+The graph also keeps what the team learned. graphify calls this work memory.
+
+- **Done tasks.** `coord done` saves a note with `graphify save-result` in
+  `graphify-out/memory/`. The question is the task title. The answer is the task
+  notes. The note cites the graph nodes of the files that the task branch changed.
+  The outcome is `useful`.
+- **Lessons.** `coord lesson ID dead_end TEXT` saves an approach that failed.
+  `coord lesson ID corrected TEXT` saves the right way. The architect does this
+  when a done task is wrong.
+- **Summary.** After each note, and after each graph refresh, `graphify reflect`
+  writes `graphify-out/reflections/LESSONS.md`. A refresh drops each lesson whose
+  node is not in the new graph.
+- **Prompts.** The dispatcher adds the dead ends and the corrections of
+  `LESSONS.md` to each task prompt, newest first. `graphify query` marks each node
+  with a useful note as `learning=preferred`, `tentative`, or `contested`.
+- The next markdown refresh reads the notes into the graph as nodes.
+- Without a graph, nothing is saved. `coord lesson` then fails.
+- `graphify-out/memory/` is not in git. The refresh never replaces it.
+
 ### MCP server
 
 `maf add` writes the graphify MCP server for each harness. The server runs
@@ -1282,6 +1303,7 @@ This section holds the board details for the operator.
 | `coord unclaim ID` | Release a claim without finishing it. |
 | `coord done ID [--force]` | Complete a task. Refused while the task branch has own commits and lacks the goal branch head. |
 | `coord annotate ID TEXT` | Add a note to a task (permanent). |
+| `coord lesson ID dead_end\|corrected TEXT` | Save a lesson of a task to the graph memory (see "Work memory"). |
 | `coord msg --from A [--task ID] [--fyi] TO TEXT` | Send a message to a role or a worker (the role inbox). `--task` also notes the task. `--fyi` wakes no one. |
 | `coord await [--timeout S]` | Interactive session: arm the stop hook, then end the turn. The hook waits for work without model calls (default: 3000 s). Refused in a dispatched run. |
 | `coord broadcast --from A [--to workers\|leads\|all] TEXT` | Send a message to a group of roles. Default: workers. |

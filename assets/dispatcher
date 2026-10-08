@@ -377,6 +377,26 @@ module Dispatcher
       return {} unless words && File.exist?(path)
 
       { "graphify query <task description> --budget #{GRAPH_BUDGET}" => -> { graph_query(words, path) } }
+        .merge(lessons(File.join(File.dirname(path), "reflections", "LESSONS.md")))
+    end
+
+    LESSONS = "dead ends and corrections from graphify-out/reflections/LESSONS.md"
+    LESSON_HEADS = { "**Known dead ends**" => "dead end", "**Corrections**" => "correction" }.freeze
+
+    # coord done and coord lesson save the notes that LESSONS.md sums up. The
+    # list shows the newest lesson first. No lesson adds no section.
+    def self.lessons(file)
+      lines = File.exist?(file) ? lesson_lines(File.read(file)) : []
+      lines.empty? ? {} : { LESSONS => -> { lines.reverse.join } }
+    end
+
+    # Only the overall section counts. "## By topic" repeats the same lessons.
+    def self.lesson_lines(text)
+      kind = nil
+      text.split(/^## By topic/).first.lines.filter_map do |line|
+        kind = LESSON_HEADS.find { |head, _| line.start_with?(head) }&.last if line.start_with?("**")
+        "#{kind}: #{line.delete_prefix("- ")}" if kind && line.start_with?("- ")
+      end
     end
 
     def self.graph_query(words, path)

@@ -114,6 +114,25 @@ class DocGraphRefreshTest < Minitest::Test
     kept.each { |file| assert_equal "keep", File.read(file), file }
   end
 
+  # The new graph may lack a node of a lesson. reflect drops that lesson.
+  def test_the_refresh_reflects_the_saved_notes_on_the_new_graph
+    FileUtils.mkdir_p(File.join(File.dirname(graph), "memory"))
+    commit("doc", "doc.md", "hello")
+
+    run_script("post-commit", "STUB_GRAPH" => "NEW")
+
+    dir = File.dirname(graph)
+    assert_includes calls, "reflect --graph #{graph} --memory-dir #{dir}/memory --out #{dir}/reflections/LESSONS.md"
+  end
+
+  def test_no_reflect_without_saved_notes
+    commit("doc", "doc.md", "hello")
+
+    run_script("post-commit", "STUB_GRAPH" => "NEW")
+
+    refute_includes calls, "reflect"
+  end
+
   def test_the_build_is_seeded_with_the_current_graph
     FileUtils.mkdir_p(File.dirname(graph))
     File.write(graph, "OLD")

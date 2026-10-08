@@ -792,6 +792,49 @@ class MainTest < Minitest::Test
     refute_includes prompt, "graphify query"
   end
 
+  # The format of `graphify reflect`. "## By topic" repeats the lessons.
+  LESSONS_MD = <<~MD
+    # Lessons
+
+    ## Lessons
+
+    **Preferred sources** — corroborated by ≥2 useful results; start here.
+
+    - `app.rb` (2× useful)
+
+    **Known dead ends** — led nowhere; don't re-derive.
+
+    - "cache prices" — `price.rb`
+
+    **Corrections** — do these differently.
+
+    - "fix login" → use the session store
+
+    ## By topic
+
+    ### Prices
+
+    **Known dead ends** — led nowhere; don't re-derive.
+
+    - "cache prices" — `price.rb`
+  MD
+
+  def test_lessons_list_the_dead_ends_and_corrections_newest_first
+    file = File.join(@dir, "LESSONS.md")
+    File.write(file, LESSONS_MD)
+    text = Dispatcher::Prefetch.lessons(file).values.first.call
+
+    assert_equal "correction: \"fix login\" → use the session store\ndead end: \"cache prices\" — `price.rb`\n", text
+  end
+
+  def test_no_lessons_section_without_dead_ends_or_corrections
+    file = File.join(@dir, "LESSONS.md")
+    File.write(file, "# Lessons\n\n## Lessons\n\n_No marked outcomes yet._\n")
+
+    assert_empty Dispatcher::Prefetch.lessons(file)
+    assert_empty Dispatcher::Prefetch.lessons(File.join(@dir, "missing.md"))
+  end
+
   def with_path(dir)
     old = ENV["PATH"]
     ENV["PATH"] = "#{dir}:#{old}"

@@ -87,6 +87,9 @@ module Coord
         coord done ID [--force]              complete (refused while the task branch lacks the goal head,
                                              or while the verify command fails)
         coord annotate ID TEXT...
+        coord lesson ID dead_end|corrected TEXT...
+                                             save a lesson of a task to the graph memory: an approach that
+                                             failed (dead_end), or the right way (corrected)
         coord msg [--from A] [--task ID] [--fyi] TO TEXT...
                                              TO is a role or a worker; a worker's mail goes to its role inbox.
                                              --task also saves the text as a note on the task.
@@ -116,7 +119,7 @@ module Coord
       "init" => :cmd_init, "add" => :cmd_add, "next" => :cmd_next,
       "conflicts" => :cmd_conflicts,
       "claim" => :cmd_claim, "unclaim" => :cmd_unclaim,
-      "done" => :cmd_done, "annotate" => :cmd_annotate,
+      "done" => :cmd_done, "annotate" => :cmd_annotate, "lesson" => :cmd_lesson,
     "msg" => :cmd_msg, "inbox" => :cmd_inbox, "await" => :cmd_await, "broadcast" => :cmd_broadcast,
     "log" => :cmd_log, "hooks" => :cmd_hooks,
     "lock" => :cmd_lock, "unlock" => :cmd_unlock, "with-lock" => :cmd_with_lock,
@@ -1016,6 +1019,85 @@ class GraphAge
   private
 
   def root = File.dirname(File.dirname(File.expand_path(@paths.coord_dir)))
+end
+
+# WorkMemory keeps what the team learned after a task closes. `graphify
+# save-result` writes one note to graphify-out/memory/. The note cites the graph
+# nodes of the files that the task branch changed. `graphify reflect` then
+# rebuilds graphify-out/reflections/LESSONS.md from all notes, and the
+# dispatcher puts its dead ends and corrections into each task prompt.
+# Without a graph, it saves nothing.
+class WorkMemory
+  ANSWER_LIMIT = 2000
+  NODE_LIMIT = 20
+
+  def self.notes(task)
+    texts = (task["annotations"] || []).map { |note| note["description"].to_s }
+    texts.reject { |text| text.start_with?("LANDED:") }.join("\n")
+  end
+
+  def initialize(root)
+    @root = root
+  end
+
+  # Returns false when there is no graph or graphify fails.
+  def save(task, outcome, answer, correction = nil)
+    return false unless File.exist?(graph)
+
+    write_note(task, outcome, answer.to_s[0, ANSWER_LIMIT], correction) && reflect
+  end
+
+  private
+
+  def write_note(task, outcome, answer, correction)
+    graphify("save-result", "--question", question(task, outcome, answer), "--outcome", outcome, "--answer", answer,
+             "--memory-dir", folder("memory"), *correction_args(correction), *nodes_args(task))
+  end
+
+  def reflect
+    graphify("reflect", "--graph", graph, "--memory-dir", folder("memory"), "--out", folder("reflections/LESSONS.md"))
+  end
+
+  # LESSONS.md lists a dead end by its question only. The question keeps the
+  # reason, so the reason reaches the prompts.
+  def question(task, outcome, answer)
+    outcome == "dead_end" ? "#{task["description"]}: #{answer}" : task["description"].to_s
+  end
+
+  def correction_args(text) = text ? ["--correction", text] : []
+  def graph = folder("graph.json")
+  def folder(name) = File.join(@root, "graphify-out", name)
+
+  # graphify takes paths from the arguments, never from GRAPHIFY_OUT.
+  def graphify(*args)
+    system({ "GRAPHIFY_OUT" => nil }, "graphify", *args, chdir: @root, out: File::NULL, err: File::NULL)
+  end
+
+  # --nodes takes the rest of the arguments, so it comes last.
+  def nodes_args(task)
+    ids = node_ids(changed_files(task)).first(NODE_LIMIT)
+    ids.empty? ? [] : ["--nodes", *ids]
+  end
+
+  def changed_files(task)
+    return [] if task["goalid"].to_s.empty?
+
+    range = "#{Goals.branch(task["goalid"])}...task/#{Goals.short(task["uuid"])}"
+    Git.out(@root, "diff", "--name-only", range).lines(chomp: true)
+  end
+
+  def node_ids(files)
+    nodes = files.empty? ? [] : JSON.parse(File.read(graph))["nodes"] || []
+    files.filter_map { |file| nodes.find { |node| file_node?(node, file) }&.fetch("id", nil) }
+  rescue JSON::ParserError
+    []
+  end
+
+  # A file node has the file name as label. graphify may store the source path
+  # relative to the project or absolute.
+  def file_node?(node, file)
+    node["label"] == File.basename(file) && [file, File.join(@root, file)].include?(node["source_file"])
+  end
 end
 
 # Board renders status summaries and the Obsidian kanban file.
@@ -2195,6 +2277,7 @@ end
       tasks.done(id)
       event_log.append("done", @worker, id)
       report_done(task)
+      WorkMemory.new(main_root).save(task, "useful", WorkMemory.notes(task))
       puts "done #{id}"
     end
 
@@ -2212,6 +2295,28 @@ end
       tasks.annotate(id, @args.require_text("annotate"))
       event_log.append("annotate", @worker, id)
       puts "annotated #{id}"
+    end
+
+    LESSON_USAGE = "usage: coord lesson ID dead_end|corrected TEXT..."
+    LESSON_FAILED = "coord: no graph in graphify-out/, or graphify failed. The lesson is not saved."
+
+    # A dead end saves the text as the answer. A correction saves the task
+    # notes as the answer and the text as the right way.
+    def cmd_lesson
+      id = @args.require_arg("lesson", "ID")
+      outcome = @args.shift
+      abort LESSON_USAGE unless %w[dead_end corrected].include?(outcome)
+
+      save_lesson(find_task!(id), outcome, @args.require_text("lesson"))
+    end
+
+    def save_lesson(task, outcome, text)
+      memory = WorkMemory.new(main_root)
+      answer, correction = outcome == "dead_end" ? [text, nil] : [WorkMemory.notes(task), text]
+      abort LESSON_FAILED unless memory.save(task, outcome, answer, correction)
+
+      event_log.append("lesson", @worker, "#{task["uuid"]} #{outcome}")
+      puts "lesson saved for #{task["uuid"]}"
     end
 
     def find_task!(id)

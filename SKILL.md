@@ -215,6 +215,10 @@ watcher, with its pid in `.maf/coordination/vault.pid` and its output in
   passes the file. For Codex and Hermes, it prints the command that adds the server.
   Set `"mcp": false` in `.maf/config.json` to turn this off.
 - The graph holds code knowledge. Plans and specs use artifacts, not the graph.
+- Work memory: `coord done` saves a `graphify save-result` note in `graphify-out/memory/`,
+  and `coord lesson ID dead_end|corrected TEXT` saves a failed approach or a correction.
+  `graphify reflect` sums the notes up in `graphify-out/reflections/LESSONS.md`. The dispatcher
+  adds its dead ends and corrections to each task prompt.
 - `graphify-out/obsidian/` is the human-facing Obsidian base (graph notes, canvas). It is
   regenerated and excluded from git — durable decisions belong in the decisions folder
   (`.agent/decisions/` if it exists, else `docs/decisions/`),
