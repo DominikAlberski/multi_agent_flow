@@ -1,0 +1,57 @@
+# Publishes the maf gem to rubygems.org when a tag vX.Y.Z is pushed.
+#
+# RubyGems trusted publishing: rubygems.org trusts this workflow file in this
+# repository. GitHub gives the job a short-lived OIDC token. No API key is
+# stored. Set up the trusted publisher once on rubygems.org: maf, Trusted
+# publishers, GitHub Actions, repository DominikAlberski/multi_agent_flow,
+# workflow release.yml, environment release.
+#
+# To release:
+#   1. Change Maf::VERSION in lib/maf/version.rb. Add a CHANGELOG.md entry.
+#   2. Merge the change into main.
+#   3. git tag vX.Y.Z on main and git push the tag.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+
+      - name: Check that the tag is the gem version
+        run: |
+          version=$(ruby -r ./lib/maf/version -e 'print Maf::VERSION')
+          test "$GITHUB_REF_NAME" = "v$version" || { echo "tag $GITHUB_REF_NAME is not v$version"; exit 1; }
+
+      - name: Install Taskwarrior
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq taskwarrior lsof
+
+      - name: Configure git
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.com
+          git config --global init.defaultBranch main
+
+      - name: Run checks, lint, and tests
+        run: bundle exec rake
+
+      - uses: rubygems/release-gem@v1
