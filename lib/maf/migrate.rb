@@ -6,7 +6,8 @@
 #
 # Old layout: coord, dispatcher, vault, dashboard, coordination/, .worktrees/,
 # graphify-out/, obsidian/, .agent-flow.json at the project root.
-# New layout: everything in .maf/ (see USER_MANUAL.md).
+# New layout: everything in .maf/, except graphify-out/ at the root, which
+# holds the graph and the Obsidian vault (see USER_MANUAL.md).
 #
 # Moves files. Never deletes a file. Moves a script only if it carries the
 # flow signature, and a role file only if it carries the marker. If the new
@@ -38,8 +39,7 @@ module Migrate
   ].freeze
 
   # The folders of the old layout: [old path, new path].
-  FOLDERS = [["coordination", ".maf/coordination"], ["graphify-out", ".maf/graphify-out"],
-             ["obsidian", ".maf/obsidian"]].freeze
+  FOLDERS = [["coordination", ".maf/coordination"], ["obsidian", "graphify-out/obsidian"]].freeze
 
   HINT = "This project uses the old layout. Run: maf migrate"
 

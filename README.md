@@ -50,6 +50,8 @@ each value: harness, roles, models, and the agent to start.
 ## Project layout
 
 The flow keeps every file that it owns in one folder, `.maf/`, in the project.
+The knowledge graph is the exception: it is project knowledge, not tooling, so it
+lives in `graphify-out/` at the project root, where graphify looks by default.
 
 ```
 .maf/
@@ -57,13 +59,13 @@ The flow keeps every file that it owns in one folder, `.maf/`, in the project.
   lib/maf/shared/ code that the scripts in bin/ load (maf update replaces it)
   coordination/   task board, inbox, locks, presence, sessions, hooks, logs
   worktrees/      one git worktree per worker
-  graphify-out/   knowledge graph
-  obsidian/       generated Obsidian vault
   agents/         role files: claude/, opencode/, codex/
   claude/         settings.json: the Claude Code hooks (maf start passes --settings)
   mcp/            the graphify MCP server for Claude Code and opencode
   config.json     the agents and settings of the project
   roles.yml       project roles (you write it; maf role add NAME)
+graphify-out/     knowledge graph (excluded from git; each worktree has a symlink to it)
+  obsidian/       generated Obsidian vault
   workflow.md     stage instructions for the architect (you write it)
   env.sh          source it: puts .maf/bin on PATH
 ```
@@ -143,7 +145,7 @@ multi_agent_flow/
     flow.rb                   # generates harness-specific role files + installs coordination layer
     bootstrap.rb              # idempotent coordination layer installer
     setup_agent.rb            # maf start: worktree + harness launch
-    uninstall.rb              # removes the flow from a project; keeps .maf/graphify-out/ and .maf/obsidian/
+    uninstall.rb              # removes the flow from a project; keeps graphify-out/
     migrate.rb                # maf migrate: moves an old-layout install into .maf/
     team.rb                   # maf prepare: adds or replaces one worker
     retire.rb                 # maf retire: removes one worker and archives its state
@@ -222,9 +224,10 @@ hooks. The block starts `.maf/bin/doc-graph-refresh` detached, so the commit
 returns at once.
 
 The refresh runs `graphify extract . --backend gemini` and then
-`graphify export obsidian --dir .maf/obsidian`. The graph lives in `.maf/graphify-out/`
-(`GRAPHIFY_OUT` points there). It builds in a temp dir and swaps on
-success, so a failed extract keeps the old graph. It needs `GEMINI_API_KEY`.
+`graphify export obsidian --dir graphify-out/obsidian`. The graph lives in `graphify-out/`
+at the project root. It builds in a temp dir and swaps the derived files on
+success, so a failed extract keeps the old graph. The swap never replaces
+`graphify-out/memory/` or `graphify-out/obsidian/`. It needs `GEMINI_API_KEY`.
 Without the key it logs a skip in `.maf/coordination/doc-graph.log` and exits. A
 non-markdown commit makes no LLM call. A refresh started in a worktree writes
 the shared graph in the main checkout.

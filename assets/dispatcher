@@ -373,7 +373,7 @@ module Dispatcher
     end
 
     def self.graph(coord_dir, words)
-      path = File.join(coord_dir, "..", "graphify-out", "graph.json")
+      path = File.join(coord_dir, "..", "..", "graphify-out", "graph.json")
       return {} unless words && File.exist?(path)
 
       { "graphify query <task description> --budget #{GRAPH_BUDGET}" => -> { graph_query(words, path) } }

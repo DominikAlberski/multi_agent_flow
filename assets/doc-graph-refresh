@@ -11,10 +11,13 @@ require "time"
 abort "doc-graph-refresh: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
 
 module DocGraph
-  # graphify names the output dir under --out "graphify-out".
+  # graphify names the output dir under --out "graphify-out". The graph lives
+  # in that dir at the project root, where graphify looks by default.
   GRAPH = "graphify-out"
-  GRAPH_HOME = ".maf/graphify-out"
-  OBSIDIAN = ".maf/obsidian"
+  OBSIDIAN = File.join(GRAPH, "obsidian")
+  # The refresh never replaces these folders of the graph: memory/ holds the
+  # saved notes, obsidian/ holds the vault settings of the user.
+  KEPT = %w[memory obsidian].freeze
   LOG = ".maf/coordination/doc-graph.log"
   LOCK = ".maf/coordination/doc-graph.lock"
   PENDING = ".maf/coordination/doc-graph.pending"
@@ -78,7 +81,7 @@ module DocGraph
     common.empty? ? Dir.pwd : File.expand_path("..", common)
   end
 
-  def self.graph_path = File.join(main, GRAPH_HOME)
+  def self.graph_path = File.join(main, GRAPH)
 
   module Git
     def self.changed(event)
@@ -182,7 +185,10 @@ module DocGraph
 
     def self.seed(tmp)
       graph = DocGraph.graph_path
-      FileUtils.cp_r(graph, File.join(tmp, GRAPH)) if File.exist?(graph)
+      return unless File.exist?(graph)
+
+      FileUtils.mkdir_p(File.join(tmp, GRAPH))
+      (Dir.children(graph) - KEPT).each { |name| FileUtils.cp_r(File.join(graph, name), File.join(tmp, GRAPH)) }
     end
 
     def self.refresh(tmp, tree)
@@ -211,8 +217,15 @@ module DocGraph
     end
   end
 
+  # Swap replaces each derived entry of the graph folder on its own.
+  # The KEPT folders stay in place.
   module Swap
     def self.move(fresh, dest)
+      FileUtils.mkdir_p(dest)
+      (Dir.children(fresh) - KEPT).each { |name| replace(File.join(fresh, name), File.join(dest, name)) }
+    end
+
+    def self.replace(fresh, dest)
       old = "#{dest}.old"
       FileUtils.rm_rf(old)
       FileUtils.mv(dest, old) if File.exist?(dest)
@@ -228,13 +241,11 @@ module DocGraph
     end
   end
 
-  # Export writes the only Obsidian vault, .maf/obsidian. graphify export
-  # without --dir writes a second, incomplete vault into the graph folder.
-  # The graphify skill tells agents to run that, so remove the copy.
+  # Export writes the Obsidian vault to graphify-out/obsidian, the default
+  # folder of graphify. An agent that runs graphify export writes the same vault.
   module Export
     def self.run
       graph_path = DocGraph.graph_path
-      FileUtils.rm_rf(File.join(graph_path, "obsidian"))
       command = ["graphify", "export", "obsidian", "--dir", OBSIDIAN]
       Dir.chdir(DocGraph.main) { system({ "GRAPHIFY_OUT" => graph_path }, *command) }
     end

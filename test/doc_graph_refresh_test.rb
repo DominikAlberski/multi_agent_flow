@@ -63,7 +63,7 @@ class DocGraphRefreshTest < Minitest::Test
   end
 
   def calls = File.exist?(@calls) ? File.read(@calls) : ""
-  def graph = File.join(@dir, ".maf", "graphify-out", "graph.json")
+  def graph = File.join(@dir, "graphify-out", "graph.json")
   def log = File.join(@dir, ".maf/coordination", "doc-graph.log")
 
   def test_no_call_without_a_markdown_change
@@ -93,18 +93,25 @@ class DocGraphRefreshTest < Minitest::Test
 
     assert_equal 0, status.exitstatus, out
     assert_includes calls, "extract"
-    assert_includes calls, "export obsidian --dir .maf/obsidian"
+    assert_includes calls, "export obsidian --dir graphify-out/obsidian"
     assert_equal "NEW", File.read(graph)
   end
 
-  def test_the_export_removes_the_stray_vault_in_the_graph_folder
-    stray = File.join(File.dirname(graph), "obsidian")
-    FileUtils.mkdir_p(stray)
+  # The swap replaces the derived files only. The saved notes and the vault
+  # settings of the user stay in place, and the build does not get a copy.
+  def test_the_refresh_keeps_the_memory_and_the_vault_folders
+    kept = %w[memory/note.md obsidian/.obsidian/app.json].map { |name| File.join(File.dirname(graph), name) }
+    kept.each do |file|
+      FileUtils.mkdir_p(File.dirname(file))
+      File.write(file, "keep")
+    end
+    File.write(graph, "OLD")
     commit("doc", "doc.md", "hello")
 
     run_script("post-commit", "STUB_GRAPH" => "NEW")
 
-    refute Dir.exist?(stray)
+    assert_equal "NEW", File.read(graph)
+    kept.each { |file| assert_equal "keep", File.read(file), file }
   end
 
   def test_the_build_is_seeded_with_the_current_graph
@@ -155,7 +162,7 @@ class DocGraphRefreshTest < Minitest::Test
   end
 
   def test_the_cache_dir_is_passed_to_extract
-    seed = File.join(@dir, ".maf", "graphify-out", "cache", "seeded.txt")
+    seed = File.join(@dir, "graphify-out", "cache", "seeded.txt")
     FileUtils.mkdir_p(File.dirname(seed))
     File.write(seed, "keep")
     commit("doc", "doc.md", "hello")

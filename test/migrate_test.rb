@@ -79,17 +79,17 @@ class MigrateMovesTest < MigrateTestCase
       assert File.exist?(path(".maf", "bin", name)), "#{name} missing in .maf/bin"
     end
     assert File.exist?(path(".maf", "coordination", "inbox", "architect", "msg.md"))
-    assert File.exist?(path(".maf", "graphify-out", "graph.json"))
-    assert File.exist?(path(".maf", "obsidian", "note.md"))
+    assert File.exist?(path("graphify-out", "graph.json"))
+    assert File.exist?(path("graphify-out", "obsidian", "note.md"))
     assert File.exist?(path(".maf", "config.json"))
   end
 
-  # The flow writes no file into the project root besides .maf/ and the harness folders.
-  def test_leaves_only_the_flow_folder_and_the_harness_folders_at_the_root
+  # The flow writes no file into the project root besides .maf/, the harness folders, and the graph.
+  def test_leaves_only_the_flow_folder_the_harness_folders_and_the_graph_at_the_root
     out, status = migrate("--yes")
 
     assert_equal 0, status, out
-    assert_equal %w[.claude .git .maf], Dir.children(@dir).sort
+    assert_equal %w[.claude .git .maf graphify-out], Dir.children(@dir).sort
   end
 
   def test_rewrites_the_paths_inside_the_files

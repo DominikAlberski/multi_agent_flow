@@ -1272,6 +1272,18 @@ class WorktreeFirstRunTest < Minitest::Test
     assert File.exist?(File.join(@worktree_dir, lib))
   end
 
+  # The graph is not committed. Each worktree gets a symlink to the graph of
+  # the main checkout, and git does not show it.
+  def test_worktree_links_the_graph_of_the_main_checkout
+    write("graphify-out/graph.json")
+    Coord::Worktree.new(@root).create("tester", nil)
+
+    link = File.join(@worktree_dir, "graphify-out")
+    assert File.symlink?(link)
+    assert_equal File.realpath(File.join(@root, "graphify-out")), File.realpath(link)
+    refute_includes `git -C #{@worktree_dir} status --porcelain`, "graphify-out"
+  end
+
   HOOK_FILES = %w[.maf/coordination/harness-hooks/context-watch.rb .maf/coordination/harness-hooks/board-watch.rb
                   .maf/coordination/harness-hooks/next-task.rb .opencode/plugins/board-watch.js].freeze
 

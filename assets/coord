@@ -17,6 +17,7 @@ require "shellwords"
 require "rbconfig"
 require "optparse"
 require "open3"
+require "pathname"
 begin
   require_relative "../lib/maf/shared/processes"
   require_relative "../lib/maf/shared/project"
@@ -1821,6 +1822,10 @@ end
   # worktree with the same shared formula.
   class Worktree
     ENV_FILE = WorktreeEnv::FILE
+    # The graph folder at the project root. The exclude line has no trailing
+    # slash, so it also matches the symlink.
+    GRAPH_DIR = "graphify-out"
+    LOCAL_EXCLUDES = [ENV_FILE, "/#{GRAPH_DIR}"].freeze
     RUNTIME_FILES = %w[.maf/bin/coord .maf/coordination/harness-hooks/next-task.rb
                        .maf/coordination/harness-hooks/board-watch.rb .maf/coordination/harness-hooks/session-guard.rb
                        .maf/coordination/harness-hooks/context-watch.rb .codex/hooks.json
@@ -1894,7 +1899,8 @@ end
 
     def finish(dir, branch, message)
       ensure_runtime_files(dir)
-      exclude_env_file(dir)
+      link_graph(dir)
+      exclude_local_files(dir)
       WorktreeEnv.new(File.join(@root, MAF_DIR, "coordination")).write(dir, File.basename(dir))
       puts message, SOURCE_HINT
     end
@@ -1934,20 +1940,32 @@ end
       FileUtils.cp(src, dest, preserve: true)
     end
 
-    # .maf/env.sh holds absolute host paths and must never be committed. Git
-    # has no per-worktree exclude, and .gitignore may not be committed yet, so
-    # add it to the repository's shared local exclude instead. .maf/env.sh
-    # only ever exists inside a worktree, so this cannot hide anything in the
-    # main worktree.
-    def exclude_env_file(dir)
-      exclude = Maf::Shared::GitExclude.path(dir)
-      return if exclude.nil? || listed?(exclude)
+    # The graph is not committed. A relative symlink gives the worktree the
+    # graph of the main checkout at the default path of graphify, so a query
+    # or a saved note in the worktree uses the main graph.
+    def link_graph(dir)
+      link = File.join(dir, GRAPH_DIR)
+      return if File.exist?(link) || File.symlink?(link)
 
-      FileUtils.mkdir_p(File.dirname(exclude))
-      File.open(exclude, "a") { |file| file.puts(ENV_FILE) }
+      FileUtils.mkdir_p(File.join(@root, GRAPH_DIR))
+      File.symlink(Pathname.new(File.join(@root, GRAPH_DIR)).relative_path_from(Pathname.new(dir)).to_s, link)
     end
 
-    def listed?(exclude) = File.exist?(exclude) && File.read(exclude).lines.map(&:strip).include?(ENV_FILE)
+    # .maf/env.sh holds absolute host paths, and the graph link points into
+    # the main checkout. Neither may be committed. Git has no per-worktree
+    # exclude, and .gitignore may not be committed yet, so add both to the
+    # repository's shared local exclude instead. bootstrap excludes the graph
+    # too; an install from before the graph link lacks that line.
+    def exclude_local_files(dir)
+      exclude = Maf::Shared::GitExclude.path(dir)
+      missing = exclude && unlisted(exclude)
+      return if missing.nil? || missing.empty?
+
+      FileUtils.mkdir_p(File.dirname(exclude))
+      File.open(exclude, "a") { |file| file.puts(missing) }
+    end
+
+    def unlisted(exclude) = LOCAL_EXCLUDES - (File.exist?(exclude) ? File.read(exclude).lines.map(&:strip) : [])
   end
 
   # CLI dispatches commands. Keep methods small; collaborators do the work.

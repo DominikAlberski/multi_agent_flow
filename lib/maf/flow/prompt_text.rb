@@ -51,8 +51,7 @@ module Flow
   GRAPH_RULE = <<~TEXT.strip
     - Query the shared knowledge graph when you start a task or plan a goal, not before.
       It finds code and prior decisions faster than grep. Run `vault age` first.
-      Then run `graphify query "..." --budget 800 --graph "$COORD_DIR/../graphify-out/graph.json"`,
-      or use the graphify MCP tools. Never run `graphify export`.
+      Then run `graphify query "..." --budget 800`, or use the graphify MCP tools. Never run `graphify export`.
       Put one line in the report of that task or plan: "Graph: fresh", "Graph: stale", or "Graph: missing".
   TEXT
 

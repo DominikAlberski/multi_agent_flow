@@ -2,8 +2,8 @@
 
 module Uninstall
   # Removes the settings and the MCP config of the flow in .maf/, and the
-  # local git excludes. The excludes keep the kept graphify-out/ and
-  # obsidian/ dirs, so git does not show the generated files.
+  # local git excludes. The excludes keep the kept graphify-out/ dir, so
+  # git does not show the generated files.
   class LocalFiles
     DIRS = [%w[.maf claude], %w[.maf mcp]].freeze
 

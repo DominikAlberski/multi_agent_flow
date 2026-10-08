@@ -3,7 +3,7 @@
 module Uninstall
   # Removes the marked block from AGENTS.md and .gitignore. Text
   # outside the block stays. A file with nothing left goes. .gitignore keeps
-  # the ignore rules for the kept graphify-out/ and obsidian/ dirs.
+  # the ignore rule for the kept graphify-out/ dir.
   class MarkedFiles
     FILES = %w[AGENTS.md .gitignore].freeze
 

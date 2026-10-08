@@ -41,6 +41,7 @@ module Bootstrap
 
     def install(actions)
       Writer.new(@project).apply(actions)
+      GraphHome.new(@project).move
       print_next_steps(VaultStarter.new(@project).start(actions))
     end
 

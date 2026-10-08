@@ -75,5 +75,5 @@ If a message names a task that you do not hold, run `coord show ID` before you a
 - Each term has a bold name, one or two sentences, and an optional `_Avoid_` line for rejected words.
 - The decisions folder holds the ADRs: `.agent/decisions/` if it exists, else `docs/decisions/`.
   Append. Never rewrite an ADR.
-- `.maf/obsidian/` is rebuilt from the code graph. Do not keep permanent notes there.
+- `graphify-out/obsidian/` is rebuilt from the code graph. Do not keep permanent notes there.
 <!-- <<< multi-agent-flow <<< -->

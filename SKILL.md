@@ -94,7 +94,7 @@ maf uninstall           # asks, then removes
 ```
 
 Removes only files that carry the flow signature or marker. Keeps
-`.maf/graphify-out/`, `.maf/obsidian/`, `worker/*` branches, and dirty worktrees
+`graphify-out/` (graph and Obsidian vault), `worker/*` branches, and dirty worktrees
 (`--force` removes those worktrees).
 
 ## Verify
@@ -199,7 +199,7 @@ vault mcp       # exec the stdio MCP server (for an MCP client config)
 ```
 
 It runs the current graphify subcommands — `graphify update .` (incremental,
-no LLM) and `graphify export obsidian --dir .maf/obsidian` — as a detached polling
+no LLM) and `graphify export obsidian --dir graphify-out/obsidian` — as a detached polling
 watcher, with its pid in `.maf/coordination/vault.pid` and its output in
 `.maf/coordination/vault.log`. graphify 0.9 removed the old
 `--obsidian`/`--obsidian-dir`/`--watch`/`--mcp` flags; MCP is now the separate
@@ -207,19 +207,20 @@ watcher, with its pid in `.maf/coordination/vault.pid` and its output in
 `graphify` was not installed yet, run `vault` by hand once it is.
 
 - Each role queries the graph when it starts a task or plans a goal (MCP, or
-  `graphify query "..." --budget 800 --graph "$COORD_DIR/../graphify-out/graph.json"`).
+  `graphify query "..." --budget 800`). The graph is in `graphify-out/` at the project root;
+  each worktree has a symlink to it.
   A missing or stale graph goes into the report. `vault age` shows the graph age:
   the commits since the build. `coord status` and the dashboard show it too.
 - `maf add` writes the MCP server into `.maf/mcp/` (Claude Code and opencode); `maf start`
   passes the file. For Codex and Hermes, it prints the command that adds the server.
   Set `"mcp": false` in `.maf/config.json` to turn this off.
 - The graph holds code knowledge. Plans and specs use artifacts, not the graph.
-- `.maf/obsidian/` is the human-facing Obsidian base (graph notes, canvas). It is
+- `graphify-out/obsidian/` is the human-facing Obsidian base (graph notes, canvas). It is
   regenerated and excluded from git — durable decisions belong in the decisions folder
   (`.agent/decisions/` if it exists, else `docs/decisions/`),
   not here.
 - `coord board` regenerates `.maf/coordination/exports/board.md`. It is not part
-  of the graphify export and is outside `.maf/obsidian/`. Open `.maf/coordination/exports/`
+  of the graphify export and is outside `graphify-out/obsidian/`. Open `.maf/coordination/exports/`
   as a second vault, or open the project root as the vault to see both.
 
 ## Operating rules (also in the contract of each role file)
@@ -241,7 +242,7 @@ Restart workers with `maf start` after the update.
    and every worktree shares one .maf/coordination/ dir and board.
 3. Acquire the `ollama` lock before any local generation.
 4. Record decisions in the decisions folder (`.agent/decisions/` or
-   `docs/decisions/`); append, never rewrite. `.maf/obsidian/` is
+   `docs/decisions/`); append, never rewrite. `graphify-out/obsidian/` is
    regenerated graphify output, not a durable store.
 5. Report via `coord annotate`; coordinate via `coord msg`.
 6. Worker roles: if no task is available, Claude Code and opencode agents stop.

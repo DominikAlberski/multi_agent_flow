@@ -777,7 +777,7 @@ class MainTest < Minitest::Test
 
   # Some models grep instead of querying the graph. The prompt brings the graph query along.
   def test_a_task_run_gets_a_graph_query_on_the_task_description
-    coord = File.join(@dir, "coordination")
+    coord = File.join(@dir, ".maf", "coordination")
     FileUtils.mkdir_p([coord, File.join(@dir, "graphify-out"), File.join(@dir, "bin")])
     File.write(File.join(@dir, "graphify-out", "graph.json"), "{}")
     File.write(File.join(@dir, "bin", "graphify"), "#!/bin/sh\necho \"NODE app.rb args: $2 $4\"\n")

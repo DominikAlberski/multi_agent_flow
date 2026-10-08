@@ -870,12 +870,12 @@ vault mcp       # exec the stdio MCP server (for an MCP client config)
 ```
 
 The watcher runs `graphify update .` (incremental, no LLM) and
-`graphify export obsidian --dir .maf/obsidian` every `VAULT_POLL` seconds (default 30).
+`graphify export obsidian --dir graphify-out/obsidian` every `VAULT_POLL` seconds (default 30).
 
 A markdown commit or merge also refreshes the graph. `maf add` appends a flow
 block to the `post-commit` and `post-merge` hooks. The block starts
 `.maf/bin/doc-graph-refresh` detached. The refresh runs
-`graphify extract . --backend gemini` and re-exports `.maf/obsidian/`. It needs
+`graphify extract . --backend gemini` and re-exports `graphify-out/obsidian/`. It needs
 `GEMINI_API_KEY` in the environment of the agent session. Without the key it
 logs a skip in `.maf/coordination/doc-graph.log`. A non-markdown commit makes no LLM
 call.
@@ -915,7 +915,7 @@ is not valid JSON as it is.
 To turn the server off, set `"mcp": false` in `.maf/config.json`, and delete
 `.maf/mcp/`. With `"mcp": false`, `maf add` and `maf update` do not write it again.
 
-Open the `.maf/obsidian/` folder in Obsidian to see the code graph. To see
+Open the `graphify-out/obsidian/` folder in Obsidian to see the code graph. To see
 `.maf/coordination/exports/board.md` as a kanban alongside the graph, open the project
 root as the Obsidian vault.
 
@@ -1068,8 +1068,8 @@ The uninstaller removes:
 
 The uninstaller keeps:
 
-- `.maf/graphify-out/` and `.maf/obsidian/`. A rebuild costs many agent runs. Delete them
-  by hand. `.git/info/exclude` keeps them out of git.
+- `graphify-out/` (the graph and the Obsidian vault). A rebuild costs many agent runs.
+  Delete it by hand. `.git/info/exclude` keeps it out of git.
 - Files that do not carry the flow signature or marker, and text outside the
   marked blocks.
 - `worker/*` branches. Merge or delete them with `git branch -D`.
@@ -1144,7 +1144,7 @@ Do these steps in the project:
 Older versions of the flow put many files in the project root: `coord`,
 `dispatcher`, `vault`, `dashboard`, `coordination/`, `.worktrees/`,
 `graphify-out/`, `obsidian/`, and `.agent-flow.json`. This version keeps all of
-them in one folder, `.maf/`. The paths of the old and the new layout:
+them in one folder, `.maf/`, except the graph, which stays in `graphify-out/`. The paths of the old and the new layout:
 
 | Old | New |
 |---|---|
@@ -1152,8 +1152,8 @@ them in one folder, `.maf/`. The paths of the old and the new layout:
 | `coordination/` | `.maf/coordination/` |
 | `coordination/doc-graph-refresh` | `.maf/bin/doc-graph-refresh` |
 | `.worktrees/` | `.maf/worktrees/` |
-| `graphify-out/` | `.maf/graphify-out/` |
-| `obsidian/` | `.maf/obsidian/` |
+| `graphify-out/` | `graphify-out/` (stays) |
+| `obsidian/` | `graphify-out/obsidian/` |
 | `.agent-flow.json` | `.maf/config.json` |
 | `coord-env.sh` | `.maf/env.sh` |
 | `.claude/agents/`, `.opencode/agents/`, `.codex/prompts/` | symlinks to `.maf/agents/<harness>/` |

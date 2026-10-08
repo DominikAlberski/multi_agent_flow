@@ -154,8 +154,8 @@ class VaultMcpTest < McpTestCase
     git("init", "-q")
     git("commit", "-q", "--allow-empty", "-m", "i")
     git("worktree", "add", "-q", "-b", "w", ".maf/worktrees/w")
-    FileUtils.mkdir_p(path(".maf", "graphify-out"))
-    write(".maf/graphify-out/graph.json", "{}")
+    FileUtils.mkdir_p(path("graphify-out"))
+    write("graphify-out/graph.json", "{}")
     fake_server
   end
 
@@ -171,6 +171,6 @@ class VaultMcpTest < McpTestCase
     env = { "PATH" => "#{path("fakebin")}:#{ENV["PATH"]}" }
     out = IO.popen(env, [RbConfig.ruby, VAULT, "mcp"], chdir: path(".maf", "worktrees", "w"), err: [:child, :out], &:read)
 
-    assert_equal "graph=#{path(".maf", "graphify-out", "graph.json")}", out.strip
+    assert_equal "graph=#{path("graphify-out", "graph.json")}", out.strip
   end
 end

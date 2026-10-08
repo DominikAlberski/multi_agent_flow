@@ -207,6 +207,43 @@ class BootstrapTest < InstallerTestCase
     refute File.exist?(taskrc_path)
   end
 
+  def write_file(rel, text = "x")
+    FileUtils.mkdir_p(File.dirname(File.join(@dir, rel)))
+    File.write(File.join(@dir, rel), text)
+  end
+
+  # Older installs kept the graph in .maf/. An update moves it to the project root.
+  def test_moves_the_graph_and_the_vault_of_an_older_install_to_the_root
+    write_file(".maf/graphify-out/graph.json", "OLD")
+    write_file(".maf/graphify-out/obsidian/stray.md")
+    write_file(".maf/obsidian/.obsidian/app.json", "settings")
+
+    out, status = bootstrap
+
+    assert_equal 0, status, out
+    assert_equal "OLD", File.read(File.join(@dir, "graphify-out", "graph.json"))
+    assert_equal "settings", File.read(File.join(@dir, "graphify-out", "obsidian", ".obsidian", "app.json"))
+    refute File.exist?(File.join(@dir, "graphify-out", "obsidian", "stray.md"))
+    refute File.exist?(File.join(@dir, ".maf", "graphify-out"))
+    refute File.exist?(File.join(@dir, ".maf", "obsidian"))
+  end
+
+  # A graph that the user built at the root wins over the old one. Both stay.
+  def test_keeps_a_graph_that_already_exists_at_the_root
+    write_file(".maf/graphify-out/graph.json", "OLD")
+    write_file(".maf/obsidian/note.md", "old vault")
+    write_file("graphify-out/graph.json", "USER")
+    write_file("graphify-out/obsidian/note.md", "user vault")
+
+    out, status = bootstrap
+
+    assert_equal 0, status, out
+    assert_equal "USER", File.read(File.join(@dir, "graphify-out", "graph.json"))
+    assert_equal "user vault", File.read(File.join(@dir, "graphify-out", "obsidian", "note.md"))
+    assert File.exist?(File.join(@dir, ".maf", "graphify-out", "graph.json"))
+    assert File.exist?(File.join(@dir, ".maf", "obsidian", "note.md"))
+  end
+
   # Regression: vault auto-start spawns a detached daemon. VAULT_SKIP must stop
   # it, so bootstrap in tests/CI never leaves an orphan process behind.
   def test_vault_skip_prevents_auto_start
