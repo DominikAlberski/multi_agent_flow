@@ -130,7 +130,57 @@ class GitExcludeTest < Minitest::Test
     end
   end
 
-  def test_no_path_outside_a_repository
-    Dir.mktmpdir { |dir| assert_nil Maf::Shared::GitExclude.path(dir) }
+  def test_no_path_outside_a_repository_warns
+    Dir.mktmpdir do |dir|
+      assert_output(nil, /no git exclude file/) { assert_nil Maf::Shared::GitExclude.path(dir) }
+    end
+  end
+
+  # Every worktree shares the exclude file of the main clone.
+  def test_a_worktree_gets_the_exclude_file_of_the_main_clone
+    Dir.mktmpdir do |dir|
+      main = File.join(dir, "main")
+      tree = worktree(main, File.join(dir, "tree"))
+      assert_equal File.realpath(File.join(main, ".git/info")), File.realpath(File.dirname(git_exclude(tree)))
+    end
+  end
+
+  def worktree(main, tree)
+    system("git", "init", "-q", main, exception: true)
+    system("git", "-C", main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty",
+           "-m", "init", exception: true)
+    system("git", "-C", main, "worktree", "add", "-q", tree, exception: true)
+    tree
+  end
+
+  def git_exclude(dir) = Maf::Shared::GitExclude.path(dir)
+
+  # Git before 2.31 has no --path-format and gives a path relative to the directory.
+  def test_git_without_path_format_gives_an_absolute_path
+    Dir.mktmpdir do |dir|
+      fake_git(dir)
+      path = with_path(File.join(dir, "bin")) { git_exclude(dir) }
+      assert_equal File.join(dir, ".git/info/exclude"), path
+    end
+  end
+
+  OLD_GIT = <<~SH
+    #!/bin/sh
+    for arg in "$@"; do [ "$arg" = "--path-format=absolute" ] && { echo "$arg"; exit 129; }; done
+    echo .git/info/exclude
+  SH
+
+  def fake_git(dir)
+    FileUtils.mkdir_p(File.join(dir, "bin"))
+    File.write(File.join(dir, "bin", "git"), OLD_GIT)
+    File.chmod(0o755, File.join(dir, "bin", "git"))
+  end
+
+  def with_path(bin)
+    old = ENV.fetch("PATH")
+    ENV["PATH"] = "#{bin}:#{old}"
+    yield
+  ensure
+    ENV["PATH"] = old
   end
 end
