@@ -14,6 +14,7 @@ require_relative "../lib/maf/shared/processes"
 require_relative "../lib/maf/shared/project"
 require_relative "../lib/maf/shared/git_exclude"
 require_relative "../lib/maf/shared/peak_rate"
+require_relative "../lib/maf/shared/git_identity"
 
 SHARED_FILES = Dir[File.expand_path("../lib/maf/shared/*.rb", __dir__)]
 
@@ -182,5 +183,34 @@ class GitExcludeTest < Minitest::Test
     yield
   ensure
     ENV["PATH"] = old
+  end
+end
+
+class GitIdentityTest < Minitest::Test
+  BOT = { "github" => { "bot_user" => "maf-bot", "bot_email" => "bot@example.com" } }.freeze
+
+  def identity(config) = Maf::Shared::GitIdentity.env(config)
+
+  def test_git_identity_sets_the_author_and_the_committer
+    env = identity("git_identity" => { "name" => "Agent", "email" => "agent@example.com" })
+
+    assert_equal %w[Agent agent@example.com Agent agent@example.com],
+                 env.values_at("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL")
+  end
+
+  def test_git_identity_wins_over_the_github_bot
+    env = identity(BOT.merge("git_identity" => { "name" => "Agent", "email" => "agent@example.com" }))
+
+    assert_equal "Agent", env["GIT_AUTHOR_NAME"]
+  end
+
+  def test_the_github_bot_is_the_fallback
+    assert_equal "maf-bot", identity(BOT)["GIT_COMMITTER_NAME"]
+  end
+
+  # Without a persona, git uses the config of the user.
+  def test_no_persona_sets_nothing
+    assert_empty identity({})
+    assert_empty identity("git_identity" => { "name" => "Agent" })
   end
 end

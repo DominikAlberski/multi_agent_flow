@@ -19,7 +19,9 @@ load File.expand_path("../assets/coord", __dir__)
 # never use them. This module points the process at the test's own board and
 # restores the session values after the test.
 module CoordEnvIsolation
-  KEYS = %w[TASKRC COORD_DIR COORD_ROLE COORD_WORKER].freeze
+  # coord sets the GIT_* variables of the git persona in the process.
+  KEYS = %w[TASKRC COORD_DIR COORD_ROLE COORD_WORKER GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME
+            GIT_COMMITTER_EMAIL].freeze
 
   def isolate_env(env)
     @inherited_env = KEYS.to_h { |key| [key, ENV[key]] }
@@ -33,7 +35,9 @@ module CoordEnvIsolation
   end
 
   def assert_isolated_env(env)
-    KEYS.each { |key| assert_equal env[key], ENV[key], "the test leaked #{key}" }
+    KEYS.each do |key|
+      env[key].nil? ? assert_nil(ENV[key], "the test leaked #{key}") : assert_equal(env[key], ENV[key], "the test leaked #{key}")
+    end
   end
 end
 
@@ -1504,6 +1508,16 @@ class GoalTest < Minitest::Test
     end
     assert_equal 1, `git -C #{goal_dir(uuid)} rev-list --count main..HEAD`.to_i
     assert File.exist?(File.join(goal_dir(uuid), "price_test.rb"))
+  end
+
+  # The git persona of the agents authors and commits the squash.
+  def test_land_commits_as_the_git_persona_of_the_agents
+    File.write(File.join(@root, ".maf/config.json"), JSON.generate(git_identity: { name: "Agent", email: "a@example.com" }))
+    uuid, task, = done_task_with_work
+
+    coord("land", task, "--subject", "test(prices): add price test")
+
+    assert_equal "Agent a@example.com Agent", `git -C #{goal_dir(uuid)} log -1 --format='%an %ae %cn'`.strip
   end
 
   def test_land_deletes_the_task_branch_and_returns_the_worker_to_its_branch

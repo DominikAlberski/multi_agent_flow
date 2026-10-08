@@ -130,6 +130,7 @@ begin
   require_relative "../lib/maf/shared/project"
   require_relative "../lib/maf/shared/roles"
   require_relative "../lib/maf/shared/peak_rate"
+  require_relative "../lib/maf/shared/git_identity"
 rescue LoadError
   abort "dispatcher: the maf shared library is missing. Run maf update."
 end
@@ -1577,5 +1578,7 @@ end
 if __FILE__ == $PROGRAM_NAME
   # The agents run `coord`. Put the folder of this script (.maf/bin) on PATH.
   ENV["PATH"] = [File.dirname(File.expand_path(__FILE__)), ENV["PATH"]].compact.join(File::PATH_SEPARATOR)
+  # Each run inherits the git persona of the agents.
+  Maf::Shared::GitIdentity.apply(Dispatcher::Project.manifest)
   Dispatcher::Main.new(Dispatcher::Options.parse(ARGV)).run
 end
