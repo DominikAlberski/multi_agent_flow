@@ -316,8 +316,14 @@ bundle exec rake build             # writes pkg/maf-VERSION.gem
 bundle exec rake install           # builds and installs the gem
 ```
 
-To release, change `Maf::VERSION` in `lib/maf/version.rb` and add a
-`CHANGELOG.md` entry.
+To release:
+
+1. Change `Maf::VERSION` in `lib/maf/version.rb`. Add a `CHANGELOG.md` entry.
+2. Merge the change into `main`.
+3. Tag `main` and push the tag: `git tag v0.2.0 && git push origin v0.2.0`.
+
+The tag starts `.github/workflows/release.yml`. The workflow runs all checks and
+publishes the gem to rubygems.org through trusted publishing. No API key is stored.
 
 RuboCop (pinned in the `Gemfile`) uses `.rubocop.yml`. It sets the
 size rules: a class at most 100 lines, a method at most 5 lines and 4
