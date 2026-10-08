@@ -125,8 +125,8 @@ If the role exists already, `maf role add` changes nothing.
 A workflow is a list of stages in words. The architect reads it. The architect
 creates the tasks of one stage at a time. The other roles do not see it.
 
-Write the stages to `.maf/workflow.md`. Three examples are in
-`templates/workflows/`: `simple`, `plan-review`, and `tdd`. Example:
+Write the stages to `.maf/workflow.md`. Four examples are in
+`templates/workflows/`: `simple`, `plan-review`, `tdd`, and `panel`. Example:
 
 ```sh
 cp templates/workflows/tdd.md .maf/workflow.md
@@ -138,6 +138,27 @@ maf update
 `maf update` splices the text into the architect role file under the heading
 `Workflow:`. If `.maf/workflow.md` does not exist, the architect role file does
 not change.
+
+#### The `panel` workflow
+
+`panel` gives the plan and the whole goal diff to three reviewer roles:
+
+| Role | Checks |
+|---|---|
+| `reviewer` | Correctness, security, regressions, and tests. |
+| `skeptic` | Claims about the code, dropped requirements, simpler designs, and hidden order between parallel tasks. |
+| `auditor` | Seams between tasks, scope, callers of changed behavior, and docs that do not match the code. |
+
+Add the three roles: `maf add claude:reviewer codex:skeptic opencode:auditor`.
+Give each role a model from a different model family. Different models miss different defects.
+Each task gets one review by `reviewer` only. Three reviews of each task cost too much for the gain.
+
+Each review ends with `VERDICT: pass` or `VERDICT: fix`. Only a critical finding starts a fix round.
+The plan review stops after 2 rounds. The goal review stops after 3 rounds.
+After the last round, the architect escalates to the project manager.
+
+The idea comes from [shipyard](https://github.com/esse/shipyard) by Piotr Szmielew.
+Shipyard is a Claude Code plugin. Reviewers from different model families attack a plan and a branch in it.
 
 The architect does not create the task of the next stage before the gate of the
 current stage passes. A task that does not exist cannot be claimed.

@@ -100,6 +100,10 @@ Ask: "Which workflow do you want? Choose one, or describe your own in your own w
 | `simple` | Implement, review, merge. |
 | `plan-review` | Plan, review the plan, implement, review, merge. |
 | `tdd` | Plan, review the plan, write specs, implement, review, merge. |
+| `panel` | Plan, three reviewers attack the plan, implement, review, three reviewers attack the goal diff, merge. |
+
+If the user chooses `panel`, add the roles `reviewer`, `skeptic`, and `auditor` in Step 5.
+The three roles review the same plan and the same goal diff. Each role checks a different area.
 
 If the user chooses a name, copy the file `FLOW/templates/workflows/<name>.md`
 to `.maf/workflow.md`.
@@ -122,6 +126,10 @@ Show the model hint from step 3 for each role. Explain that the hint is only a
 recommendation. The user knows what runs on the machine.
 
 The user may skip a model. If skipped, the harness default applies.
+
+If the workflow is `panel`, propose a different model family for each of
+`reviewer`, `skeptic`, and `auditor`. Example: Claude, GPT, and Gemini.
+Different models miss different defects. The user makes the final choice.
 
 ## Step 5 - Add the agents
 

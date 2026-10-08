@@ -163,7 +163,7 @@ multi_agent_flow/
   templates/
     roles.yml                 # role definitions + model hints
     role-stub.yml.erb         # stub that maf role add writes
-    workflows/                # default workflows: simple, plan-review, tdd
+    workflows/                # default workflows: simple, plan-review, tdd, panel
     opencode.md.erb           # role file templates per harness
     claude.md.erb
     codex.md.erb
@@ -343,3 +343,12 @@ request.
   date, the source, and the reason. Read the log before you propose a feature.
 - **UI is deliberately deferred**: Obsidian (Kanban/Dataview) or
   `taskwarrior-tui` can read the same data without any agent changes.
+
+---
+
+## Acknowledgements
+
+- The `panel` workflow and the `skeptic` and `auditor` roles come from
+  [shipyard](https://github.com/esse/shipyard) by Piotr Szmielew. Shipyard sends
+  a plan and a branch to adversarial reviewers from different model families.
+  The rules for critical findings and cited lines also come from shipyard.

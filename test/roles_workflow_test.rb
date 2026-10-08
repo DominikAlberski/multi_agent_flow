@@ -186,7 +186,7 @@ class HandoffRulesTest < RolesWorkflowTestCase
 end
 
 class DefaultWorkflowTest < RolesWorkflowTestCase
-  NAMES = %w[simple plan-review tdd].freeze
+  NAMES = %w[simple plan-review tdd panel].freeze
 
   def source(name) = File.expand_path("../templates/workflows/#{name}.md", __dir__)
 
@@ -207,6 +207,45 @@ class DefaultWorkflowTest < RolesWorkflowTestCase
       assert_equal 0, status, out
       assert_includes role_file("architect"), "Workflow:\n  Stage 1."
     end
+  end
+
+  def test_the_panel_workflow_asks_each_of_the_three_reviewer_roles
+    text = File.read(source("panel"))
+
+    assert_equal 2, text.scan("one for reviewer, one for skeptic, and one for auditor").size
+  end
+end
+
+class ReviewPanelTest < RolesWorkflowTestCase
+  PANEL = %w[reviewer skeptic auditor].freeze
+
+  def setup
+    super
+    out, status = maf("add", "opencode:architect", *PANEL.map { |role| "opencode:#{role}" }, "--no-bootstrap")
+    assert_equal 0, status, out
+  end
+
+  def test_the_panel_roles_are_built_in_and_cannot_edit
+    roles = YAML.load_file(File.expand_path("../templates/roles.yml", __dir__)).fetch("roles")
+
+    PANEL.each { |role| assert_equal false, roles.fetch(role).fetch("can_edit"), role }
+  end
+
+  def test_each_panel_role_ends_its_review_with_a_verdict
+    PANEL.each { |role| assert_includes role_file(role), "`VERDICT: pass` if no finding is critical", role }
+  end
+
+  def test_the_new_panel_roles_ask_for_a_different_model_family
+    roles = YAML.load_file(File.expand_path("../templates/roles.yml", __dir__)).fetch("roles")
+
+    %w[skeptic auditor].each { |role| assert_includes roles.fetch(role).fetch("model_hint"), "different model family", role }
+  end
+
+  def test_the_architect_checks_citations_and_fixes_only_critical_findings
+    text = role_file("architect")
+
+    assert_includes text, "If the cited file does not exist, drop the finding."
+    assert_includes text, "Open fix tasks only for critical findings."
   end
 end
 

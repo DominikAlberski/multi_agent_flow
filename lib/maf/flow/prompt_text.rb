@@ -129,6 +129,10 @@ module Flow
        `git diff goal/<goal-short-id>...task/<task-short-id>`. Do not rerun the task tests.
        If something is wrong, open a new task for the fix. Name the old task branch in Inputs.
        Save the reason: `coord lesson <task-id> dead_end "<what failed>"` or `corrected "<the right way>"`.
+       For a done review task, open the file and line of each critical finding before you act.
+       If the cited file does not exist, drop the finding. A file that the plan creates is not a reason to drop.
+       Open fix tasks only for critical findings. Put warnings and minor findings into later task specs as notes.
+       If two reviews contradict, put the finding that you followed and the reason in your goal report.
     7. Land each accepted task: `coord land <task-id> --subject "<type>(<area>): <summary>"`.
        The command squashes the task branch into the goal branch as one commit and deletes the task branch.
        Use a Conventional Commits subject. If the command reports a conflict, open a fix task.
