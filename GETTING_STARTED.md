@@ -83,11 +83,10 @@ Optional: install `graphify` for the knowledge base.
 
 ## 4. Install the coordination layer
 
-Link the `maf` command into a folder on `PATH` once:
+Install the `maf` gem once:
 
 ```sh
-mkdir -p ~/.local/bin
-ln -sf /path/to/multi_agent_flow/bin/maf ~/.local/bin/maf
+gem install maf
 maf help
 ```
 

@@ -25,13 +25,14 @@ Any role can use either mode. Any harness can use either mode.
 
 ## Option A — agent-driven install (fastest)
 
-Open any AI coding agent in your **project** folder and say:
+Install the maf gem: `gem install maf`. Then open any AI coding agent in your
+**project** folder and say:
 
 ```
-Here is the multi-agent flow setup: /path/to/multi_agent_flow/install.md. Read it and implement it.
+Run maf guide. Read the output and implement it.
 ```
 
-Replace the path with the real path on your machine.
+`maf guide` prints `install.md`, the setup instructions for the agent.
 
 The agent asks which harnesses and roles to use, runs `maf add`, and prints
 the `maf start` commands to start each session. This works with Claude Code,
@@ -66,20 +67,29 @@ brew install task
 Optional: install `graphify` for the shared code-knowledge graph:
 
 ```sh
-uv tool install graphify
+uv tool install graphifyy
 ```
 
 ### 1. Install the maf command
 
-Link `bin/maf` from this repository into a folder on `PATH`:
+Install the maf gem:
 
 ```sh
-mkdir -p ~/.local/bin
-ln -sf ~/Projects/AI/multi_agent_flow/bin/maf ~/.local/bin/maf
+gem install maf
 maf help
 ```
 
-If `maf help` fails, add `~/.local/bin` to `PATH`. Run every `maf` command in
+If `maf help` fails, add the gem bin folder to `PATH` (`gem env` shows it under
+EXECUTABLE DIRECTORY).
+
+In a clone of the repository, you can link `exe/maf` into a folder on `PATH` instead:
+
+```sh
+mkdir -p ~/.local/bin
+ln -sf ~/Projects/AI/multi_agent_flow/exe/maf ~/.local/bin/maf
+```
+
+To upgrade, run `gem update maf`. Then run `maf update` in each project. Run every `maf` command in
 the project root. `maf` uses the current directory as the project.
 
 Run `maf` without a command to use the interactive menu. The menu does the

@@ -11,7 +11,7 @@ repository, each in its own terminal, without them colliding.
 For a first-time user, read `GETTING_STARTED.md` first. It is a step-by-step
 walkthrough with a full worked example.
 
-For the fastest setup, read and implement `install.md`: it asks the user which
+For the fastest setup, run `maf guide` and implement the output (`install.md`). It asks the user which
 harnesses and roles to use, then runs `maf add` to generate the agent files
 and the coordination layer.
 
@@ -30,17 +30,24 @@ Three pillars:
   method definitions; they will not parse under Ruby 2.x).
   macOS: `brew install mise && mise install ruby`.
 - `task` (Taskwarrior) on PATH. macOS: `brew install task`.
-- Optional: `graphify` for the knowledge base.
+- The maf gem: `gem install maf`.
+- Optional: `graphify` for the knowledge base (`uv tool install graphifyy`).
 - Git (worktrees recommended; one branch/worktree per agent).
 
 No `jq` needed: `coord` parses the Taskwarrior JSON itself.
 
 ## Install into a project
 
-Link `bin/maf` from this skill directory into a folder on `PATH` once:
+Install the maf gem once:
 
 ```sh
-ln -sf "$PWD/bin/maf" ~/.local/bin/maf
+gem install maf
+```
+
+In a clone of the repository, you can link `exe/maf` into a folder on `PATH` instead:
+
+```sh
+ln -sf "$PWD/exe/maf" ~/.local/bin/maf
 ```
 
 Then run `maf` in the project root. The project is the current directory.
