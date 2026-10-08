@@ -23,6 +23,7 @@ begin
   require_relative "../lib/maf/shared/project"
   require_relative "../lib/maf/shared/roles"
   require_relative "../lib/maf/shared/git_exclude"
+  require_relative "../lib/maf/shared/git_identity"
 rescue LoadError
   abort "coord: the maf shared library is missing. Run maf update."
 end
@@ -955,12 +956,6 @@ module Coord
     def copy_to_worktree = Array(@data["copy_to_worktree"]).map(&:to_s)
     def github = @data.fetch("github", {})
     def reap_minutes = Integer(@data.dig("team", "reap_minutes").to_s, exception: false) || Reaper::DEFAULT_MINUTES
-
-    # The bot account authors the squash commits. Without it, git uses its own config.
-    def author
-      name, email = github.values_at("bot_user", "bot_email")
-      { name: name, email: email } unless name.to_s.empty? || email.to_s.empty?
-    end
     def harnesses = agents.map { |entry| entry["harness"] }.compact.uniq
 
     def harnesses_for(role) = agents.select { |entry| entry["role"] == role }.map { |entry| entry["harness"] }
@@ -1368,8 +1363,8 @@ end
   # commit. The task branch is then deleted. A worker worktree that still has
   # the task branch checked out moves back to its worker branch first.
   class Land
-    def initialize(root, task, author: nil)
-      @root, @task, @author = root, task, author
+    def initialize(root, task)
+      @root, @task = root, task
     end
 
     def run(subject)
@@ -1415,14 +1410,12 @@ end
     def commit(message)
       return nil if Git.run(goal_dir, "diff", "--cached", "--quiet")
 
-      args = ["git", "-C", goal_dir, *author_args, "commit", "-q", "--no-verify", "-F", "-"]
+      args = ["git", "-C", goal_dir, "commit", "-q", "--no-verify", "-F", "-"]
       IO.popen(args, "w") { |io| io.write(message) }
       raise Error, "git commit on #{goal_branch} failed" unless $?.success?
 
       Git.out(goal_dir, "rev-parse", "--short", "HEAD")
     end
-
-    def author_args = @author ? ["-c", "user.name=#{@author[:name]}", "-c", "user.email=#{@author[:email]}"] : []
 
     def release_branch
       holder = Git.checked_out(@root)[branch]
@@ -2571,7 +2564,7 @@ end
     def cmd_land
       subject = @args.value_of("--subject")
       task = find_task!(@args.require_arg("land", "ID"))
-      land = Land.new(main_root, task, author: manifest.author)
+      land = Land.new(main_root, task)
       commit = locks.with_mutex("land-#{Goals.short(task["goalid"])}", worker: @worker) { land.run(subject) }
       record_landing(task, commit, land)
     end
@@ -2920,7 +2913,9 @@ end
       ENV["TASKRC"] = @taskrc = env.fetch("TASKRC", File.join(@coord_dir, "taskrc"))
     end
 
+    # Each commit of coord, as each commit of an agent, uses the git persona of the agents.
     def run
+      Maf::Shared::GitIdentity.apply(Maf::Shared::GitIdentity.read(paths.manifest_path))
       presence.touch(@role, @worker, @env)
       dispatch(@args.shift || "help")
     rescue Error => e

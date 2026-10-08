@@ -27,6 +27,7 @@ require "rbconfig"
 require "fileutils"
 require_relative "flow"
 require_relative "workers"
+require_relative "shared/git_identity"
 
 abort "setup_agent: Ruby 3.0+ required (current: #{RUBY_VERSION})." if RUBY_VERSION.split(".").first.to_i < 3
 
@@ -86,9 +87,12 @@ module SetupAgent
     Launcher.for(args.harness).launch(args.role, args.worker, model)
   end
 
+  # The session and the dispatcher pass the environment to each child, so
+  # each commit of the agent uses the git persona of the agents.
   def self.identify(args)
     ENV["COORD_ROLE"] = args.role
     ENV["COORD_WORKER"] = args.worker
+    Maf::Shared::GitIdentity.apply(Project.manifest)
   end
 end
 

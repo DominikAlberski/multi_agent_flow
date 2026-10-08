@@ -646,6 +646,24 @@ Set a verify command in `.maf/config.json` to check each task mechanically:
 does not skip this check. A dispatched run with a failing verify command is no
 success. Lead roles get no check. Without the key, nothing changes.
 
+### Git persona of the agents
+
+By default, the agents commit with your git config, as you do. To give them
+their own name and email, add a `git_identity` key to `.maf/config.json`:
+
+```json
+"git_identity": { "name": "maf-bot", "email": "maf-bot@users.noreply.github.com" }
+```
+
+- The persona is the author and the committer of each commit of an agent and
+  of the flow: task commits, `coord land`, `coord goal sync`, and the notes on
+  `maf/memory`. Your own commits keep your config.
+- `maf start`, the dispatcher, and coord set `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`,
+  `GIT_COMMITTER_NAME`, and `GIT_COMMITTER_EMAIL`. These win over each git config file.
+- Without `git_identity`, the `bot_user` and `bot_email` of the `github` section count.
+  Without both, nothing changes.
+- A running agent keeps the old persona. Start it again after a change.
+
 ### Goal pull requests and reviews
 
 Add a `github` section to `.maf/config.json` to let coord open a pull request
@@ -669,7 +687,8 @@ for each goal and read your review:
 - `ssh_host` is a `Host` alias in `~/.ssh/config` with the key of the bot.
   Without it, coord pushes to `origin`.
 - `repo` is optional. Without it, coord reads the repository from the `origin` URL.
-- `bot_email` and `bot_user` are the author of each squash commit of `coord land`.
+- Without a `git_identity` key, `bot_user` and `bot_email` are the git persona of the agents
+  (see "Git persona of the agents").
 
 The flow:
 

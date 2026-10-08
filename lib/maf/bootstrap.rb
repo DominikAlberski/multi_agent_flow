@@ -139,6 +139,7 @@ module Bootstrap
 end
 
 require_relative "local_exclude"
+require_relative "shared/git_identity"
 require_relative "bootstrap/marked_block"
 require_relative "bootstrap/options"
 require_relative "bootstrap/dependencies"

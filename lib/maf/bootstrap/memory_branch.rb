@@ -14,6 +14,7 @@ module Bootstrap
     DIR = File.join(GRAPH_DIR, "memory")
     START = "memory: start the work memory of the flow"
     ADOPT = "memory: add the notes of an older install"
+    CONFIG = File.join(MAF_DIR, "config.json")
 
     def initialize(project) = @project = project
 
@@ -59,12 +60,15 @@ module Bootstrap
     end
 
     def git(*args) = git_in(@project.target, *args)
-    def git_in(dir, *args) = system("git", "-C", dir, *args, out: File::NULL, err: File::NULL)
+    def git_in(dir, *args) = system(identity, "git", "-C", dir, *args, out: File::NULL, err: File::NULL)
 
     def out(*args)
-      text, status = Open3.capture2("git", "-C", @project.target, *args, err: File::NULL)
+      text, status = Open3.capture2(identity, "git", "-C", @project.target, *args, err: File::NULL)
       status.success? ? text.strip : ""
     end
+
+    # The flow makes these commits, so they use the git persona of the agents.
+    def identity = @identity ||= Maf::Shared::GitIdentity.env(Maf::Shared::GitIdentity.read(path(CONFIG)))
 
     def path(*parts) = @project.path(*parts)
   end
