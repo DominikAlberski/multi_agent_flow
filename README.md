@@ -145,6 +145,7 @@ section of [USER_MANUAL.md](USER_MANUAL.md).
 | **[GETTING_STARTED.md](GETTING_STARTED.md)** | First-time user | Concepts, prerequisites, manual install, basic workflow |
 | **[USER_MANUAL.md](USER_MANUAL.md)** | Setting up a real team | Full install (maf), all harnesses, dispatcher, monitoring |
 | **[install.md](install.md)** | An AI coding agent | Interactive wizard: asks the user for harnesses/roles, runs `maf add` |
+| **[docs/releasing.md](docs/releasing.md)** | Maintainer | Release a new gem version: version bump, tag, the release workflow, fixes |
 | **[docs/out-of-scope.md](docs/out-of-scope.md)** | Contributor | Requests that the project rejects on purpose, with the reason |
 | **[SKILL.md](SKILL.md)** | Agent skill loader | Self-contained portable skill (frontmatter + full API reference) |
 
@@ -316,8 +317,8 @@ bundle exec rake build             # writes pkg/maf-VERSION.gem
 bundle exec rake install           # builds and installs the gem
 ```
 
-To release, change `Maf::VERSION` in `lib/maf/version.rb` and add a
-`CHANGELOG.md` entry.
+To release, bump `Maf::VERSION`, merge, then tag `main` with `vX.Y.Z` and push the tag.
+See **[docs/releasing.md](docs/releasing.md)** for the full steps, the one-time setup, and the fixes for a failed release.
 
 RuboCop (pinned in the `Gemfile`) uses `.rubocop.yml`. It sets the
 size rules: a class at most 100 lines, a method at most 5 lines and 4
