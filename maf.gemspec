@@ -9,7 +9,7 @@ Gem::Specification.new do |spec|
 
   spec.summary = "Run several AI coding agents in parallel on one repository."
   spec.description = "multi-agent-flow is a coordination layer for AI coding agents (Claude Code, Codex, " \
-                     "opencode, Hermes). Each agent works in its own git worktree. The agents share a " \
+                     "opencode, Cursor, Hermes). Each agent works in its own git worktree. The agents share a " \
                      "Taskwarrior task board, file locks, and a knowledge graph through the coord CLI."
   spec.homepage = "https://github.com/DominikAlberski/multi_agent_flow"
   spec.license = "MIT"

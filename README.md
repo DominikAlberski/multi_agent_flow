@@ -1,7 +1,7 @@
 # multi_agent_flow
 
 Coordination layer for running several AI coding agents (opencode, Claude Code,
-Hermes, Codex) in parallel on one repository, each in its own terminal.
+Hermes, Codex, Cursor) in parallel on one repository, each in its own terminal.
 
 Three pillars:
 
@@ -25,7 +25,7 @@ The `maf` gem holds the flow. Install these tools yourself:
 | Ruby 3.0+ | runs `maf`, `coord`, and the other scripts | macOS: `brew install mise && mise install ruby`. Linux: your package manager or [mise](https://mise.jdx.dev) |
 | git | worktrees, hooks, the local exclude file | macOS: `xcode-select --install` or `brew install git`. Linux: `apt install git` |
 | Taskwarrior | the task board | macOS: `brew install task`. Linux: `apt install taskwarrior` |
-| One or more harnesses | the agents | [Claude Code](https://docs.claude.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [opencode](https://opencode.ai), [Hermes](https://github.com/NousResearch/hermes-agent) |
+| One or more harnesses | the agents | [Claude Code](https://docs.claude.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [opencode](https://opencode.ai), [Cursor CLI](https://cursor.com/cli), [Hermes](https://github.com/NousResearch/hermes-agent) |
 | graphify (optional) | the shared knowledge graph | `uv tool install graphifyy` |
 
 Install the gem:
@@ -83,7 +83,7 @@ lives in `graphify-out/` at the project root, where graphify looks by default.
   lib/maf/shared/ code that the scripts in bin/ load (maf update replaces it)
   coordination/   task board, inbox, locks, presence, sessions, hooks, logs
   worktrees/      one git worktree per worker
-  agents/         role files: claude/, opencode/, codex/
+  agents/         role files: claude/, opencode/, codex/, cursor/
   claude/         settings.json: the Claude Code hooks (maf start passes --settings)
   mcp/            the graphify MCP server for Claude Code and opencode
   config.json     the agents and settings of the project
@@ -113,7 +113,7 @@ Local files that a harness or git reads outside `.maf/`:
 |---|---|
 | `.git/hooks/*` | Git reads them there. |
 | `.git/info/exclude` | Keeps the flow out of git in this clone. |
-| `.claude/agents/`, `.opencode/agents/`, `.codex/prompts/` | Symlinks into `.maf/agents/<harness>/`. |
+| `.claude/agents/`, `.opencode/agents/`, `.codex/prompts/`, `.cursor/agents/` | Symlinks into `.maf/agents/<harness>/`. |
 | `.opencode/plugins/board-watch.js` | opencode reads it there. |
 | `.codex/hooks.json` | Codex reads it there. Excluded when the project does not track it. |
 | `~/.hermes/skills/<project>-<role>/SKILL.md` | Hermes reads it there. |
