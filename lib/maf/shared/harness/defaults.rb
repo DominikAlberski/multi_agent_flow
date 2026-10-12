@@ -94,6 +94,13 @@ module Maf
         def launch(_role, _model) = raise(NotImplementedError, "#{name}: launch")
         def launch_env = {}
 
+        # The sandbox (Maf::Shared::Sandbox) lets the harness write to these
+        # folders, and to the files that start with a prefix. Both are outside the project.
+        def sandbox_dirs = []
+        def sandbox_prefixes = []
+        # A harness with its own OS sandbox turns it off: a sandbox cannot start inside a sandbox.
+        def sandboxed(cmd) = cmd
+
         # The command of one dispatched run. session_id is nil for a fresh session.
         def build_command(_config, _prompt, _session_id) = raise(NotImplementedError, "#{name}: build_command")
         def run_env(_config) = {}

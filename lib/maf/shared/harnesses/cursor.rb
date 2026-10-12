@@ -19,6 +19,7 @@ module Maf
 
         def command = "agent"
         def role_dir = ".cursor/agents"
+        def sandbox_dirs = [File.join(Dir.home, ".cursor"), File.join(Dir.home, ".config", "cursor")]
 
         def role_template = <<~ERB
           ---

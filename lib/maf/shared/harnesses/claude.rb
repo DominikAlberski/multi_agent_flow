@@ -47,6 +47,10 @@ module Maf
 
         def wait = :watch
 
+        # Claude Code keeps its state in ~/.claude.json and its backup files.
+        def sandbox_dirs = [ENV.fetch("CLAUDE_CONFIG_DIR", File.join(Dir.home, ".claude"))]
+        def sandbox_prefixes = [File.join(Dir.home, ".claude.json")]
+
         # Only Claude Code has ScheduleWakeup.
         def architect_rule
           "- Never call ScheduleWakeup with `stop:false` and no `prompt`. " \

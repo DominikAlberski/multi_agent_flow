@@ -140,6 +140,7 @@ begin
   require_relative "../lib/maf/shared/peak_rate"
   require_relative "../lib/maf/shared/git_identity"
   require_relative "../lib/maf/shared/harness"
+  require_relative "../lib/maf/shared/sandbox"
 rescue LoadError
   abort "dispatcher: the maf shared library is missing. Run maf update."
 end
@@ -759,6 +760,9 @@ module Dispatcher
 
       def self.prepare(config) = config
       def self.run_env(_config) = {}
+      def self.sandbox_dirs = []
+      def self.sandbox_prefixes = []
+      def self.sandboxed(cmd) = cmd
       def self.cache_window = nil
       def self.peak_rate?(_config) = false
       def self.stale_session?(_output) = false
@@ -1030,10 +1034,12 @@ module Dispatcher
       spawn(@harness.build_command(@config, text, session_id))
     end
 
+    def sandboxed(cmd) = Maf::Shared::Sandbox.wrap(cmd, @harness, coord_dir: @config.coord_dir)
+
     def session_label(id) = id ? "#{id}, idle #{(@session.idle_seconds / 60).round}m" : "new"
 
     def spawn(cmd)
-      result = Spawn.run(cmd, env: @env, timeout: @config.timeout, limits: Limits.from(@config))
+      result = Spawn.run(sandboxed(cmd), env: @env, timeout: @config.timeout, limits: Limits.from(@config))
       record(@harness.usage(result.output), result.output)
       @model = @harness.model(result.output) || @model
       result
@@ -1298,6 +1304,7 @@ module Dispatcher
 
     def start
       Log.line("started: role=#{@config.role} #{harness_label} #{timing_label}")
+      Log.line("sandbox: #{Maf::Shared::Sandbox.describe(Harness.for(@config), coord_dir: @config.coord_dir)}")
       @mailbox.recover
       @stop = StopSignal.new
     end

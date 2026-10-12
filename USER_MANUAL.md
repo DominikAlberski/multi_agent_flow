@@ -492,6 +492,8 @@ How `maf start` loads the role:
    `lib/maf/shared/harness/defaults.rb` lists each method and its default.
 5. Include `Harness::ResultEvent` if the CLI prints one JSON result event.
 6. Include `Harness::PrependsRole` if the CLI has no flag that selects a role.
+   Define `sandbox_dirs` if the CLI writes outside the project, for example to `~/.name`.
+   See [Sandbox the agents](#sandbox-the-agents).
 7. Add `test/harnesses/<name>_test.rb`. `test/harnesses/contract_test.rb` checks the new file.
 8. Add one row to the table above.
 
@@ -535,6 +537,41 @@ Put dispatcher flags after `--dispatch`. Example:
 > claude `bypassPermissions`, codex `--dangerously-bypass-approvals-and-sandbox`.
 > opencode uses the permissions of its role file. The agent runs these tool calls
 > without approval. Always run a dispatcher in its own worktree.
+
+### Sandbox the agents
+
+The sandbox limits where an agent can write files. The agent can read all files.
+The sandbox uses Seatbelt (`sandbox-exec`), so it works on macOS only.
+
+Turn the sandbox on for the project in `.maf/config.json`:
+
+```json
+"sandbox": { "mode": "seatbelt", "write": ["~/.npm"] }
+```
+
+Or turn it on for one session: `MAF_SANDBOX=seatbelt maf start claude reviewer --dispatch`.
+`MAF_SANDBOX=off` turns it off for one session.
+
+In the sandbox, the agent can write only to these paths:
+
+- the project folder, with the worktrees, `.git/`, and `.maf/`
+- the board folder (`COORD_DIR`)
+- the temporary folders, `~/.cache`, and `~/Library/Caches`
+- the folders of the harness, for example `~/.claude` and `~/.claude.json` for Claude Code
+- the paths in the `write` list
+
+The sandbox applies to `maf start` and to each dispatched run. A dispatcher prints the
+allowed paths in its first log lines. If a tool fails with `Operation not permitted`,
+add its folder to the `write` list. Examples: `~/.npm`, `~/.gem`, `~/.bundle`.
+
+The sandbox does not:
+
+- stop reads. The agent can read `~/.ssh` and other secrets.
+- stop network access. The agent can send what it reads.
+- run inside a second sandbox. Codex starts with `--sandbox danger-full-access` in the
+  maf sandbox. If you turned on the sandbox of Claude Code, turn it off for the project.
+
+For full isolation, run the whole project in a virtual machine.
 
 The dispatcher needs `--harness NAME` or `--command TEMPLATE`. There is no default harness.
 `--harness` takes a harness of the registry. See [Harnesses](#harnesses).

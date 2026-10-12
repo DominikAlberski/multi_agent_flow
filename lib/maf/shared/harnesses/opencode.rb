@@ -53,6 +53,10 @@ module Maf
 
         def wait = :watch
 
+        # opencode keeps its data in the XDG folders. ~/.cache is open for each harness.
+        DATA_DIRS = %w[.local/share/opencode .local/state/opencode .config/opencode].freeze
+        def sandbox_dirs = DATA_DIRS.map { |dir| File.join(Dir.home, dir) }
+
         def mcp
           { file: ".maf/mcp/opencode.json", key: "mcp", schema: "https://opencode.ai/config.json",
             entry: { "type" => "local", "command" => Harness::VAULT_MCP, "enabled" => true } }

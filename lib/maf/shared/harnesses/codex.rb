@@ -30,6 +30,14 @@ module Maf
         def model_hint(model) = "codex -m #{model}"
         def wait = :await
         def home = ENV.fetch("CODEX_HOME", File.join(Dir.home, ".codex"))
+        def sandbox_dirs = [home]
+
+        # The Codex sandbox uses sandbox-exec too, and it fails inside the maf sandbox.
+        def sandboxed(cmd)
+          return cmd if cmd.include?("--dangerously-bypass-approvals-and-sandbox")
+
+          [cmd.first, "--sandbox", "danger-full-access", *cmd.drop(1)]
+        end
 
         # Codex keeps the model list of the account in a cache file. Hidden models are internal.
         def models

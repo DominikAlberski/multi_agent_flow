@@ -24,6 +24,8 @@ module Maf
         # result event. NOTE: assets/dispatcher Spawn::GRACE.
         KILL_GRACE = 5
 
+        def sandbox_dirs = [File.join(Dir.home, ".hermes")]
+
         def role_destination(project, role, settings = {})
           File.join(settings["hermes_dir"] || DEFAULT_DIR, "#{File.basename(project)}-#{role}", "SKILL.md")
         end

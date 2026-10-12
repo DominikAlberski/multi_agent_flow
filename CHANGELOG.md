@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- New sandbox for the agents on macOS: `"sandbox": {"mode": "seatbelt"}` in `.maf/config.json`
+  or `MAF_SANDBOX=seatbelt`. `maf start` and the dispatcher run the harness in `sandbox-exec`.
+  The agent can write only to the project, the board, the temporary folders, and the folders of its harness.
 - Each harness is one file in `lib/maf/shared/harnesses/`. To add a harness, add one
   file, one test file, and one row in the Harnesses table of the user manual.
   `test/harnesses/contract_test.rb` checks every harness file.
