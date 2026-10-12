@@ -13,12 +13,21 @@ class SandboxTest < Minitest::Test
   Sandbox = Maf::Shared::Sandbox
   CMD = %w[claude -p go].freeze
 
-  def in_project(config = nil)
+  def in_project(config = nil, &block)
     in_tmpdir do |dir|
       system("git", "init", "-q", dir)
       write(".maf/config.json", JSON.generate(config)) if config
-      with_env("MAF_SANDBOX" => nil) { yield dir }
+      with_env("MAF_SANDBOX" => nil) { with_seatbelt(true) { block.call(dir) } }
     end
+  end
+
+  # The tests also run on Linux, where sandbox-exec is missing.
+  def with_seatbelt(available)
+    original = Sandbox::Seatbelt.method(:available?)
+    Sandbox::Seatbelt.define_singleton_method(:available?) { available }
+    yield
+  ensure
+    Sandbox::Seatbelt.define_singleton_method(:available?, original)
   end
 
   def test_the_sandbox_is_off_by_default
@@ -42,6 +51,12 @@ class SandboxTest < Minitest::Test
   def test_an_unknown_mode_stops_maf
     in_project("sandbox" => { "mode" => "docker" }) do
       assert_raises(SystemExit) { capture_io { Sandbox.wrap(CMD, harness("claude")) } }
+    end
+  end
+
+  def test_seatbelt_without_sandbox_exec_stops_maf
+    in_project("sandbox" => { "mode" => "seatbelt" }) do
+      with_seatbelt(false) { assert_raises(SystemExit) { capture_io { Sandbox.mode } } }
     end
   end
 
@@ -85,7 +100,7 @@ class SandboxTest < Minitest::Test
   def touch_sandboxed(path) = system(*Sandbox.wrap(["touch", path], harness("claude")), err: File::NULL)
 
   def test_the_sandbox_blocks_a_write_outside_the_project
-    skip "sandbox-exec is macOS only" unless Sandbox::Seatbelt.available?
+    skip "sandbox-exec is macOS only" unless RUBY_PLATFORM.include?("darwin")
     in_project("sandbox" => { "mode" => "seatbelt" }) do |dir|
       assert touch_sandboxed(File.join(dir, "in"))
       Dir.mktmpdir(nil, Dir.home) { |outside| refute touch_sandboxed(File.join(outside, "out")) }

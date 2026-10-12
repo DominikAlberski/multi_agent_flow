@@ -1,0 +1,62 @@
+# Lima template of `maf vm create`. maf renders this file for one project.
+# The VM sees only the project folder, at the same path as on the host,
+# so the worktrees and the taskrc keep their absolute paths.
+minimumLimaVersion: 2.0.0
+
+base:
+- template:_images/ubuntu-lts
+
+vmType: vz
+mountType: virtiofs
+cpus: <%= cpus %>
+memory: "<%= memory %>GiB"
+disk: "<%= disk %>GiB"
+
+mounts:
+- location: "<%= project %>"
+  writable: true
+
+containerd:
+  system: false
+  user: false
+
+provision:
+# maf needs Ruby, git, and Taskwarrior 3. The host Taskwarrior must have the
+# same major version: Taskwarrior 2 and 3 store the board in different files.
+- mode: system
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    export DEBIAN_FRONTEND=noninteractive
+    command -v maf >/dev/null 2>&1 && exit 0
+    apt-get update
+    apt-get install -y ruby-full git tmux curl nodejs npm build-essential cmake cargo rustc uuid-dev libsqlite3-dev
+    cd /tmp
+    curl -fsSL -o task.tar.gz <%= taskwarrior_url %>
+    tar xzf task.tar.gz && cd task-<%= taskwarrior %>
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$(nproc)" && cmake --install build
+    gem install <%= gem %>
+<% harness_installs.each do |name, command| -%>
+# The <%= name %> harness.
+- mode: user
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    <%= command %>
+<% end -%>
+- mode: user
+  script: |
+    #!/bin/bash
+    grep -q 'maf vm' ~/.bashrc && exit 0
+    echo 'export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH" # maf vm' >> ~/.bashrc
+
+probes:
+- description: maf is installed
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    if ! timeout 1800s bash -c "until command -v maf >/dev/null 2>&1; do sleep 5; done"; then
+      echo >&2 "maf is not installed yet"
+      exit 1
+    fi
+  hint: See /var/log/cloud-init-output.log in the VM.

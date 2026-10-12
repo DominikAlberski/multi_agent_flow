@@ -70,6 +70,10 @@ module Maf
         # Files outside the project that uninstall keeps: other projects can use them.
         def global_files = []
 
+        # The shell command that installs the CLI in a Linux VM (maf vm create).
+        # nil: the user installs the CLI in the VM.
+        def vm_install = nil
+
         # The top folder of the harness. maf retire ignores changes in it.
         def home_dir = role_dir&.split("/")&.first
         # Files that the flow writes in a worktree. coord keeps them out of git.

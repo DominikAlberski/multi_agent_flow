@@ -13,6 +13,7 @@ require_relative "team"
 require_relative "team_command"
 require_relative "worker_control"
 require_relative "untrack"
+require_relative "vm"
 require_relative "version"
 
 module Maf
@@ -54,6 +55,7 @@ module Maf
       "uninstall" => "[--check] [--yes] [--force]             remove the flow from the project",
       "migrate" => "[--check] [--yes]                       move an old-layout install into .maf/",
       "untrack" => "[--check] [--yes]                       remove the flow from git; the files stay (then commit)",
+      "vm" => "create|start|stop|delete|status|shell [ARGS]  run the team in a Lima VM (macOS)",
       "menu" => "                                        interactive mode (also: maf without a command)",
       "guide" => "                                        print the setup guide for an AI agent (install.md)",
       "version" => "                                        print the maf version (also: --version)"
@@ -117,6 +119,7 @@ module Maf
     def run_retire = Retire.new(SetupAgent::Project.root, @args.first || abort("usage: maf retire ROLE[_WORKER]")).run
     def run_uninstall = Uninstall::Runner.new(["--project", Dir.pwd, *@args]).run
     def run_menu = Menu.new.run
+    def run_vm = Vm.new(@args, SetupAgent::Project.root).run
     def run_guide = puts(File.read(File.join(Flow::ROOT, "install.md")))
     def run_version = puts("maf #{VERSION}")
     def run_untrack = Untrack.new(SetupAgent::Project.root, @args).run

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- New command `maf vm`: run the whole team in a Lima VM on macOS. `maf vm create` makes a VM that
+  sees only the project folder, at the same path as on the host. It installs Ruby, git, tmux,
+  Taskwarrior 3, maf, and the CLI of each harness of the project.
 - New sandbox for the agents on macOS: `"sandbox": {"mode": "seatbelt"}` in `.maf/config.json`
   or `MAF_SANDBOX=seatbelt`. `maf start` and the dispatcher run the harness in `sandbox-exec`.
   The agent can write only to the project, the board, the temporary folders, and the folders of its harness.

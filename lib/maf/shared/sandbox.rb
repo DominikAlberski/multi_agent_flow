@@ -17,7 +17,9 @@ module Maf
       def self.mode(manifest = Project.manifest)
         mode = ENV.fetch("MAF_SANDBOX", nil).to_s
         mode = manifest.dig("sandbox", "mode") || "off" if mode.empty?
-        MODES.include?(mode) ? mode : abort("maf: unknown sandbox mode '#{mode}' (use #{MODES.join(", ")})")
+        abort "maf: unknown sandbox mode '#{mode}' (use #{MODES.join(", ")})" unless MODES.include?(mode)
+        Seatbelt.require! if mode == "seatbelt"
+        mode
       end
 
       # The command unchanged when the mode is off. coord_dir: the board, if COORD_DIR moved it.
@@ -44,13 +46,10 @@ module Maf
         DEVICES = '(literal "/dev/null") (literal "/dev/zero") (literal "/dev/dtracehelper") ' \
                   '(regex #"^/dev/tty") (regex #"^/dev/fd/") (regex #"^/dev/ptmx")'
 
-        def self.wrap(cmd, paths)
-          abort "maf: sandbox mode seatbelt needs #{COMMAND} (macOS only)." unless available?
-
-          [COMMAND, "-p", profile(paths), *cmd]
-        end
+        def self.wrap(cmd, paths) = [COMMAND, "-p", profile(paths), *cmd]
 
         def self.available? = File.executable?("/usr/bin/#{COMMAND}")
+        def self.require! = available? || abort("maf: sandbox mode seatbelt needs #{COMMAND} (macOS only).")
 
         def self.profile(paths)
           rules = paths.dirs.map { |dir| "(subpath #{quote(dir)})" } +

@@ -31,6 +31,7 @@ module Maf
         def wait = :await
         def home = ENV.fetch("CODEX_HOME", File.join(Dir.home, ".codex"))
         def sandbox_dirs = [home]
+        def vm_install = "sudo npm install -g @openai/codex"
 
         # The Codex sandbox uses sandbox-exec too, and it fails inside the maf sandbox.
         def sandboxed(cmd)

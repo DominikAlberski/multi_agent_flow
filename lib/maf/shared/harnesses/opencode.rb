@@ -56,6 +56,7 @@ module Maf
         # opencode keeps its data in the XDG folders. ~/.cache is open for each harness.
         DATA_DIRS = %w[.local/share/opencode .local/state/opencode .config/opencode].freeze
         def sandbox_dirs = DATA_DIRS.map { |dir| File.join(Dir.home, dir) }
+        def vm_install = "curl -fsSL https://opencode.ai/install | bash"
 
         def mcp
           { file: ".maf/mcp/opencode.json", key: "mcp", schema: "https://opencode.ai/config.json",

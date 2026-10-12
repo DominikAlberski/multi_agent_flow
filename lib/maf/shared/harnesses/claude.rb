@@ -46,6 +46,7 @@ module Maf
         def default_model = "claude-opus-5-5"
 
         def wait = :watch
+        def vm_install = "curl -fsSL https://claude.ai/install.sh | bash"
 
         # Claude Code keeps its state in ~/.claude.json and its backup files.
         def sandbox_dirs = [ENV.fetch("CLAUDE_CONFIG_DIR", File.join(Dir.home, ".claude"))]

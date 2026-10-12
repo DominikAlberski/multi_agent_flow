@@ -571,7 +571,48 @@ The sandbox does not:
 - run inside a second sandbox. Codex starts with `--sandbox danger-full-access` in the
   maf sandbox. If you turned on the sandbox of Claude Code, turn it off for the project.
 
-For full isolation, run the whole project in a virtual machine.
+For full isolation, run the whole team in a VM. See [Run the team in a Lima VM](#run-the-team-in-a-lima-vm).
+
+### Run the team in a Lima VM
+
+`maf vm` runs the whole team in a Linux VM with [Lima](https://lima-vm.io).
+The VM sees only the project folder. It does not see your home folder, your keys,
+or your other projects. If an agent breaks the VM, delete the VM and create it again.
+
+Requirements: macOS on Apple silicon, and Lima (`brew install lima`).
+
+```sh
+cd ~/Projects/my-app
+maf add claude:architect codex:backend-developer   # add the agents first
+maf vm create                                      # about 10 minutes the first time
+maf vm shell                                       # a shell in the VM, in the project folder
+```
+
+`maf vm create` makes the VM `maf-<project>` and installs Ruby, git, tmux, Taskwarrior 3, and maf.
+It also installs the CLI of each harness in `.maf/config.json`. maf cannot install Hermes. Install Hermes in the VM yourself.
+Flags: `--cpus N` (default 4), `--memory GIB` (default 8), `--disk GIB` (default 50).
+`--gem FILE` installs maf from a local gem file instead of RubyGems.
+
+The VM mounts the project at the same path as on the host. The worktrees and the
+taskrc hold absolute paths, so git and the board work on both sides.
+
+After create:
+
+1. Run `maf vm shell`. Start each harness once and log in. The VM keeps the login.
+2. Start the agents in the VM. Use tmux for one terminal per agent:
+   `tmux new -s team`, then `maf start claude architect` in each tmux window.
+3. Read and review the work on the host. Git sees the same worktrees and branches.
+
+Other commands: `maf vm start`, `maf vm stop`, `maf vm status`, `maf vm delete`.
+`maf vm shell COMMAND` runs one command in the project folder, for example `maf vm shell coord status`.
+
+Rules:
+
+- Run all agents and dispatchers in the VM. A pid in the VM is not a pid on the host,
+  so `coord who` and `maf worker stop` on the host do not see the agents in the VM.
+- The host Taskwarrior must be version 3 too. Taskwarrior 2 and 3 store the board in different files.
+- A local model on the host (Ollama) is not in the VM. Use the host address from the VM: `host.lima.internal`.
+- The macOS notification hook (`osascript`) does not work in the VM.
 
 The dispatcher needs `--harness NAME` or `--command TEMPLATE`. There is no default harness.
 `--harness` takes a harness of the registry. See [Harnesses](#harnesses).
@@ -1461,6 +1502,8 @@ This section holds the board details for the operator.
 | `maf uninstall [--check] [--yes] [--force]` | Remove the flow from the project. Keeps the graph, the vault, the code, and the decisions. |
 | `maf start HARNESS ROLE[_WORKER]` | Worktree + env + role + launch the harness, in one command. |
 | `maf start HARNESS ROLE --dispatch [FLAGS]` | Same setup, then run `dispatcher`. |
+| `maf vm create\|start\|stop\|delete\|status` | Manage the Lima VM of the project. See "Run the team in a Lima VM". |
+| `maf vm shell [COMMAND]` | Open a shell in the VM, in the project folder, or run one command there. |
 
 ---
 
