@@ -46,7 +46,7 @@ task :test do
   abort "rake: #{failed.size} test file(s) failed: #{failed.map(&:first).join(", ")}" unless failed.empty?
 end
 
-def test_files = ENV["TEST"] ? [ENV["TEST"]] : Dir["test/*_test.rb"]
+def test_files = ENV["TEST"] ? [ENV["TEST"]] : Dir["test/**/*_test.rb"]
 
 # Returns [file, output] for each failed file.
 def run_tests(queue)

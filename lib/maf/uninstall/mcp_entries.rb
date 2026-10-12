@@ -2,15 +2,14 @@
 
 module Maf
   module Uninstall
-    # Removes the graphify server that an older maf wrote into the project's
-    # .mcp.json and opencode.json. Today the server lives in .maf/mcp/. A
+    # Removes the graphify server that an older maf wrote into a project file
+    # (Harness#legacy_mcp_file). Today the server lives in .maf/mcp/. A
     # foreign entry and all other settings stay. A file goes only if nothing
     # else is left in it.
     class McpEntries
-      PROJECT_FILES = { "claude" => ".mcp.json", "opencode" => "opencode.json" }.freeze
-
       def initialize(project)
-        @files = Flow::McpConfig.targets.map { |harness, t| [File.join(project, PROJECT_FILES.fetch(harness)), t] }
+        harnesses = Maf::Shared::Harness.all.select { |harness| harness.mcp && harness.legacy_mcp_file }
+        @files = harnesses.map { |harness| [File.join(project, harness.legacy_mcp_file), harness.mcp] }
       end
 
       def steps

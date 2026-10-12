@@ -13,13 +13,13 @@ module Maf
       def install
         return if @options.check? || disabled?
 
-        @options.agents.map { |a| a[:harness] }.uniq.each { |harness| install_for(harness) }
+        @options.agents.map { |a| a[:harness] }.uniq.each { |name| install_for(Harness.fetch(name)) }
       end
 
       private
 
       def install_for(harness)
-        if McpConfig.targets.key?(harness)
+        if harness.mcp
           report(harness, McpConfig.new(@project, harness).write)
         elsif (command = McpConfig.global_command(harness, @project))
           puts "mcp: the #{harness} harness keeps MCP servers in a global file. Add the server yourself:\n  #{command}"
@@ -27,7 +27,7 @@ module Maf
       end
 
       def report(harness, status)
-        file = McpConfig.targets.fetch(harness).fetch(:file)
+        file = harness.mcp.fetch(:file)
         return puts("mcp: wrote the graphify server to #{file}") if status == :create
         return unless status == :refuse
 

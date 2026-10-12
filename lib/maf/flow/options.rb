@@ -23,7 +23,6 @@ module Maf
 
       def initialize(argv)
         @argv, @agents, @removed, @models = argv, [], [], {}
-        @hermes_dir = DEFAULT_HERMES_DIR
         @check = @force = @list_roles = false
         @bootstrap = true
       end
@@ -31,6 +30,9 @@ module Maf
       def check? = @check
       def force? = @force
       def bootstrap? = @bootstrap
+
+      # The settings that a harness reads for its role file folder.
+      def settings = { "hermes_dir" => @hermes_dir }.compact
 
       def parse
         parser.parse!(@argv)
@@ -43,7 +45,7 @@ module Maf
       end
 
       def model_for(agent)
-        agent[:model] || @models[agent[:role]] || agent[:saved_model] || DEFAULT_MODELS[agent[:harness]]
+        agent[:model] || @models[agent[:role]] || agent[:saved_model] || Harness[agent[:harness]]&.default_model
       end
 
       private

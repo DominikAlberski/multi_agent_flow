@@ -18,8 +18,8 @@ module Maf
 
       private
 
-      def harnesses = @options.agents.map { |a| a[:harness] }.uniq.select { |h| HARNESS_DIRS.key?(h) }
-      def dir(harness) = HARNESS_DIRS.fetch(harness)
+      def harnesses = @options.agents.map { |a| a[:harness] }.uniq.select { |h| Harness.fetch(h).role_dir }
+      def dir(harness) = Harness.fetch(harness).role_dir
 
       def link_role_files(harness)
         return warn_not_linked(harness) if File.symlink?(File.join(@options.project, dir(harness)))

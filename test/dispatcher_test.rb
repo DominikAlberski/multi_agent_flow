@@ -292,60 +292,6 @@ class SpawnTest < Minitest::Test
   end
 end
 
-class HermesHarnessTest < Minitest::Test
-  include DispatcherTestHelpers
-
-  def setup
-    @dir = "/tmp"
-  end
-
-  def hermes = Dispatcher::Harness::Hermes
-
-  def test_build_command_with_skill_model_and_resume
-    cmd = hermes.build_command(config(skill: "p-backend-developer", model: "m"), "go", "sess-1")
-    assert_equal %w[hermes chat --oneshot --yolo --format stream-json -Q], cmd.first(7)
-    assert_includes cmd.each_cons(2).to_a, ["--skills", "p-backend-developer"]
-    assert_includes cmd.each_cons(2).to_a, ["--model", "m"]
-    assert_includes cmd.each_cons(2).to_a, ["--resume", "sess-1"]
-    assert_equal ["-q", "go"], cmd.last(2)
-  end
-
-  def test_build_command_without_skill_or_session
-    cmd = hermes.build_command(config, "go", nil)
-    refute_includes cmd, "--skills"
-    refute_includes cmd, "--resume"
-  end
-
-  # Shapes taken from hermes_cli/stream_json.py and a real `--resume bogus` run.
-  def test_parses_session_id_and_text_from_the_result_event
-    output = <<~OUT
-      {"type": "system", "subtype": "init", "session_id": ""}
-      {"type": "text", "text": "partial"}
-      {"type": "result", "session_id": "s-42", "exit_code": 0, "text": "all done"}
-    OUT
-    assert_equal "s-42", hermes.session_id(output)
-    assert_equal "all done", hermes.result_text(output)
-  end
-
-  def test_parse_tolerates_garbage
-    assert_nil hermes.session_id("not json\n{broken")
-    assert_nil hermes.result_text("")
-  end
-
-  def test_detects_a_stale_session
-    assert hermes.stale_session?("Session not found: bogus\nUse a session ID from a previous CLI run")
-    refute hermes.stale_session?("rate limited")
-  end
-
-  def test_unknown_harness_aborts
-    assert_raises(SystemExit) { capture_io { Dispatcher::Harness.for(config(harness: "nope")) } }
-  end
-
-  def test_command_selects_the_generic_adapter
-    assert_equal Dispatcher::Harness::Generic, Dispatcher::Harness.for(config(harness: "nope", command: "x"))
-  end
-end
-
 class GenericHarnessTest < Minitest::Test
   include DispatcherTestHelpers
 
@@ -373,6 +319,27 @@ class GenericHarnessTest < Minitest::Test
   def test_has_no_session_support
     refute Dispatcher::Harness::Generic.stale_session?("Session not found")
     assert_nil Dispatcher::Harness::Generic.session_id("{}")
+  end
+
+  def test_unknown_harness_aborts
+    assert_raises(SystemExit) { capture_io { Dispatcher::Harness.for(config(harness: "nope")) } }
+  end
+
+  def test_command_selects_the_generic_adapter
+    assert_equal Dispatcher::Harness::Generic, Dispatcher::Harness.for(config(harness: "nope", command: "x"))
+    assert_nil Dispatcher::Harness::Generic.usage("x")
+  end
+
+  # Each harness adds its own environment to a run: opencode reads its MCP config from OPENCODE_CONFIG.
+  def test_the_run_env_includes_the_env_of_the_harness
+    Dir.mktmpdir do |root|
+      FileUtils.mkdir_p(File.join(root, "mcp"))
+      File.write(File.join(root, "mcp", "opencode.json"), "{}")
+      coord = File.join(root, "coordination")
+      assert_equal File.join(root, "mcp", "opencode.json"),
+                   Dispatcher::Main.run_env(config(harness: "opencode", coord_dir: coord))["OPENCODE_CONFIG"]
+      refute Dispatcher::Main.run_env(config(harness: "claude", coord_dir: coord)).key?("OPENCODE_CONFIG")
+    end
   end
 end
 
@@ -914,7 +881,7 @@ class MainTest < Minitest::Test
 end
 
 class OptionsTest < Minitest::Test
-  def parse(*argv) = Dispatcher::Options.parse(argv, { "COORD_DIR" => "/tmp/c" })
+  def parse(*argv) = Dispatcher::Options.parse(argv + %w[--harness hermes], { "COORD_DIR" => "/tmp/c" })
 
   def test_defaults
     config = parse("reviewer", "--no-skill")
@@ -957,7 +924,34 @@ class OptionsTest < Minitest::Test
   end
 
   def test_requires_a_role
-    assert_raises(SystemExit) { capture_io { parse } }
+    assert_raises(SystemExit) { capture_io { Dispatcher::Options.parse([], {}) } }
+  end
+
+  # No harness is the default: a run names its harness or a command.
+  def test_requires_a_harness_or_a_command
+    _, err = capture_io do
+      assert_raises(SystemExit) { Dispatcher::Options.parse(%w[reviewer], { "COORD_DIR" => "/tmp/c" }) }
+    end
+    assert_includes err, "--harness NAME or --command TEMPLATE is required"
+    assert_equal "x", Dispatcher::Options.parse(%w[reviewer --command x], { "COORD_DIR" => "/tmp/c" }).command
+  end
+
+  def test_rejects_an_unknown_harness
+    _, err = capture_io { assert_raises(SystemExit) { Dispatcher::Options.parse(%w[r --harness nope], {}) } }
+    assert_includes err, "unknown harness 'nope' (use claude, codex, cursor, hermes, opencode)"
+  end
+
+  def test_full_harness_keeps_the_user_setup
+    assert Dispatcher::Options.parse(%w[tester --no-skill --harness claude], { "COORD_DIR" => "/tmp/c" }).lean
+    refute Dispatcher::Options.parse(%w[tester --no-skill --harness claude --full-harness], { "COORD_DIR" => "/tmp/c" }).lean
+  end
+
+  # The cache window of the harness is the default. A flag wins.
+  def test_the_cache_window_default_depends_on_the_harness
+    env = { "COORD_DIR" => "/tmp/c" }
+    windows = %w[codex claude].map { |name| Dispatcher::Options.parse(%W[tester --no-skill --harness #{name}], env) }
+    assert_equal [300, 3300], windows.map(&:cache_window)
+    assert_equal 9, Dispatcher::Options.parse(%w[t --no-skill --harness codex --cache-window 9], env).cache_window
   end
 end
 
@@ -1005,34 +999,7 @@ end
 
 class LeadOptionsTest < Minitest::Test
   def test_a_lead_role_does_not_poll_tasks
-    refute Dispatcher::Options.parse(%w[architect --no-skill], { "COORD_DIR" => "/tmp/c" }).poll_tasks
-  end
-end
-
-class EditGrantTest < Minitest::Test
-  MANIFEST = { "agents" => [{ "harness" => "hermes", "role" => "reviewer", "can_edit" => false },
-                            { "harness" => "hermes", "role" => "tester", "can_edit" => true }] }.freeze
-
-  def setup
-    @dir = File.realpath(Dir.mktmpdir("dispatcher-grant-test"))
-    system("git", "init", "-q", @dir, exception: true)
-    FileUtils.mkdir_p(File.join(@dir, ".maf"))
-    File.write(File.join(@dir, ".maf/config.json"), JSON.generate(MANIFEST))
-  end
-
-  def teardown = FileUtils.remove_entry(@dir)
-
-  def command(role)
-    config = Dispatcher::Config.new(role: role, max_turns: 5, timeout: 60)
-    Dir.chdir(@dir) { Dispatcher::Harness::Hermes.build_command(config, "go", nil) }
-  end
-
-  def test_a_read_only_role_gets_the_limited_toolsets
-    assert_includes command("reviewer").each_cons(2).to_a, ["-t", Dispatcher::EditGrant::READ_ONLY_TOOLSETS]
-  end
-
-  def test_an_editing_role_keeps_every_toolset
-    refute_includes command("tester"), "-t"
+    refute Dispatcher::Options.parse(%w[architect --no-skill --harness hermes], { "COORD_DIR" => "/tmp/c" }).poll_tasks
   end
 end
 
@@ -1058,187 +1025,6 @@ class PresenceWriteTest < Minitest::Test
 
   def test_the_agent_environment_carries_the_dispatcher_directory
     assert_equal Dir.pwd, Dispatcher::Main.run_env(config)["PWD"]
-  end
-end
-
-class SessionIdTest < Minitest::Test
-  def harness(name) = Dispatcher::Harness::REGISTRY.fetch(name)
-
-  # Captured from a real `opencode run --format json`: an escape-code prefix,
-  # and a JSON event glued onto the end of a notify line.
-  OPENCODE_LINE = "\e]777;notify;warp://cli-agent;{\"event\":\"prompt_submit\",\"session_id\":\"ses_other\"}" \
-                  "{\"type\":\"error\",\"timestamp\":1790174271790,\"sessionID\":\"ses_abc\",\"error\":{}}\n"
-
-  def test_opencode_id_comes_from_an_event_even_when_glued
-    assert_equal "ses_abc", harness("opencode").session_id(OPENCODE_LINE)
-  end
-
-  def test_codex_id_comes_from_thread_started
-    assert_equal "t-1", harness("codex").session_id(%({"type":"thread.started","thread_id":"t-1"}\n))
-  end
-
-  # Regression: the ID was the last "session_id" anywhere in the output, so
-  # an agent that echoed a prompt or a note could supply a false one.
-  def test_echoed_text_cannot_supply_a_session_id
-    output = <<~OUT
-      tool output: {"session_id": "fake"}
-      {"type": "result", "session_id": "real", "text": "done"}
-      stderr: "session_id": "fake2"
-    OUT
-    assert_equal "real", harness("hermes").session_id(output)
-    assert_nil harness("codex").session_id(%(echo {"thread_id":"fake"}\n))
-    assert_nil harness("opencode").session_id(%(note: "sessionID":"fake"\n))
-  end
-
-  def test_empty_ids_are_ignored
-    assert_nil harness("hermes").session_id(%({"type": "result", "session_id": ""}\n))
-  end
-end
-
-class AdapterTest < Minitest::Test
-  include DispatcherTestHelpers
-
-  def setup
-    @dir = "/tmp"
-  end
-
-  def harness(name) = Dispatcher::Harness::REGISTRY.fetch(name)
-  def pairs(cmd) = cmd.each_cons(2).to_a
-
-  # The flow keeps its MCP config in .maf/mcp/, next to the coordination folder.
-  def test_a_dispatched_run_gets_the_mcp_config_of_the_flow
-    Dir.mktmpdir do |root|
-      mcp = File.join(root, "mcp")
-      FileUtils.mkdir_p(mcp)
-      %w[claude.json opencode.json].each { |name| File.write(File.join(mcp, name), "{}") }
-      cfg = config(coord_dir: File.join(root, "coordination"))
-
-      command = harness("claude").build_command(cfg, "go", nil)
-      assert_includes pairs(command), ["--mcp-config", File.join(mcp, "claude.json")]
-      assert_equal ["--", "go"], command.last(2), "--mcp-config takes many values; -- keeps the prompt out"
-      assert_equal File.join(mcp, "opencode.json"), Dispatcher::Main.run_env(cfg)["OPENCODE_CONFIG"]
-    end
-  end
-
-  def test_claude_command
-    fresh = harness("claude").build_command(config(model: "haiku"), "go", nil)
-    assert_equal %w[claude -p --output-format json], fresh.first(4)
-    assert_includes pairs(fresh), ["--agent", "backend-developer"]
-    assert_includes pairs(fresh), ["--model", "haiku"]
-    refute_includes fresh, "--resume"
-    assert_includes pairs(harness("claude").build_command(config, "go", "s-1")), ["--resume", "s-1"]
-  end
-
-  def test_claude_output
-    output = %({"type":"result","subtype":"success","result":"ok","session_id":"b847"}\n)
-    assert_equal "b847", harness("claude").session_id(output)
-    assert_equal "ok", harness("claude").result_text(output)
-    assert harness("claude").stale_session?("No conversation found with session ID: 0000")
-  end
-
-  # Codex has no agent flag: a fresh session gets the role prompt file.
-  def test_codex_command
-    Dir.mktmpdir do |dir|
-      Dir.chdir(dir) do
-        FileUtils.mkdir_p(".codex/prompts")
-        File.write(".codex/prompts/backend-developer.md", "ROLE")
-        fresh = harness("codex").build_command(config, "go", nil)
-        resumed = harness("codex").build_command(config, "go", "t-1")
-        assert_equal %w[codex exec --json], fresh.first(3)
-        assert_equal "ROLE\n\ngo", fresh.last
-        assert_equal ["t-1", "go"], resumed.last(2)
-        assert_equal %w[codex exec resume], resumed.first(3)
-      end
-    end
-  end
-
-  def test_codex_output
-    output = <<~OUT
-      {"type":"thread.started","thread_id":"t-1"}
-      {"type":"item.completed","item":{"id":"i","type":"agent_message","text":"done"}}
-    OUT
-    assert_equal "t-1", harness("codex").session_id(output)
-    assert_equal "done", harness("codex").result_text(output)
-    assert harness("codex").stale_session?("thread/resume failed: no rollout found for thread id 0000")
-  end
-
-  # The Cursor CLI has no agent flag: a fresh session gets the role file body.
-  def test_cursor_command
-    Dir.mktmpdir do |dir|
-      Dir.chdir(dir) do
-        FileUtils.mkdir_p(".maf/agents/cursor")
-        File.write(".maf/agents/cursor/backend-developer.md", "---\nname: backend-developer\n---\n\nROLE")
-        fresh = harness("cursor").build_command(config, "go", nil)
-        resumed = harness("cursor").build_command(config, "go", "c-1")
-        assert_equal %w[agent -p --output-format json --force], fresh.first(5)
-        assert_equal "ROLE\n\ngo", fresh.last
-        assert_equal ["--resume", "c-1", "go"], resumed.last(3)
-      end
-    end
-  end
-
-  def test_cursor_output
-    output = %({"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"c-1"}\n)
-    assert_equal "c-1", harness("cursor").session_id(output)
-    assert_equal "done", harness("cursor").result_text(output)
-    assert_nil harness("cursor").usage(output)
-    refute harness("cursor").stale_session?(output.sub("done", "file not found"))
-    assert harness("cursor").stale_session?("Error: chat c-1 not found")
-  end
-
-  def test_claude_usage_comes_from_the_result_event
-    output = %({"result":"ok","session_id":"s","usage":{"input_tokens":12,"output_tokens":3,"cache_read_input_tokens":9,"cache_creation_input_tokens":4}}\n)
-    expected = { "input_tokens" => 25, "cached_input_tokens" => 9, "cache_write_input_tokens" => 4, "output_tokens" => 3 }
-    assert_equal(expected, harness("claude").usage(output))
-  end
-
-  def test_codex_usage_adds_up_the_turns
-    output = <<~OUT
-      {"type":"turn.completed","usage":{"input_tokens":5,"cached_input_tokens":1,"output_tokens":2}}
-      {"type":"turn.completed","usage":{"input_tokens":7,"output_tokens":4}}
-    OUT
-    expected = { "input_tokens" => 12, "cached_input_tokens" => 1, "cache_write_input_tokens" => 0, "output_tokens" => 6 }
-    assert_equal(expected, harness("codex").usage(output))
-  end
-
-  def test_hermes_usage_comes_from_the_result_event
-    output = %({"type":"result","session_id":"s","usage":{"prompt_tokens":8,"completion_tokens":2}}\n)
-    expected = { "input_tokens" => 8, "cached_input_tokens" => 0, "cache_write_input_tokens" => 0, "output_tokens" => 2 }
-    assert_equal(expected, harness("hermes").usage(output))
-  end
-
-  def test_absent_usage_is_nil
-    assert_nil harness("claude").usage(%({"result":"ok"}\n))
-    assert_nil harness("codex").usage("")
-    assert_nil harness("opencode").usage("x")
-    assert_nil harness("opencode").context("x")
-    assert_nil Dispatcher::Harness::Generic.usage("x")
-  end
-
-  # Captured from a real `opencode run --format json`, shortened.
-  OPENCODE_STEPS = "\e]777;notify;warp://cli-agent;{\"event\":\"stop\"}\a" \
-                   "{\"type\":\"step_finish\",\"timestamp\":1,\"sessionID\":\"ses_a\",\"part\":{\"type\":\"step-finish\"," \
-                   "\"tokens\":{\"total\":23047,\"input\":21381,\"output\":2,\"reasoning\":0," \
-                   "\"cache\":{\"write\":0,\"read\":1664}}}}\n" \
-                   "{\"type\":\"step_finish\",\"timestamp\":2,\"sessionID\":\"ses_a\",\"part\":{\"type\":\"step-finish\"," \
-                   "\"tokens\":{\"input\":100,\"output\":5,\"reasoning\":3,\"cache\":{\"write\":10,\"read\":23000}}}}\n"
-
-  def test_opencode_usage_sums_the_steps
-    expected = { "input_tokens" => 46_155, "cached_input_tokens" => 24_664, "cache_write_input_tokens" => 10,
-                 "output_tokens" => 10 }
-    assert_equal expected, harness("opencode").usage(OPENCODE_STEPS)
-  end
-
-  def test_opencode_context_is_the_input_of_the_last_step
-    assert_equal 23_110, harness("opencode").context(OPENCODE_STEPS)
-  end
-
-  def test_opencode_command
-    cmd = harness("opencode").build_command(config(model: "p/m"), "go", "ses_1")
-    assert_equal %w[opencode run --format json --agent backend-developer], cmd.first(6)
-    assert_includes pairs(cmd), ["--session", "ses_1"]
-    assert_includes pairs(cmd), ["-m", "p/m"]
-    assert_equal "go", cmd.last
   end
 end
 
@@ -1406,7 +1192,7 @@ class TimeoutTest < Minitest::Test
 
   def timeout(*argv, team: nil)
     File.write(File.join(@dir, ".maf/config.json"), JSON.generate(team ? { team: team } : {}))
-    Dir.chdir(@dir) { Dispatcher::Options.parse(argv + ["--no-skill"], { "COORD_DIR" => @dir }).timeout }
+    Dir.chdir(@dir) { Dispatcher::Options.parse(argv + %w[--no-skill --harness hermes], { "COORD_DIR" => @dir }).timeout }
   end
 
   def test_the_default_timeout_is_1500_seconds
@@ -1424,6 +1210,7 @@ class TimeoutTest < Minitest::Test
 
   def options(*argv, team: nil)
     File.write(File.join(@dir, ".maf/config.json"), JSON.generate(team ? { team: team } : {}))
+    argv += %w[--harness hermes] unless argv.include?("--harness")
     Dir.chdir(@dir) { Dispatcher::Options.parse(argv + ["--no-skill"], { "COORD_DIR" => @dir }) }
   end
 
@@ -1597,55 +1384,6 @@ end
 
 # A dispatched Codex run starts without the user's extra tools. Only the
 # graphify server of this project stays.
-class CodexLeanTest < Minitest::Test
-  include DispatcherTestHelpers
-
-  def setup
-    @dir = "/tmp"
-  end
-
-  def test_lean_flags_disable_features_and_foreign_mcp_servers
-    Dir.mktmpdir do |home|
-      toml = "[mcp_servers.devrelay-gateway]\n[mcp_servers.graphify-#{File.basename(Dispatcher::Project.root)}]\n"
-      File.write(File.join(home, "config.toml"), toml)
-      flags = with_env("CODEX_HOME" => home) { Dispatcher::Harness::Codex::Lean.flags }
-      assert_includes flags.each_cons(2).to_a, %w[--disable plugins]
-      assert_includes flags.each_cons(2).to_a, ["-c", "mcp_servers.devrelay-gateway.enabled=false"]
-      refute(flags.any? { |flag| flag.include?("graphify") })
-    end
-  end
-
-  def test_full_harness_keeps_the_user_setup
-    command = Dispatcher::Harness::Codex.build_command(config(lean: false), "go", nil)
-    refute_includes command, "--disable"
-    assert Dispatcher::Options.parse(%w[tester --no-skill], { "COORD_DIR" => "/tmp/c" }).lean
-    refute Dispatcher::Options.parse(%w[tester --no-skill --full-harness], { "COORD_DIR" => "/tmp/c" }).lean
-  end
-
-  # The Codex cache lasts minutes, the Claude Code cache 1 hour.
-  def test_the_cache_window_default_depends_on_the_harness
-    env = { "COORD_DIR" => "/tmp/c" }
-    windows = %w[codex claude].map { |name| Dispatcher::Options.parse(%W[tester --no-skill --harness #{name}], env) }
-    assert_equal [300, 3300], windows.map(&:cache_window)
-    assert_equal 9, Dispatcher::Options.parse(%w[t --no-skill --harness codex --cache-window 9], env).cache_window
-  end
-
-  def test_a_claude_run_starts_without_user_skills_and_mcp_servers
-    lean = Dispatcher::Harness::Claude.build_command(config(lean: true), "go", nil)
-    full = Dispatcher::Harness::Claude.build_command(config(lean: false), "go", nil)
-    assert_equal %w[--strict-mcp-config --disable-slash-commands], lean - full
-    assert_equal %w[-- go], lean.last(2)
-  end
-
-  def with_env(values)
-    old = values.keys.to_h { |key| [key, ENV[key]] }
-    values.each { |key, value| ENV[key] = value }
-    yield
-  ensure
-    old.each { |key, value| ENV[key] = value }
-  end
-end
-
 class LeadPrefetchTest < Minitest::Test
   GOAL = "c1ab3a20-3f47-440e-92d8-62f15de77ef5"
   Poller = Struct.new(:coord_dir) do
@@ -1680,15 +1418,5 @@ class PeakRateTest < Minitest::Test
     assert_includes Dispatcher::PeakRate.notice(cfg, at("2026-10-07 07:30")), "DeepSeek peak hours (07:30 UTC)"
     assert_nil Dispatcher::PeakRate.notice(cfg, at("2026-10-07 12:00"))
     assert_nil Dispatcher::PeakRate.notice(config(harness: "claude", model: "deepseek"), at("2026-10-07 07:30"))
-  end
-
-  def test_the_agent_file_names_the_model
-    Dir.mktmpdir do |dir|
-      Dir.chdir(dir) do
-        FileUtils.mkdir_p(".opencode/agents")
-        File.write(".opencode/agents/backend-developer.md", "---\nmode: all\nmodel: deepseek/x\n---\nmodel: other\n")
-        assert_equal "deepseek/x", Dispatcher::OpencodeModel.for(config)
-      end
-    end
   end
 end

@@ -74,16 +74,14 @@ module Maf
       def pm?(result) = result[:agent][:role] == "project-manager"
 
       def print_unembeddable(results)
-        list = results.select { |r| r[:model] && %w[codex hermes].include?(r[:agent][:harness]) }
+        list = results.select { |r| r[:model] && model_command(r) }
         return if list.empty?
 
         puts "", "These harnesses cannot embed a model in the role file. Set it in the harness:",
              list.map { |r| "  #{r[:agent][:harness]}:#{r[:agent][:role]} -> #{model_command(r)}" }
       end
 
-      def model_command(result)
-        result[:agent][:harness] == "codex" ? "codex -m #{result[:model]}" : "hermes model"
-      end
+      def model_command(result) = Harness.fetch(result[:agent][:harness]).model_hint(result[:model])
     end
   end
 end

@@ -24,6 +24,7 @@ begin
   require_relative "../lib/maf/shared/roles"
   require_relative "../lib/maf/shared/git_exclude"
   require_relative "../lib/maf/shared/git_identity"
+  require_relative "../lib/maf/shared/harness"
 rescue LoadError
   abort "coord: the maf shared library is missing. Run maf update."
 end
@@ -1913,10 +1914,11 @@ end
     # slash, so it also matches the symlink.
     GRAPH_DIR = "graphify-out"
     LOCAL_EXCLUDES = [ENV_FILE, "/#{GRAPH_DIR}"].freeze
-    RUNTIME_FILES = %w[.maf/bin/coord .maf/coordination/harness-hooks/next-task.rb
-                       .maf/coordination/harness-hooks/board-watch.rb .maf/coordination/harness-hooks/session-guard.rb
-                       .maf/coordination/harness-hooks/context-watch.rb .codex/hooks.json
-                       .opencode/plugins/board-watch.js].freeze
+    # The hook files of the flow, and the files that each harness writes in a worktree.
+    RUNTIME_FILES = (%w[.maf/bin/coord .maf/coordination/harness-hooks/next-task.rb
+                        .maf/coordination/harness-hooks/board-watch.rb .maf/coordination/harness-hooks/session-guard.rb
+                        .maf/coordination/harness-hooks/context-watch.rb] +
+                     Maf::Shared::Harness.all.flat_map(&:runtime_files)).freeze
 
     def self.dir_for(root, slug) = Maf::Shared::Project.worktree_dir(root, slug)
 

@@ -11,7 +11,6 @@ module Maf
   # locally, and runs maf update. The user reviews the change and commits it.
   class Untrack
     USAGE = "Usage: maf untrack [--check] [--yes]"
-    PATHS = [".maf", ".opencode/agents", ".codex/prompts", ".cursor/agents", Bootstrap::OPENCODE_PLUGIN].freeze
 
     def initialize(root, argv)
       @root = root
@@ -30,8 +29,8 @@ module Maf
     private
 
     def plan
-      cleaners = [Uninstall::MarkedFiles.new(@root, keep_rules: false), Uninstall::ClaudeSettings.new(@root),
-                  Uninstall::McpEntries.new(@root)]
+      cleaners = [Uninstall::MarkedFiles.new(@root, keep_rules: false),
+                  *Uninstall.harness_cleaners(@root, legacy_only: true), Uninstall::McpEntries.new(@root)]
       [untrack_step, *cleaners.flat_map(&:steps)].compact
     end
 
@@ -59,29 +58,10 @@ module Maf
       $stdin.gets.to_s.strip.match?(/\Ay(es)?\z/i)
     end
 
-    # The tracked paths of the flow, and each tracked link into .maf/agents/.
-    def tracked = (git_files(*PATHS).map { |path| top(path) } + agent_links + codex_hooks).uniq
-
-    def top(path) = path.start_with?(".maf/") ? ".maf" : path
-
-    def agent_links
-      git_files(".claude/agents").select { |path| File.symlink?(File.join(@root, path)) && link_to_flow?(path) }
-    end
-
-    def link_to_flow?(path) = File.readlink(File.join(@root, path)).include?("#{Bootstrap::MAF_DIR}/agents")
-
-    # A .codex/hooks.json with only the flow hooks belongs to the flow.
-    def codex_hooks
-      path = Flow::CodexHooks::FILE
-      git_files(path).select { |file| (hook_commands(file) - Flow::CodexHooks::COMMANDS).empty? }
-    end
-
-    def hook_commands(file)
-      data = JSON.parse(File.read(File.join(@root, file)))
-      entries = data.fetch("hooks", {}).values.flatten
-      entries.flat_map { |entry| entry.fetch("hooks", []) }.map { |hook| hook["command"] }
-    rescue JSON::ParserError
-      [nil]
+    # The tracked files of .maf/, and the tracked paths of each harness (Harness#untrack_paths).
+    def tracked
+      harness_paths = Maf::Shared::Harness.all.flat_map { |harness| harness.untrack_paths(@root, method(:git_files)) }
+      ((git_files(".maf").empty? ? [] : [".maf"]) + harness_paths).uniq
     end
 
     def git_files(*paths) = IO.popen(["git", "-C", @root, "ls-files", "--", *paths], err: File::NULL, &:readlines)

@@ -23,7 +23,7 @@ module Maf
       end
 
       def global_hooks
-        hooks = GLOBAL_HOOKS.select { |path| File.exist?(path) }
+        hooks = Uninstall.global_files.select { |path| File.exist?(path) }
         "kept   global hooks #{hooks.join(", ")} (other projects can use them)" if hooks.any?
       end
     end

@@ -151,7 +151,8 @@ module ContextWatch
     # maf start gives the role file in the first prompt, not as a system
     # prompt. /clear drops it, so a cleared session gets the role file again.
     # The hook puts the file text in the context: a Read costs one model call.
-    ROLE_FILES = { "claude" => ".maf/agents/claude/%s.md", "codex" => ".codex/prompts/%s.md" }.freeze
+    # The flow keeps the role file of each harness in .maf/agents/<harness>/.
+    def role_path(harness, role) = File.join(".maf", "agents", harness, "#{role}.md")
 
     def session_start
       @store.save("session_id" => @input["session_id"], "asked" => nil)
@@ -170,10 +171,10 @@ module ContextWatch
     end
 
     # The harness guess comes first. The file that exists in the worktree wins.
+    # The role file of this harness first, then the file of another harness of the role.
     def role_file
-      names = ROLE_FILES.keys.sort_by { |name| name == harness ? 0 : 1 }
-      paths = names.map { |name| format(ROLE_FILES[name], @env["COORD_ROLE"]) }
-      paths.find { |file| File.exist?(file) } || paths.first
+      own = role_path(harness, @env["COORD_ROLE"])
+      File.exist?(own) ? own : Dir.glob(role_path("*", @env["COORD_ROLE"])).min || own
     end
 
     def note_text

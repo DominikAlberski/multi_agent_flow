@@ -192,16 +192,14 @@ multi_agent_flow/
     untrack.rb                # maf untrack: removes an older install from git
     local_exclude.rb          # the flow block in .git/info/exclude
     shared/                   # stdlib-only code that the maf CLI and the scripts share (installed as .maf/lib/maf/shared/)
+    shared/harness/           # the harness registry, the default of each harness method, shared modules
+    shared/harnesses/         # one file per harness: commands, role file template, quirks
   scripts/
     check.rb                  # repo consistency check (UDA sync, markers, script signatures)
   templates/
     roles.yml                 # role definitions + model hints
     role-stub.yml.erb         # stub that maf role add writes
     workflows/                # default workflows: simple, plan-review, tdd, panel
-    opencode.md.erb           # role file templates per harness
-    claude.md.erb
-    codex.md.erb
-    hermes.md.erb
   assets/
     coord                     # coordination CLI (Ruby)
     dispatcher                # polls task board + inbox, starts one-shot agents (Ruby)
@@ -220,6 +218,7 @@ multi_agent_flow/
     maf_test.rb               # tests for the maf command
     dashboard_test.rb         # tests for the dashboard data
     dispatcher_test.rb        # tests for the dispatcher
+    harnesses/                # one test file per harness, and the contract test for all harnesses
     uninstaller_test.rb       # tests for uninstall.rb
     migrate_test.rb           # tests for migrate.rb
     roles_workflow_test.rb    # tests for project roles and the workflow

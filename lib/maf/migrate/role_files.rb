@@ -11,7 +11,9 @@ module Maf
       end
 
       def steps
-        Flow::HARNESS_DIRS.flat_map { |harness, dir| files(dir).map { |file| step(harness, dir, file) } }
+        Maf::Shared::Harness.all.select(&:role_dir).flat_map do |harness|
+          files(harness.role_dir).map { |file| step(harness.name, harness.role_dir, file) }
+        end
       end
 
       private

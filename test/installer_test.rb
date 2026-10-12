@@ -688,18 +688,6 @@ class VaultTest < Minitest::Test
 end
 
 class SetupAgentTest < Minitest::Test
-  # A lead role owns no task. Its launch prompt must not tell it to claim one.
-  def test_hermes_prompt_for_a_lead_role_forbids_a_claim
-    prompt = Maf::SetupAgent::Launcher::Hermes.prompt("project-manager")
-
-    assert_includes prompt, "Never claim a task"
-    assert_includes prompt, "coord inbox --wait"
-  end
-
-  def test_hermes_prompt_for_a_worker_role_claims_tasks
-    assert_includes Maf::SetupAgent::Launcher::Hermes.prompt("tester"), "Claim a task"
-  end
-
   def test_role_without_a_worker_suffix_defaults_to_one
     parsed = Maf::SetupAgent::Args.parse(%w[opencode backend-developer])
 
@@ -810,69 +798,6 @@ class SetupAgentTest < Minitest::Test
     launcher.define_method(:exec_or_die, original)
   end
 
-  # Codex asked for approval at each coord command: the board is outside the worktree.
-  def test_codex_launch_makes_the_board_writable
-    calls = []
-    Dir.mktmpdir do |dir|
-      FileUtils.mkdir_p(File.join(dir, ".codex", "prompts"))
-      File.write(File.join(dir, ".codex", "prompts", "tester.md"), "prompt")
-      with_exec_stub(->(cmd) { calls << cmd }) do
-        Dir.chdir(dir) { Maf::SetupAgent::Launcher::Codex.launch("tester", "tester-1", nil) }
-      end
-      assert_equal ["--add-dir", File.join(File.realpath(dir), ".maf", "coordination")], calls.first[1, 2]
-    end
-  end
-
-  def test_cursor_launch_names_the_role_file
-    calls = []
-    with_exec_stub(->(cmd) { calls << cmd }) do
-      Maf::SetupAgent::Launcher::Cursor.launch("tester", "tester-1", "gpt-5")
-    end
-    assert_equal %w[agent --model gpt-5], calls.first.first(3)
-    assert_includes calls.first.last, ".maf/agents/cursor/tester.md"
-  end
-
-  # Untrusted Codex hooks record no usage and never wake the session.
-  def test_codex_launch_warns_about_untrusted_hooks
-    Dir.mktmpdir do |dir|
-      FileUtils.mkdir_p(File.join(dir, ".codex", "prompts"))
-      File.write(File.join(dir, ".codex", "prompts", "tester.md"), "prompt")
-      File.write(File.join(dir, ".codex", "hooks.json"), "{}")
-      hooks = File.join(File.realpath(dir), ".codex", "hooks.json")
-      assert_includes launch_codex(dir), "does not trust the hooks"
-      File.write(File.join(dir, "config.toml"), "[hooks.state.\"#{hooks}:stop:0:0\"]\n")
-      refute_includes launch_codex(dir), "does not trust"
-    end
-  end
-
-  def launch_codex(dir)
-    old = ENV["CODEX_HOME"]
-    ENV["CODEX_HOME"] = dir
-    _, err = capture_io do
-      with_exec_stub(->(_cmd) {}) { Dir.chdir(dir) { Maf::SetupAgent::Launcher::Codex.launch("tester", "t-1", nil) } }
-    end
-    err
-  ensure
-    ENV["CODEX_HOME"] = old
-  end
-
-  # The project's harness config stays as it is. The flow passes its own files at the start.
-  def test_claude_launch_passes_the_settings_and_the_mcp_config_of_the_flow
-    calls = []
-    Dir.mktmpdir do |dir|
-      %w[claude/settings.json mcp/claude.json].each do |rel|
-        FileUtils.mkdir_p(File.dirname(File.join(dir, ".maf", rel)))
-        File.write(File.join(dir, ".maf", rel), "{}")
-      end
-      launch = -> { Dir.chdir(dir) { Maf::SetupAgent::Launcher::Claude.launch("tester", "t", nil) } }
-      with_exec_stub(->(cmd) { calls << cmd }, &launch)
-      flow = File.join(File.realpath(dir), ".maf")
-      expected = ["--settings", "#{flow}/claude/settings.json", "--mcp-config", "#{flow}/mcp/claude.json"]
-      assert_equal expected, calls.first[1, 4]
-      assert_equal "--", calls.first[-2], "--mcp-config takes many values; -- keeps the prompt out"
-    end
-  end
-
   # Worktrees live inside the project, under <project>/.maf/worktrees/<slug>.
   def test_worktree_dir_is_inside_the_project
     assert_equal "/tmp/myproject/.maf/worktrees/tester-1",
@@ -903,47 +828,12 @@ class SetupAgentTest < Minitest::Test
     refute_includes err, "claude:reviewer"
   end
 
-  def test_hermes_launcher_is_registered
-    Maf::SetupAgent::Launcher.register_defaults
-    assert_kind_of Module, Maf::SetupAgent::Launcher.for("hermes")
-  end
-
-  # The skill name uses the main checkout's name, from the project root and
-  # from a worktree alike (<project>/.maf/worktrees/<slug> -> <project>-<role>).
-  def test_hermes_skill_name_is_the_same_in_root_and_worktree
-    skip "git not installed" unless system("git", "--version", out: File::NULL)
-    in_project_with_worktree do |root, worktree|
-      Dir.chdir(root) { assert_equal "myproject-tester", Maf::SetupAgent::HermesSkill.name("tester") }
-      Dir.chdir(worktree) { assert_equal "myproject-tester", Maf::SetupAgent::HermesSkill.name("tester") }
-    end
-  end
-
-  # flow.rb records a custom --hermes-dir in the manifest; the launcher must
-  # look for the skill there, not in a different default.
-  def test_hermes_skill_dir_comes_from_the_manifest
-    skip "git not installed" unless system("git", "--version", out: File::NULL)
-    in_project_with_worktree do |root, worktree|
-      File.write(File.join(root, ".maf/config.json"), JSON.generate(hermes_dir: File.join(root, "skills")))
-      FileUtils.mkdir_p(File.join(root, "skills", "myproject-tester"))
-      FileUtils.touch(File.join(root, "skills", "myproject-tester", "SKILL.md"))
-      Dir.chdir(worktree) { assert Maf::SetupAgent::HermesSkill.installed?("tester") }
-    end
-  end
-
-  def in_project_with_worktree
-    Dir.mktmpdir do |parent|
-      root = File.join(File.realpath(parent), "myproject")
-      FileUtils.mkdir_p(root)
-      git(root, "init", "-q")
-      git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init")
-      worktree = File.join(root, ".maf/worktrees", "slug")
-      git(root, "worktree", "add", "-q", worktree)
-      yield root, worktree
-    end
-  end
-
-  def git(dir, *args)
-    system("git", "-C", dir, *args, out: File::NULL, err: File::NULL) || flunk("git #{args.first} failed")
+  # maf start runs the command and the environment of the harness file.
+  def test_the_launcher_runs_the_command_of_the_harness
+    harness = Maf::Shared::Harness.fetch("cursor")
+    calls = []
+    with_exec_stub(->(cmd) { calls << cmd }) { Maf::SetupAgent::Launcher.launch(harness, "tester", "m") }
+    assert_equal harness.launch("tester", "m"), calls.first
   end
 end
 

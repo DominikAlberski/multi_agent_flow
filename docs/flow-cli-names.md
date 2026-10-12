@@ -36,7 +36,8 @@ This file lists the code and CLI name of each term in [flow-glossary.md](flow-gl
 | copy list | `.maf/config.json` key `copy_to_worktree` |
 | prefetch | `Prefetch` |
 | flow folder | `.maf/`, `MAF_DIR`, `maf migrate` |
-| harness folder | `Flow::HARNESS_DIRS`, `Flow::AgentLinks` |
+| harness folder | `Harness::Base#role_dir`, `Flow::AgentLinks` |
+| harness | `lib/maf/shared/harnesses/<name>.rb`, `Maf::Shared::Harness` |
 | old layout | `Migrate.old_layout?`, `maf migrate` |
 | project role | `.maf/roles.yml`, `Flow::RoleCatalog`, `maf role add` |
 | workflow | `.maf/workflow.md`, `Flow::Workflow` |

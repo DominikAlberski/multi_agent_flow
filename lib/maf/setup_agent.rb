@@ -85,7 +85,7 @@ module Maf
       return Dispatch.launch(args, model) if args.dispatch
 
       MafSession.register(Project.root, args.harness)
-      Launcher.for(args.harness).launch(args.role, args.worker, model)
+      Launcher.launch(Maf::Shared::Harness.fetch(args.harness), args.role, model)
     end
 
     # The session and the dispatcher pass the environment to each child, so
@@ -104,8 +104,6 @@ require_relative "setup_agent/role_file"
 require_relative "setup_agent/manifest"
 require_relative "setup_agent/worktree"
 require_relative "setup_agent/launcher"
-require_relative "setup_agent/hermes_launcher"
 require_relative "setup_agent/project"
-require_relative "setup_agent/hermes_skill"
 require_relative "setup_agent/runtime_hooks"
 require_relative "../../assets/harness-hooks/session-guard"
