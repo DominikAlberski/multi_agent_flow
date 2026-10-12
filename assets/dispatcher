@@ -23,11 +23,12 @@
 #   dispatcher reviewer --harness claude --model sonnet
 #   dispatcher backend-developer --harness opencode --model openrouter/qwen3-coder
 #   dispatcher reviewer --harness codex
+#   dispatcher reviewer --harness cursor --model gpt-5
 #   dispatcher reviewer --once                   # one poll cycle, then exit
 #
 # Flags:
-#   --harness NAME     Built-in adapter: hermes (default), claude, codex, or
-#                      opencode. Each one resumes sessions.
+#   --harness NAME     Built-in adapter: hermes (default), claude, codex,
+#                      cursor, or opencode. Each one resumes sessions.
 #   --command TEMPLATE Any other harness. A shell command with %{prompt},
 #                      %{role}, %{skill}, and %{model} placeholders, each
 #                      shell-escaped. The command must exit when done.
@@ -941,6 +942,33 @@ module Dispatcher
       end
     end
 
+    # Cursor: `agent -p --output-format json` prints one result object with
+    # session_id and result. The CLI has no agent flag, so a fresh session gets
+    # the body of .maf/agents/cursor/<role>.md in front of the prompt. Cursor
+    # reports no token usage. A failed run prints no JSON, only an error on
+    # stderr, so a resume without a result event and with "not found" is stale.
+    module Cursor
+      extend Adapter
+      STALE_SESSION = /not found/i
+      FRONT_MATTER = /\A---\n.*?\n---\n+/m
+
+      def self.build_command(config, prompt, session_id)
+        cmd = %w[agent -p --output-format json --force --trust --approve-mcps]
+        cmd += ["--model", config.model] if config.model
+        cmd + resume(session_id, "--resume") + [session_id ? prompt : role_prompt(config.role) + prompt]
+      end
+
+      def self.role_prompt(role)
+        path = File.join(".maf", "agents", "cursor", "#{role}.md")
+        File.exist?(path) ? "#{File.read(path).sub(FRONT_MATTER, "")}\n\n" : ""
+      end
+
+      def self.stale_session?(output) = result_event(output).empty? && output.match?(STALE_SESSION)
+      def self.result_event(output) = Events.last(output) { |event| event["type"] == "result" }
+      def self.result_text(output) = result_event(output)["result"]
+      def self.session_id(output) = present(result_event(output)["session_id"])
+    end
+
     # opencode: `opencode run --format json`. `--agent` loads
     # .opencode/agents/<role>.md. The result event shape is not verified, so
     # the log shows no result text. opencode prints terminal escape codes and
@@ -995,7 +1023,8 @@ module Dispatcher
       def self.model(_output) = nil
     end
 
-    REGISTRY = { "hermes" => Hermes, "claude" => Claude, "codex" => Codex, "opencode" => Opencode }.freeze
+    REGISTRY = { "hermes" => Hermes, "claude" => Claude, "codex" => Codex, "cursor" => Cursor,
+                 "opencode" => Opencode }.freeze
 
     def self.for(config)
       return Generic if config.command

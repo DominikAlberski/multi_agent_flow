@@ -16,9 +16,12 @@ module Maf
                        (?:[\w.-]+\.)?(?:anthropic\.)?claude-(?:opus|sonnet|haiku|fable)-\d[\w.:@\[\]-]*)\z/x
       CODEX_CACHE = File.join(Dir.home, ".codex", "models_cache.json")
 
+      # The command of a harness whose name differs from the harness name.
+      COMMANDS = { "cursor" => "agent" }.freeze
+
       # Without any harness on PATH, maf shows all of them: the user may install one later.
       def self.installed
-        found = HARNESSES.select { |harness| on_path?(harness) }
+        found = HARNESSES.select { |harness| on_path?(COMMANDS.fetch(harness, harness)) }
         found.empty? ? HARNESSES : found
       end
 

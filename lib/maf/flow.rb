@@ -7,7 +7,7 @@
 #          [--model ROLE=MODEL] [--hermes-dir DIR] [--check] [--force] [--no-bootstrap]
 #          [--list-roles]
 #
-# HARNESS is one of: opencode, claude, codex, hermes.
+# HARNESS is one of: opencode, claude, codex, cursor, hermes.
 # A re-run keeps the agents in .maf/config.json. --agent adds an agent.
 # --remove drops an agent. Without --agent, a re-run regenerates the current agents.
 # Idempotent: identical files are skipped, changed files are updated, and
@@ -28,7 +28,7 @@ module Maf
     ROOT = File.expand_path("../..", __dir__)
     TEMPLATES = File.join(ROOT, "templates")
     ASSETS = File.join(ROOT, "assets")
-    HARNESSES = %w[opencode claude codex hermes].freeze
+    HARNESSES = %w[opencode claude codex cursor hermes].freeze
     DEFAULT_HERMES_DIR = File.join(Dir.home, ".hermes", "skills")
 
     # Model a harness gets when neither --agent nor --model names one.
@@ -47,7 +47,7 @@ module Maf
     # The folder where a harness looks for role files. It is a symlink into
     # .maf/agents/<harness>/, where the flow keeps the role files.
     HARNESS_DIRS = { "opencode" => ".opencode/agents", "claude" => ".claude/agents",
-                     "codex" => ".codex/prompts" }.freeze
+                     "codex" => ".codex/prompts", "cursor" => ".cursor/agents" }.freeze
 
     # The role file path inside the project. Hermes keeps role files outside
     # the project, so it has no path here.

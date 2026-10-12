@@ -5,7 +5,7 @@ module Maf
     # Removes the role files in .maf/agents/ and the symlink of each harness
     # folder that points there.
     class RoleFiles
-      DIRS = %w[claude opencode codex].map { |harness| [".maf", "agents", harness] }.freeze
+      DIRS = %w[claude opencode codex cursor].map { |harness| [".maf", "agents", harness] }.freeze
 
       def initialize(project, manifest)
         @project = project

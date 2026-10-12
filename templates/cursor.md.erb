@@ -1,0 +1,11 @@
+---
+# >>> multi-agent-flow >>>
+name: <%= role %>
+description: <%= description %>
+<% if model -%>
+model: <%= model %>
+<% end -%>
+readonly: <%= !can_edit %>
+---
+
+<%= prompt %>
