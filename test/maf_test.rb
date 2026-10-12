@@ -177,7 +177,7 @@ class MafTest < Minitest::Test
     out, status = menu("#{input}\n")
 
     assert_equal 0, status, out
-    assert_equal %w[opencode:architect opencode:tester], agent_specs
+    assert_equal %w[claude:architect claude:tester], agent_specs
   end
 
   def test_menu_removes_an_agent_after_confirmation

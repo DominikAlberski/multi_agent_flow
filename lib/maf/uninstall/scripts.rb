@@ -28,7 +28,7 @@ module Maf
       # The files of the shared library. A file without the signature stays.
       def shared
         dir = File.join(@project, Bootstrap::MAF_DIR, Bootstrap::SHARED_DIR)
-        Dir.glob(File.join(dir, "*.rb")).map { |path| [path, Bootstrap::SHARED_SIGNATURE] }
+        Dir.glob(File.join(dir, "**", "*.rb")).map { |path| [path, Bootstrap::SHARED_SIGNATURE] }
       end
     end
   end

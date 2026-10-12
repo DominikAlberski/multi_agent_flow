@@ -24,9 +24,9 @@ module Maf
 
       def data
         data = kept_keys.merge("generated_at" => Time.now.utc.iso8601, "agents" => @options.agents.map { |a| entry(a) })
-        # Only record hermes_dir when it differs from the default: the default is
+        # Only record hermes_dir when --hermes-dir sets it: the default is
         # an absolute home path that would leak into a committed manifest.
-        data["hermes_dir"] = @options.hermes_dir unless @options.hermes_dir == DEFAULT_HERMES_DIR
+        data["hermes_dir"] = @options.hermes_dir if @options.hermes_dir
         data
       end
 

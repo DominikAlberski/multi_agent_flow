@@ -8,7 +8,7 @@ module Maf
     # A harness folder with the project's own files gets one link per role file.
     module RoleFile
       def self.copy(root, dir, harness, role)
-        relative = Flow.role_path(harness, role)
+        relative = Maf::Shared::Harness.fetch(harness).role_path(role)
         return unless relative
 
         copy_missing(File.join(root, relative), File.join(dir, relative))

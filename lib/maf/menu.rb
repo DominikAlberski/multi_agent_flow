@@ -73,7 +73,7 @@ module Maf
       @prompt.confirm?("#{harness} does not list #{answer}. Use it anyway?") ? answer : ask_model(harness, role, models)
     end
 
-    def default_label(harness) = Flow::DEFAULT_MODELS.fetch(harness, "the harness default")
+    def default_label(harness) = Flow::Models.default(harness) || "the harness default"
 
     def show_models(harness)
       models = Flow::Models.for(harness).to_a

@@ -10,6 +10,14 @@ module Maf
       FILE = ".codex/hooks.json"
       TIMEOUT = { "timeout" => 3600 }.freeze
 
+      # A hooks file with only the flow hooks belongs to the flow.
+      def self.flow_only?(path)
+        hooks = JSON.parse(File.read(path)).fetch("hooks", {}).values.flatten.flat_map { |e| e.fetch("hooks", []) }
+        (hooks.map { |hook| hook["command"] } - COMMANDS).empty?
+      rescue JSON::ParserError, SystemCallError
+        false
+      end
+
       def initialize(project)
         @project = project
         @path = File.join(project, FILE)

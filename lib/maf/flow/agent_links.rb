@@ -13,7 +13,7 @@ module Maf
       # Returns :create, :skip, or :refuse. :refuse means the folder holds files
       # that the flow does not own, or a symlink to another place.
       def link(harness)
-        path = File.join(@project, HARNESS_DIRS.fetch(harness))
+        path = File.join(@project, Harness.fetch(harness).role_dir)
         return exclude(path) && :skip if linked?(path, harness)
         return :refuse unless free?(path)
 
@@ -28,7 +28,7 @@ module Maf
       # relative symlink in it instead, so the harness still finds the role.
       # A user file with the same name stays, and its name is returned.
       def link_files(harness)
-        dir = File.join(@project, HARNESS_DIRS.fetch(harness))
+        dir = File.join(@project, Harness.fetch(harness).role_dir)
         prune(dir, harness)
         role_files(harness).reject { |source| link_file(dir, source) }.map { |source| File.basename(source) }
       end

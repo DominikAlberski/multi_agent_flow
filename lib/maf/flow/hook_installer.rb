@@ -3,31 +3,17 @@
 module Maf
   module Flow
     # HookInstaller installs the harness hooks that pick up tasks when a
-    # session ends. Claude Code and opencode get theirs from bootstrap.
+    # session ends. Each harness installs its own (Harness#install_hooks).
+    # Some harnesses get theirs from bootstrap instead (Harness#bootstrap_dir).
     class HookInstaller
       def initialize(agents, project)
-        @harnesses = agents.map { |a| a[:harness] }.uniq
+        names = agents.map { |a| a[:harness] }
+        @harnesses = Harness.all.select { |harness| names.include?(harness.name) }
         @project = project
       end
 
-      # Returns true when the Hermes hook needs steps from the user.
-      def install
-        install_codex if @harnesses.include?("codex")
-        @harnesses.include?("hermes") && HermesHookSetup.new.install
-      end
-
-      private
-
-      def install_codex
-        %w[next-task.rb session-guard.rb].each { |name| copy_hook(name) }
-        CodexHooks.new(@project).install
-        LegacyCodexHook.new.remove
-      end
-
-      def copy_hook(name)
-        HookFiles.copy(File.join(ASSETS, "harness-hooks", name),
-                       File.join(@project, ".maf", "coordination", "harness-hooks", name))
-      end
+      # Returns the result of each harness. A truthy result: the hook needs steps from the user.
+      def install = @harnesses.map { |harness| harness.install_hooks(@project) }
     end
   end
 end

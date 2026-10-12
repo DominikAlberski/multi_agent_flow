@@ -21,8 +21,7 @@ module Maf
       - Do not use subagents to verify your work.
     TEXT
 
-    # Harnesses with a watcher that wakes an idle session.
-    WAKE_HARNESSES = %w[claude opencode].freeze
+    # The no-task rule of a worker, by the wait of the harness (Harness::RoleFiles#wait).
     NO_TASK_STOP = "- If no task and no message is available, stop. The board watcher wakes you when work arrives.\n" \
                    "  Do not wait in a loop: each return of a wait costs one model call."
     NO_TASK_WAIT = <<~TEXT.strip
@@ -37,15 +36,16 @@ module Maf
         The stop hook waits for work and wakes you. Do not wait in a loop.
     TEXT
 
+    NO_TASK = { watch: NO_TASK_STOP, await: NO_TASK_AWAIT, poll: NO_TASK_WAIT }.freeze
+
     # The project manager waits for reports. Each check in a loop sends the
     # whole context again, so the wait must not call the model.
     PM_WAIT = {
-      "claude" => "End your turn to wait for reports. The board watcher wakes you when a message arrives.",
-      "opencode" => "End your turn to wait for reports. The board watcher wakes you when a message arrives.",
-      "codex" => "To wait for reports, run `coord await`. Tell the user that you wait. Then end your turn.\n" \
-                 "   The stop hook wakes you when a message arrives."
+      watch: "End your turn to wait for reports. The board watcher wakes you when a message arrives.",
+      await: "To wait for reports, run `coord await`. Tell the user that you wait. Then end your turn.\n" \
+             "   The stop hook wakes you when a message arrives.",
+      poll: "Wait for reports with `coord inbox project-manager --wait --timeout 540`."
     }.freeze
-    PM_WAIT_DEFAULT = "Wait for reports with `coord inbox project-manager --wait --timeout 540`."
 
     # Every role except the project manager reads the code graph before work.
     # A query output stays in the context for each later call, so the budget is small.
@@ -55,10 +55,6 @@ module Maf
         Then run `graphify query "..." --budget 800`, or use the graphify MCP tools. Never run `graphify export`.
         Put one line in the report of that task or plan: "Graph: fresh", "Graph: stale", or "Graph: missing".
     TEXT
-
-    # Only Claude Code has ScheduleWakeup. Other harnesses never see this rule.
-    CLAUDE_ARCHITECT_RULE = "- Never call ScheduleWakeup with `stop:false` and no `prompt`. " \
-                            "The call fails. Poll worker status through the task tool instead."
 
     # The coordination contract that every role shares. It lives in the role
     # prompt, not in the project's AGENTS.md: only a session that maf starts

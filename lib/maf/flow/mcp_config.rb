@@ -3,36 +3,22 @@
 module Maf
   module Flow
     # McpConfig writes the graphify MCP server into a config file of the flow,
-    # in .maf/mcp/. The project's .mcp.json and opencode.json stay as they are.
-    # `maf start` and the dispatcher pass the file: Claude Code reads it with
-    # --mcp-config, opencode with the OPENCODE_CONFIG variable.
+    # in .maf/mcp/. The project's own config files stay as they are. maf start
+    # and the dispatcher pass the file to the harness (Harness#launch and
+    # Harness#build_command). Harness#mcp names the file and the entry.
     # The server runs `vault mcp`. A foreign entry with the same name stays.
-    # Codex and Hermes keep MCP servers in a global user file. maf does not
-    # edit that file. It prints the command that adds the server instead.
+    # A harness with a global MCP config gives a command instead
+    # (Harness#mcp_command). maf does not edit that file. It prints the command.
     class McpConfig
       NAME = "graphify"
-      ARGS = %w[ruby .maf/bin/vault mcp].freeze
-      SCHEMA = "https://opencode.ai/config.json"
-      TARGETS = {
-        "claude" => { file: ".maf/mcp/claude.json", key: "mcpServers",
-                      entry: { "command" => ARGS.first, "args" => ARGS.drop(1) } },
-        "opencode" => { file: ".maf/mcp/opencode.json", key: "mcp",
-                        entry: { "type" => "local", "command" => ARGS, "enabled" => true } }
-      }.freeze
-
-      def self.targets = TARGETS
-
-      GLOBAL_COMMANDS = { "codex" => "codex mcp add %<name>s -- ruby %<vault>s mcp",
-                          "hermes" => "hermes mcp add %<name>s --command ruby --args %<vault>s mcp" }.freeze
 
       # The shell command for a harness with a global MCP config, or nil.
       def self.global_command(harness, project)
-        vault = File.join(project, ".maf", "bin", "vault")
-        GLOBAL_COMMANDS[harness]&.then { |text| format(text, name: "#{NAME}-#{File.basename(project)}", vault: vault) }
+        harness.mcp_command("#{NAME}-#{File.basename(project)}", File.join(project, ".maf", "bin", "vault"))
       end
 
       def initialize(project, harness)
-        @target = TARGETS.fetch(harness)
+        @target = harness.mcp
         @path = File.join(project, @target[:file])
       end
 
@@ -63,7 +49,7 @@ module Maf
       end
 
       def save(data)
-        data = { "$schema" => SCHEMA }.merge(data) if @target[:key] == "mcp" && !data.key?("$schema")
+        data = { "$schema" => @target[:schema] }.merge(data) if @target[:schema] && !data.key?("$schema")
         FileUtils.mkdir_p(File.dirname(@path))
         File.write(@path, "#{JSON.pretty_generate(data)}\n")
       end

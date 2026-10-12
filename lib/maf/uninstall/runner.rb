@@ -40,14 +40,14 @@ module Maf
         manifest = Manifest.new(project)
         [VaultWatcher.new(project), Worktrees.new(project, @opts[:force]), Scripts.new(project),
          CommitGuard.new(project), DocGraphHooks.new(project), RoleFiles.new(project, manifest),
-         ClaudeSettings.new(project), CodexHooks.new(project), McpEntries.new(project),
+         *Uninstall.harness_cleaners(project), McpEntries.new(project),
          MarkedFiles.new(project), LocalFiles.new(project), Coordination.new(project), manifest].flat_map(&:steps)
       end
 
       def apply(steps)
         abort "uninstall: cancelled" unless @opts[:yes] || confirmed?
         steps.each(&:run)
-        EMPTY_DIRS.each { |parts| Owned.prune(File.join(project, *parts)) }
+        Uninstall.empty_dirs.each { |parts| Owned.prune(File.join(project, *parts)) }
         finish("removed the multi-agent flow from #{project}")
       end
 

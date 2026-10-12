@@ -1,0 +1,105 @@
+# frozen_string_literal: true
+
+# codex_test.rb - tests for lib/maf/shared/harnesses/codex.rb.
+require_relative "helper"
+
+class CodexHarnessTest < Minitest::Test
+  include HarnessTestHelpers
+
+  HARNESS = "codex"
+
+  # Codex has no agent flag: a fresh session gets the role file.
+  def test_a_fresh_run_gets_the_role_file
+    in_tmpdir do
+      write(".maf/agents/codex/backend-developer.md", "ROLE")
+      assert_equal %w[codex exec --json], harness.build_command(config, "go", nil).first(3)
+      assert_equal "ROLE\n\ngo", harness.build_command(config, "go", nil).last
+    end
+  end
+
+  def test_a_resumed_run_gets_only_the_prompt
+    resumed = harness.build_command(config, "go", "t-1")
+    assert_equal %w[codex exec resume], resumed.first(3)
+    assert_equal %w[t-1 go], resumed.last(2)
+  end
+
+  OUTPUT = <<~OUT
+    {"type":"thread.started","thread_id":"t-1"}
+    {"type":"item.completed","item":{"id":"i","type":"agent_message","text":"done"}}
+  OUT
+
+  def test_output
+    assert_equal %w[t-1 done], [harness.session_id(OUTPUT), harness.result_text(OUTPUT)]
+    assert harness.stale_session?("thread/resume failed: no rollout found for thread id 0000")
+    assert_nil harness.session_id(%(echo {"thread_id":"fake"}\n))
+  end
+
+  TURNS = <<~OUT
+    {"type":"turn.completed","usage":{"input_tokens":5,"cached_input_tokens":1,"output_tokens":2}}
+    {"type":"turn.completed","usage":{"input_tokens":7,"output_tokens":4}}
+  OUT
+
+  def test_usage_adds_up_the_turns
+    assert_equal usage(12, 1, 0, 6), harness.usage(TURNS)
+    assert_nil harness.usage("")
+  end
+
+  def test_lean_flags_disable_features_and_foreign_mcp_servers
+    flags = lean_flags("[mcp_servers.devrelay-gateway]\n[mcp_servers.graphify-#{File.basename(Dir.pwd)}]\n")
+    assert_includes pairs(flags), %w[--disable plugins]
+    assert_includes pairs(flags), ["-c", "mcp_servers.devrelay-gateway.enabled=false"]
+    refute(flags.any? { |flag| flag.include?("graphify") })
+  end
+
+  def lean_flags(toml)
+    Dir.mktmpdir do |home|
+      File.write(File.join(home, "config.toml"), toml)
+      with_env("CODEX_HOME" => home) { harness.lean_flags }
+    end
+  end
+
+  def test_full_harness_keeps_the_user_setup
+    refute_includes harness.build_command(config(lean: false), "go", nil), "--disable"
+  end
+
+  # The Codex cache lasts minutes, the Claude Code cache 1 hour.
+  def test_the_cache_window_is_short
+    assert_equal 300, harness.cache_window
+    assert_nil harness("claude").cache_window
+  end
+
+  # Codex asked for approval at each coord command: the board is outside the worktree.
+  def test_launch_makes_the_board_writable
+    in_tmpdir do |dir|
+      write(".maf/agents/codex/tester.md", "prompt")
+      command = with_env("CODEX_HOME" => dir) { harness.launch("tester", nil) }
+      assert_equal ["--add-dir", File.join(dir, ".maf", "coordination"), "prompt"], command[1..]
+    end
+  end
+
+  # Untrusted Codex hooks record no usage and never wake the session.
+  def test_launch_warns_about_untrusted_hooks
+    in_tmpdir { |dir| assert_includes launch_warning(dir), "does not trust the hooks" }
+  end
+
+  def test_launch_is_quiet_about_trusted_hooks
+    in_tmpdir do |dir|
+      File.write("config.toml", "[hooks.state.\"#{dir}/.codex/hooks.json:stop:0:0\"]\n")
+      assert_empty launch_warning(dir)
+    end
+  end
+
+  def launch_warning(home)
+    %w[.maf/agents/codex/tester.md .codex/hooks.json].each { |path| write(path, "{}") }
+    _, err = capture_io { with_env("CODEX_HOME" => home) { harness.launch("tester", nil) } }
+    err
+  end
+
+  def test_reads_the_listed_models_of_its_cache
+    models = [{ slug: "gpt-a", visibility: "list" }, { slug: "gpt-x", visibility: "hide" }]
+    Dir.mktmpdir do |home|
+      write(File.join(home, ".codex", "models_cache.json"), JSON.generate(models: models))
+      assert_equal ["gpt-a"], with_env("HOME" => home) { harness.models }
+    end
+  end
+end

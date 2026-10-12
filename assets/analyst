@@ -23,6 +23,11 @@ require "open3"
 require "optparse"
 require "tmpdir"
 require "time"
+begin
+  require_relative "../lib/maf/shared/harness"
+rescue LoadError
+  abort "analyst: the maf shared library is missing. Run maf update."
+end
 
 module Analyst
   HISTORY = 20
@@ -71,57 +76,14 @@ module Analyst
     Call.new(kind || command.sub(SETUP, "").split.first.to_s, text, size.to_i)
   end
 
-  # Transcripts reads the tool calls of one session from the files of the harness.
+  # Transcripts reads the tool calls of one session from the files of the
+  # harness (Harness#transcript_calls).
   module Transcripts
     def self.calls(harness, id)
       return [] if id.to_s.empty?
 
-      { "claude" => -> { claude(id) }, "codex" => -> { codex(id) }, "opencode" => -> { opencode(id) } }
-        .fetch(harness, -> { [] }).call
-    end
-
-    def self.lines(path) = path ? File.foreach(path).filter_map { |line| JSON.parse(line) rescue nil } : []
-
-    # Claude Code: a tool_use block, then a tool_result block with the same ID.
-    def self.claude(id)
-      events = lines(Dir.glob(File.join(Dir.home, ".claude", "projects", "*", "#{id}.jsonl")).first)
-      blocks = events.flat_map { |event| Array(event.dig("message", "content")).select { |block| block.is_a?(Hash) } }
-      sizes = blocks.select { |block| block["type"] == "tool_result" }
-                    .to_h { |block| [block["tool_use_id"], block["content"].to_s.size] }
-      blocks.select { |block| block["type"] == "tool_use" }
-            .map { |block| Analyst.call(block["name"], block.dig("input", "command"), sizes[block["id"]]) }
-    end
-
-    # Codex: a custom_tool_call or function_call, then its output with the same call_id.
-    def self.codex(id)
-      events = lines(Dir.glob(File.join(Dir.home, ".codex", "sessions", "**", "rollout-*#{id}.jsonl")).first)
-      payloads = events.map { |event| event["payload"] || {} }
-      sizes = payloads.select { |p| p["type"].to_s.end_with?("_output") }
-                      .to_h { |p| [p["call_id"], p["output"].to_s.size] }
-      payloads.select { |p| %w[custom_tool_call function_call].include?(p["type"]) }
-              .map { |p| Analyst.call(p["name"], codex_command(p), sizes[p["call_id"]]) }
-    end
-
-    def self.codex_command(payload)
-      text = (payload["input"] || payload["arguments"]).to_s
-      text[/cmd["']?\s*:\s*["']((?:[^"'\\]|\\.)*)/, 1] || text
-    end
-
-    # opencode keeps its sessions in a SQLite database. The sqlite3 CLI reads it.
-    def self.opencode(id)
-      db = File.join(Dir.home, ".local", "share", "opencode", "opencode.db")
-      return [] unless File.exist?(db) && id.match?(/\A[\w-]+\z/)
-
-      out, status = Open3.capture2("sqlite3", "-readonly", "-json", db, opencode_query(id))
-      status.success? ? JSON.parse(out.empty? ? "[]" : out).map { |row| Analyst.call(*row.values) } : []
-    rescue SystemCallError, JSON::ParserError
-      []
-    end
-
-    def self.opencode_query(id)
-      "select json_extract(data,'$.tool') tool, json_extract(data,'$.state.input.command') command, " \
-        "length(json_extract(data,'$.state.output')) size from part where session_id = '#{id}' " \
-        "and json_extract(data,'$.type') = 'tool'"
+      calls = Maf::Shared::Harness[harness]&.transcript_calls(id) || []
+      calls.map { |name, command, size| Analyst.call(name, command, size) }
     end
   end
 

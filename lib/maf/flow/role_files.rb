@@ -19,30 +19,15 @@ module Maf
       private
 
       def generate_agent(agent)
-        role = agent[:role]
+        harness = Harness.fetch(agent[:harness])
         model = @options.model_for(agent)
-        dest = destination(agent[:harness], role)
-        content = render(agent[:harness], role, @roles.fetch(role), model)
+        dest = harness.role_destination(@options.project, agent[:role], @options.settings)
+        content = render(harness, agent[:role], @roles.fetch(agent[:role]), model)
         { agent: agent, dest: dest, status: write(dest, content), model: model }
       end
 
-      # Hermes skills live in a global ~/.hermes/skills/ directory, not the
-      # project. Namespace by project so two projects using the same role
-      # don't overwrite each other's skill.
-      def destination(harness, role)
-        return hermes_path(role) if harness == "hermes"
-
-        File.join(@options.project, Flow.role_path(harness, role)) if %w[opencode claude codex cursor].include?(harness)
-      end
-
-      def hermes_path(role)
-        File.join(@options.hermes_dir, "#{File.basename(@options.project)}-#{role}", "SKILL.md")
-      end
-
       def render(harness, role, data, model)
-        template = File.read(File.join(TEMPLATES, "#{harness}.md.erb"))
-        values = { prompt: @prompts.build(harness, role, data), model: model }
-        ERB.new(template, trim_mode: "-").result_with_hash(**template_values(role, data), **values)
+        harness.render_role(**template_values(role, data), prompt: @prompts.build(harness, role, data), model: model)
       end
 
       def template_values(role, data)

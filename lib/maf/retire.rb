@@ -7,7 +7,8 @@ require_relative "shared/processes"
 
 module Maf
   class Retire
-    RUNTIME_PREFIXES = %w[.maf/ .claude/ .opencode/ .codex/ .cursor/].freeze
+    # Changes in these folders belong to the flow, not to the work of the worker.
+    def self.runtime_prefixes = [".maf/"] + Maf::Shared::Harness.all.filter_map(&:home_dir).map { |dir| "#{dir}/" }
 
     def initialize(root, spec)
       @root = root
@@ -72,7 +73,11 @@ module Maf
       return false unless Dir.exist?(@dir)
 
       lines = IO.popen(["git", "-C", @dir, "status", "--porcelain"], err: File::NULL, &:readlines)
-      lines.map { |line| line[3..].strip }.any? { |path| RUNTIME_PREFIXES.none? { |prefix| path.start_with?(prefix) } }
+      lines.map { |line| line[3..].strip }.any? do |path|
+        Retire.runtime_prefixes.none? do |prefix|
+          path.start_with?(prefix)
+        end
+      end
     end
 
     def remove_worktree

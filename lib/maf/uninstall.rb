@@ -22,17 +22,27 @@ require_relative "local_exclude"
 require_relative "migrate"
 
 module Maf
+  # Uninstall removes the flow from a project. Each harness adds its own
+  # folders, files, and cleaners (Maf::Shared::Harness).
   module Uninstall
     KEPT_DIRS = %w[graphify-out].freeze
 
     # Removed after all steps if empty. Children come before parents.
-    EMPTY_DIRS = [%w[.claude agents], %w[.claude], %w[.opencode agents], %w[.opencode plugins], %w[.opencode],
-                  %w[.codex prompts], %w[.codex], %w[.cursor agents], %w[.cursor], %w[.maf bin], %w[.maf agents claude],
-                  %w[.maf agents opencode], %w[.maf agents codex], %w[.maf agents cursor], %w[.maf agents],
-                  %w[.maf worktrees],
-                  %w[.maf lib maf shared], %w[.maf lib maf], %w[.maf lib], %w[.maf]].freeze
+    def self.empty_dirs
+      harnesses = Maf::Shared::Harness.all
+      harnesses.flat_map(&:empty_dirs).map { |dir| dir.split("/") } + [%w[.maf bin]] +
+        harnesses.map { |harness| [".maf", "agents", harness.name] } +
+        [%w[.maf agents], %w[.maf worktrees], %w[.maf lib maf shared harness], %w[.maf lib maf shared harnesses],
+         %w[.maf lib maf shared], %w[.maf lib maf], %w[.maf lib], %w[.maf]]
+    end
 
-    GLOBAL_HOOKS = [File.join(Dir.home, ".hermes", "agent-hooks", "next-task.sh")].freeze
+    # Files outside the project that uninstall keeps: other projects can use them.
+    def self.global_files = Maf::Shared::Harness.all.flat_map(&:global_files)
+
+    # The cleaners of each harness. untrack runs only the legacy cleaners.
+    def self.harness_cleaners(project, legacy_only: false)
+      Maf::Shared::Harness.all.flat_map { |h| h.legacy_cleaners(project) + (legacy_only ? [] : h.cleaners(project)) }
+    end
 
     # Step is one removal. --check prints the label and runs nothing.
     Step = Struct.new(:label, :work) do

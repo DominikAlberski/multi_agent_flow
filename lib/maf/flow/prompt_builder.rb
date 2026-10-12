@@ -26,26 +26,19 @@ module Maf
         "#{intro(data)}\n\n#{duties_block(data)}\n\n#{loop_text}"
       end
 
-      # Claude Code wakes an idle session with the board-watch hook, and opencode
-      # with the board-watch plugin. So these agents stop instead of waiting:
-      # each return of a wait costs one model call over the whole context.
-      # Codex waits in its stop hook after `coord await`. Hermes cannot be
-      # woken, so it blocks in `coord next --wait`.
-      # The dispatcher adds the report block rule to each dispatched prompt.
-      def no_task_line(harness)
-        return NO_TASK_AWAIT if harness == "codex"
-
-        WAKE_HARNESSES.include?(harness) ? NO_TASK_STOP : NO_TASK_WAIT
-      end
+      # A harness that wakes an idle session lets the agent stop instead of
+      # waiting: each return of a wait costs one model call over the whole
+      # context. The dispatcher adds the report block rule to each dispatched prompt.
+      def no_task_line(harness) = NO_TASK.fetch(harness.wait)
 
       def architect_prompt(harness, data)
         loop_text = project_manager? ? ARCHITECT_LOOP_PM : ARCHITECT_LOOP_DIRECT
         "#{intro(data)} You do not implement code yourself.\n\n#{duties_block(data)}\n\n" \
-          "#{format(loop_text, roles: dispatch_roles_text)}#{claude_rule(harness)}#{workflow_block}"
+          "#{format(loop_text, roles: dispatch_roles_text)}#{harness_rule(harness)}#{workflow_block}"
       end
 
       # The loop text ends with a newline, so the rule lands as the last rule line.
-      def claude_rule(harness) = harness == "claude" ? "#{CLAUDE_ARCHITECT_RULE}\n" : ""
+      def harness_rule(harness) = harness.architect_rule ? "#{harness.architect_rule}\n" : ""
 
       # The workflow goes into the orchestrator prompt only. Workers stay workflow-blind.
       def workflow_block = @workflow ? "\n\n#{@workflow}" : ""
@@ -56,7 +49,7 @@ module Maf
 
       def project_manager_prompt(harness, data)
         "#{intro(data)} You do not plan tasks or implement code yourself.\n\n" \
-          "#{duties_block(data)}\n\n#{format(PM_LOOP, wait_instruction: PM_WAIT.fetch(harness, PM_WAIT_DEFAULT))}"
+          "#{duties_block(data)}\n\n#{format(PM_LOOP, wait_instruction: PM_WAIT.fetch(harness.wait))}"
       end
 
       def intro(data)

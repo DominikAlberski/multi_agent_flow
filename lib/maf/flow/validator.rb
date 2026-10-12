@@ -28,11 +28,11 @@ module Maf
       private
 
       def check(agent)
-        abort "flow: unknown harness '#{agent[:harness]}' (use #{HARNESSES.join(", ")})" unless known?(agent)
+        abort "flow: unknown harness '#{agent[:harness]}' (use #{Harness.names.join(", ")})" unless known?(agent)
         abort "flow: unknown role '#{agent[:role]}'" unless @roles.key?(agent[:role])
       end
 
-      def known?(agent) = HARNESSES.include?(agent[:harness])
+      def known?(agent) = Harness.known?(agent[:harness])
     end
   end
 end

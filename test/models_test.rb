@@ -8,40 +8,13 @@ require "tmpdir"
 require_relative "../lib/maf/cli"
 
 class ModelsTest < Minitest::Test
-  def test_claude_accepts_aliases_and_full_ids
-    %w[opus sonnet[1m] opusplan claude-sonnet-5-5 claude-opus-5-5[1m] us.anthropic.claude-haiku-5-5-v1:0]
-      .each { |name| assert Maf::Flow::Models.known?("claude", name), name }
-  end
-
-  # The typo that stopped a tester: every dispatched run failed with unrecognized_model.
-  def test_claude_rejects_a_misspelled_family
-    refute Maf::Flow::Models.known?("claude", "claude-sonet-5-5")
-    refute Maf::Flow::Models.known?("claude", "sonet")
-  end
-
-  def test_codex_reads_the_listed_models_of_its_cache
-    models = [{ slug: "gpt-a", visibility: "list" }, { slug: "gpt-x", visibility: "hide" }]
-    Dir.mktmpdir do |dir|
-      cache = File.join(dir, "models_cache.json").tap { |path| File.write(path, JSON.generate(models: models)) }
-      with_const(:CODEX_CACHE, cache) { assert_equal ["gpt-a"], Maf::Flow::Models.codex }
-    end
-  end
-
   def test_a_harness_without_a_list_knows_every_name
     assert Maf::Flow::Models.known?("hermes", "anything")
   end
 
-  def with_const(name, value)
-    old = Maf::Flow::Models.const_get(name)
-    swap_const(name, value)
-    yield
-  ensure
-    swap_const(name, old)
-  end
-
-  def swap_const(name, value)
-    Maf::Flow::Models.send(:remove_const, name)
-    Maf::Flow::Models.const_set(name, value)
+  # The menu offers only the harnesses on PATH, or all of them when none is installed.
+  def test_installed_lists_registered_harnesses
+    assert_empty Maf::Flow::Models.installed - Maf::Shared::Harness.names
   end
 end
 

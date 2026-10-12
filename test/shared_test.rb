@@ -16,7 +16,7 @@ require_relative "../lib/maf/shared/git_exclude"
 require_relative "../lib/maf/shared/peak_rate"
 require_relative "../lib/maf/shared/git_identity"
 
-SHARED_FILES = Dir[File.expand_path("../lib/maf/shared/*.rb", __dir__)]
+SHARED_FILES = Dir[File.expand_path("../lib/maf/shared/**/*.rb", __dir__)]
 
 # An installed script loads one shared file with no load path and no gems.
 class SharedLoadTest < Minitest::Test

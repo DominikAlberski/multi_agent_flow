@@ -18,12 +18,12 @@ module Maf
 
       private
 
-      # Bootstrap adds the Claude Code hooks only if .claude/ exists, and the
-      # opencode plugin only if .opencode/ exists. Flow writes the role files
-      # after bootstrap, so create these dirs first.
+      # Bootstrap installs the hooks of a harness only if its folder exists
+      # (Harness#bootstrap_dir). Flow writes the role files after bootstrap,
+      # so create these dirs first.
       def make_harness_dirs
-        used = %w[claude opencode] & @options.agents.map { |a| a[:harness] }
-        used.each { |harness| FileUtils.mkdir_p(File.join(@options.project, ".#{harness}")) }
+        dirs = @options.agents.map { |a| Harness.fetch(a[:harness]).bootstrap_dir }.compact.uniq
+        dirs.each { |dir| FileUtils.mkdir_p(File.join(@options.project, dir)) }
       end
 
       def command

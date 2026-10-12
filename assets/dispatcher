@@ -11,7 +11,7 @@
 #    dispatcher polls the inbox and the task board on a fixed interval.
 #
 # Usage:
-#   dispatcher ROLE [--harness NAME | --command TEMPLATE] [--model M]
+#   dispatcher ROLE (--harness NAME | --command TEMPLATE) [--model M]
 #                     [--skill NAME | --no-skill] [--interval S] [--max-turns N]
 #                     [--timeout S] [--idle-timeout S] [--grace S]
 #                     [--completion-signal TEXT] [--abort-signal TEXT]
@@ -19,16 +19,17 @@
 #                     [--no-poll-tasks]
 #                     [--full-harness] [--once] [--verbose]
 #
-#   dispatcher tester                            # hermes (default)
+#   dispatcher tester --harness hermes
 #   dispatcher reviewer --harness claude --model sonnet
 #   dispatcher backend-developer --harness opencode --model openrouter/qwen3-coder
 #   dispatcher reviewer --harness codex
 #   dispatcher reviewer --harness cursor --model gpt-5
-#   dispatcher reviewer --once                   # one poll cycle, then exit
+#   dispatcher reviewer --harness claude --once  # one poll cycle, then exit
 #
 # Flags:
-#   --harness NAME     Built-in adapter: hermes (default), claude, codex,
-#                      cursor, or opencode. Each one resumes sessions.
+#   --harness NAME     A built-in harness: one file in .maf/lib/maf/shared/harnesses/
+#                      (claude, codex, cursor, hermes, opencode). Each one
+#                      resumes sessions. --harness or --command is required.
 #   --command TEMPLATE Any other harness. A shell command with %{prompt},
 #                      %{role}, %{skill}, and %{model} placeholders, each
 #                      shell-escaped. The command must exit when done.
@@ -54,7 +55,8 @@
 #   --abort-signal TEXT  The agent prints TEXT when it gives up. The run is a
 #                      failure. Default: off.
 #   --cache-window S   Resume a session only if its last run ended less than
-#                      S seconds ago. Default: 300 for codex, else 3300
+#                      S seconds ago. Default: the cache window of the harness
+#                      (codex: 300), else 3300
 #                      (55 minutes). 0 means never resume.
 #   --max-session-runs N  Start a fresh session after N runs in one session
 #                      (default: 5). Each resume sends the whole old context
@@ -137,6 +139,7 @@ begin
   require_relative "../lib/maf/shared/roles"
   require_relative "../lib/maf/shared/peak_rate"
   require_relative "../lib/maf/shared/git_identity"
+  require_relative "../lib/maf/shared/harness"
 rescue LoadError
   abort "dispatcher: the maf shared library is missing. Run maf update."
 end
@@ -172,29 +175,6 @@ module Dispatcher
   Project = Maf::Shared::Project
   LEADS = Maf::Shared::Roles::LEADS
 
-  # FlowConfig finds the MCP config of the flow in .maf/mcp/ (next to the
-  # coordination folder). The project's .mcp.json and opencode.json stay as
-  # they are. NOTE: lib/maf/setup_agent/launcher.rb passes the same files.
-  module FlowConfig
-    def self.path(config, name) = File.join(File.dirname(config.coord_dir), "mcp", name)
-    def self.claude_mcp(config) = File.exist?(file = path(config, "claude.json")) ? ["--mcp-config", file] : []
-
-    def self.opencode_env(config)
-      file = path(config, "opencode.json")
-      File.exist?(file) ? { "OPENCODE_CONFIG" => file } : {}
-    end
-  end
-
-  # EditGrant reads each agent's can_edit from .maf/config.json. On Hermes,
-  # a role with can_edit false starts without the file-writing toolsets.
-  module EditGrant
-    READ_ONLY_TOOLSETS = Maf::Shared::Roles::READ_ONLY_TOOLSETS
-
-    def self.read_only?(role)
-      Project.manifest.fetch("agents", []).any? { |agent| agent["role"] == role && agent["can_edit"] == false }
-    end
-  end
-
   # Presence writes .maf/coordination/presence/<worker>.json once per cycle, so
   # `coord who` shows the dispatcher as live while its pid runs.
   module Presence
@@ -209,17 +189,6 @@ module Dispatcher
         "started" => Maf::Shared::Processes.started_at(Process.pid),
         "seen_at" => Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ") }
     end
-  end
-
-  # HermesSkill resolves the skill flow.rb generated for a role: the name is
-  # <project>-<role>, and the dir is the manifest's hermes_dir (set by
-  # `flow.rb --hermes-dir`) or flow.rb's default ~/.hermes/skills.
-  module HermesSkill
-    DEFAULT_DIR = File.join(Dir.home, ".hermes", "skills")
-
-    def self.name(role) = "#{File.basename(Project.root)}-#{role}"
-    def self.dir = Project.manifest.fetch("hermes_dir", DEFAULT_DIR)
-    def self.installed?(role) = File.exist?(File.join(dir, name(role), "SKILL.md"))
   end
 
   # Session persists the agent's session ID across runs, per worker: two
@@ -705,54 +674,15 @@ module Dispatcher
     end
   end
 
-  # Events reads the JSON event lines of a harness run. Each adapter takes
-  # its session ID from one specific event, never from free text, so a
-  # prompt or a handoff note that the agent echoes cannot supply a false ID.
-  module Events
-    def self.all(output) = output.lines.filter_map { |line| parse(line.strip) }
+  Events = Maf::Shared::Harness::Events
 
-    def self.last(output, &match) = all(output).reverse.find(&match) || {}
-
-    def self.parse(line)
-      event = line.start_with?("{") ? JSON.parse(line) : nil
-      event.is_a?(Hash) ? event : nil
-    rescue JSON::ParserError
-      nil
-    end
-  end
-
-  # TokenUsage reads the token usage of one run and adds it to the totals of
-  # the worker in .maf/coordination/usage/<worker>.json. Claude Code, Hermes,
-  # Codex, and opencode report usage. A run without usage data adds nothing. A usage error
-  # never fails a run.
-  #
-  # input_tokens counts every input token, cache reads included.
-  # cached_input_tokens counts the cache reads, which cost a fraction of the
-  # input price. cache_write_input_tokens counts the cache writes, which cost
-  # more than the input price. A resume with a large cache write found a cold
-  # cache: the --cache-window is too long for the harness. Claude Code reports
-  # cache reads and cache writes outside its input_tokens, so they are added.
-  # Codex reports them inside.
+  # TokenUsage adds the token usage of one run to the totals of the worker in
+  # .maf/coordination/usage/<worker>.json. Each harness reads the usage of its
+  # run (Maf::Shared::Harness::Usage gives it one shape). A run without usage
+  # data adds nothing. A usage error never fails a run. A resume with a large
+  # cache write found a cold cache: the --cache-window is too long for the harness.
   class TokenUsage
-    def self.normalize(data)
-      return nil unless data.is_a?(Hash)
-
-      { "input_tokens" => input(data),
-        "cached_input_tokens" => int(data, "cached_input_tokens", "cache_read_input_tokens"),
-        "cache_write_input_tokens" => int(data, "cache_write_input_tokens", "cache_creation_input_tokens"),
-        "output_tokens" => int(data, "output_tokens", "completion_tokens") }
-    end
-
-    def self.input(data)
-      int(data, "input_tokens", "prompt_tokens") + int(data, "cache_read_input_tokens") +
-        int(data, "cache_creation_input_tokens")
-    end
-
-    def self.int(data, *names) = data.values_at(*names).compact.first.to_i
-
     def self.label(usage) = usage.map { |key, value| "#{key.delete_suffix("_tokens")}=#{value}" }.join(" ")
-
-    def self.sum(list) = list.empty? ? nil : list.reduce { |total, usage| total.merge(usage) { |_, a, b| a + b } }
 
     def initialize(coord_dir, worker)
       @path = File.join(coord_dir, "usage", "#{worker}.json")
@@ -803,208 +733,20 @@ module Dispatcher
                    "cache_window" => @config.cache_window }
   end
 
-  # PeakRate tells when a dispatched opencode run uses DeepSeek at the peak
-  # rate (Maf::Shared::PeakRate). The notice can show on a Chinese holiday.
+  # PeakRate tells when a dispatched run uses a model at its peak rate
+  # (Maf::Shared::PeakRate). The notice can show on a Chinese holiday.
   module PeakRate
-    def self.deepseek?(config) = config.harness == "opencode" && OpencodeModel.for(config).to_s.include?("deepseek")
-
     def self.notice(config, time = Time.now.utc)
-      return unless Maf::Shared::PeakRate.peak?(time) && deepseek?(config)
+      return unless Maf::Shared::PeakRate.peak?(time) && Harness.for(config).peak_rate?(config)
 
       "info: DeepSeek peak hours (#{time.strftime("%H:%M")} UTC): this run costs 2x the off-peak rate"
     end
   end
 
-  # OpencodeModel finds the model of an opencode run in the opencode order:
-  # --model, the agent file, the project config, the user config.
-  module OpencodeModel
-    CONFIG_MODEL = /^\s*"model"\s*:\s*"([^"]+)"/
-    AGENT_MODEL = /\A---\n(?:(?!^---$).)*?^model:\s*(\S+)/m
-
-    def self.for(config) = config.model || agent(config.role) || configured
-    def self.agent(role) = find(File.join(".opencode", "agents", "#{role}.md"), AGENT_MODEL)
-    def self.configured = config_paths.lazy.filter_map { |path| find(path, CONFIG_MODEL) }.first
-    def self.config_paths = %w[opencode.json opencode.jsonc] + user_paths
-    def self.user_paths = %w[opencode.jsonc opencode.json].map { |name| File.join(home, name) }
-    def self.home = File.join(ENV.fetch("XDG_CONFIG_HOME", File.join(Dir.home, ".config")), "opencode")
-    def self.find(path, pattern) = File.exist?(path) ? File.read(path)[pattern, 1] : nil
-  end
-
+  # Harness picks the harness of a run. Each built-in harness is one file in
+  # lib/maf/shared/harnesses/ (installed in .maf/lib/maf/shared/harnesses/).
+  # Generic runs a user-provided shell template.
   module Harness
-    # Adapter is the part every built-in adapter shares. Each adapter sets
-    # STALE_SESSION to the error its CLI prints for an unknown session ID.
-    module Adapter
-      def stale_session?(output) = output.include?(self::STALE_SESSION)
-      def resume(session_id, *flag) = session_id ? [*flag, session_id] : []
-      def present(value) = value.to_s.empty? ? nil : value
-      def usage(_output) = nil
-      def context(_output) = nil
-      def model(_output) = nil
-    end
-
-    # Hermes: `hermes chat --oneshot`, JSONL output, skill preload.
-    module Hermes
-      extend Adapter
-      STALE_SESSION = "Session not found"
-
-      def self.build_command(config, prompt, session_id)
-        cmd = %w[hermes chat --oneshot --yolo --format stream-json -Q] + options(config)
-        cmd += ["--max-turns", config.max_turns.to_s, "--run-budget", run_budget(config).to_s]
-        cmd + resume(session_id, "--resume") + ["-q", prompt]
-      end
-
-      def self.options(config)
-        tools = EditGrant.read_only?(config.role) ? ["-t", EditGrant::READ_ONLY_TOOLSETS] : []
-        [*(["--skills", config.skill] if config.skill), *(["--model", config.model] if config.model), *tools]
-      end
-
-      # Stop Hermes before the dispatcher's kill, so it can still write its result event.
-      def self.run_budget(config) = [config.timeout - Spawn::GRACE, 1].max
-      def self.result_event(output) = Events.last(output) { |event| event["type"] == "result" }
-      def self.result_text(output) = result_event(output)["text"]
-      def self.session_id(output) = present(result_event(output)["session_id"])
-      def self.usage(output) = TokenUsage.normalize(result_event(output)["usage"])
-    end
-
-    # Claude Code: `claude -p` prints one JSON object with session_id and
-    # result. `--agent` loads .claude/agents/<role>.md as the session's role.
-    # `--mcp-config` takes many values. Put `--` before the prompt, or claude
-    # reads the prompt as one more config file and exits.
-    module Claude
-      extend Adapter
-      STALE_SESSION = "No conversation found with session ID"
-
-      # LEAN starts no MCP server outside --mcp-config and lists no skill.
-      # The user's CLAUDE.md and hooks stay.
-      LEAN = %w[--strict-mcp-config --disable-slash-commands].freeze
-
-      def self.build_command(config, prompt, session_id)
-        cmd = %w[claude -p --output-format json --permission-mode bypassPermissions --agent] + [config.role]
-        cmd += ["--model", config.model] if config.model
-        cmd += LEAN if config.lean
-        cmd + FlowConfig.claude_mcp(config) + resume(session_id, "--resume") + ["--", prompt]
-      end
-
-      def self.result_event(output) = Events.last(output) { |event| event.key?("result") }
-      def self.result_text(output) = result_event(output)["result"]
-      def self.session_id(output) = present(result_event(output)["session_id"])
-      def self.usage(output) = TokenUsage.normalize(result_event(output)["usage"])
-      # The result names each model that the run used. The main model comes first.
-      def self.model(output) = result_event(output)["modelUsage"]&.keys&.first
-    end
-
-    # Codex: `codex exec` (or `codex exec resume ID`) with JSONL events. Codex
-    # has no agent flag, so a fresh session gets .codex/prompts/<role>.md
-    # in front of the prompt. A resumed session already has it.
-    module Codex
-      extend Adapter
-      STALE_SESSION = "no rollout found for thread id"
-
-      def self.build_command(config, prompt, session_id)
-        cmd = %w[codex exec] + (session_id ? ["resume"] : [])
-        cmd += %w[--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox]
-        cmd += ["-m", config.model] if config.model
-        cmd += Lean.flags if config.lean
-        cmd + resume(session_id) + [session_id ? prompt : role_prompt(config.role) + prompt]
-      end
-
-      # Lean drops the parts of the user's Codex setup that a one-shot run
-      # does not use. Each one adds tool schemas, skill lists, or MCP calls
-      # to every model call. Only the graphify server of this project stays.
-      module Lean
-        FEATURES = %w[plugins apps browser_use computer_use multi_agent].freeze
-        SERVER = /^\[mcp_servers\.([\w-]+)\]\s*$/
-
-        def self.flags = FEATURES.flat_map { |name| ["--disable", name] } + servers.flat_map { |name| off(name) }
-        def self.off(name) = ["-c", "mcp_servers.#{name}.enabled=false"]
-        def self.servers = File.exist?(config_path) ? File.read(config_path).scan(SERVER).flatten.uniq - [keep] : []
-        def self.keep = "graphify-#{File.basename(Project.root)}"
-        def self.config_path = File.join(ENV.fetch("CODEX_HOME", File.join(Dir.home, ".codex")), "config.toml")
-      end
-
-      def self.role_prompt(role)
-        path = File.join(".codex", "prompts", "#{role}.md")
-        File.exist?(path) ? "#{File.read(path)}\n\n" : ""
-      end
-
-      def self.result_text(output)
-        Events.last(output) { |event| event.dig("item", "type") == "agent_message" }.dig("item", "text")
-      end
-
-      def self.session_id(output)
-        present(Events.last(output) { |event| event["type"] == "thread.started" }["thread_id"])
-      end
-
-      # Codex reports the usage of each turn in a turn.completed event.
-      def self.usage(output)
-        turns = Events.all(output).select { |event| event["type"] == "turn.completed" }
-        TokenUsage.sum(turns.filter_map { |event| TokenUsage.normalize(event["usage"]) })
-      end
-    end
-
-    # Cursor: `agent -p --output-format json` prints one result object with
-    # session_id and result. The CLI has no agent flag, so a fresh session gets
-    # the body of .maf/agents/cursor/<role>.md in front of the prompt. Cursor
-    # reports no token usage. A failed run prints no JSON, only an error on
-    # stderr, so a resume without a result event and with "not found" is stale.
-    module Cursor
-      extend Adapter
-      STALE_SESSION = /not found/i
-      FRONT_MATTER = /\A---\n.*?\n---\n+/m
-
-      def self.build_command(config, prompt, session_id)
-        cmd = %w[agent -p --output-format json --force --trust --approve-mcps]
-        cmd += ["--model", config.model] if config.model
-        cmd + resume(session_id, "--resume") + [session_id ? prompt : role_prompt(config.role) + prompt]
-      end
-
-      def self.role_prompt(role)
-        path = File.join(".maf", "agents", "cursor", "#{role}.md")
-        File.exist?(path) ? "#{File.read(path).sub(FRONT_MATTER, "")}\n\n" : ""
-      end
-
-      def self.stale_session?(output) = result_event(output).empty? && output.match?(STALE_SESSION)
-      def self.result_event(output) = Events.last(output) { |event| event["type"] == "result" }
-      def self.result_text(output) = result_event(output)["result"]
-      def self.session_id(output) = present(result_event(output)["session_id"])
-    end
-
-    # opencode: `opencode run --format json`. `--agent` loads
-    # .opencode/agents/<role>.md. The result event shape is not verified, so
-    # the log shows no result text. opencode prints terminal escape codes and
-    # can glue two JSON objects onto one line, so the session ID is matched on
-    # the start of an event object (captured from a real run), not by parsing
-    # whole lines.
-    module Opencode
-      extend Adapter
-      STALE_SESSION = "Session not found"
-      EVENT_SESSION = /\{"type":"[\w.-]+","timestamp":\d+,"sessionID":"([^"]+)"/
-
-      def self.session_id(output) = output.scan(EVENT_SESSION).flatten.last
-
-      def self.build_command(config, prompt, session_id)
-        cmd = %w[opencode run --format json --agent] + [config.role]
-        cmd += ["-m", config.model] if config.model
-        cmd + resume(session_id, "--session") + [prompt]
-      end
-
-      def self.result_text(_output) = nil
-
-      # Each model call ends with a step_finish event. Its tokens.input
-      # excludes the cache reads and writes; reasoning is billed as output.
-      STEP_FINISH = /\{"type":"step_finish".*/
-
-      def self.steps(output) = output.scan(STEP_FINISH).filter_map { |json| Events.parse(json)&.dig("part", "tokens") }
-      def self.usage(output) = TokenUsage.sum(steps(output).map { |tokens| TokenUsage.normalize(flat(tokens)) })
-      def self.context(output) = steps(output).last&.then { |tokens| TokenUsage.input(flat(tokens)) }
-
-      def self.flat(tokens)
-        { "input_tokens" => tokens["input"].to_i, "cache_read_input_tokens" => tokens.dig("cache", "read").to_i,
-          "cache_creation_input_tokens" => tokens.dig("cache", "write").to_i,
-          "output_tokens" => tokens["output"].to_i + tokens["reasoning"].to_i }
-      end
-    end
-
     # Generic: a user-provided shell template. No session resume, no parsing.
     module Generic
       PLACEHOLDERS = %i[prompt role skill model].freeze
@@ -1015,6 +757,10 @@ module Dispatcher
         ["sh", "-c", line]
       end
 
+      def self.prepare(config) = config
+      def self.run_env(_config) = {}
+      def self.cache_window = nil
+      def self.peak_rate?(_config) = false
       def self.stale_session?(_output) = false
       def self.session_id(_output) = nil
       def self.result_text(_output) = nil
@@ -1023,13 +769,12 @@ module Dispatcher
       def self.model(_output) = nil
     end
 
-    REGISTRY = { "hermes" => Hermes, "claude" => Claude, "codex" => Codex, "cursor" => Cursor,
-                 "opencode" => Opencode }.freeze
-
     def self.for(config)
       return Generic if config.command
 
-      REGISTRY.fetch(config.harness) { abort "dispatcher: unknown harness '#{config.harness}'. Use --command." }
+      Maf::Shared::Harness[config.harness] ||
+        abort("dispatcher: unknown harness '#{config.harness}' (use #{Maf::Shared::Harness.names.join(", ")}). " \
+              "For another harness, use --command.")
     end
   end
 
@@ -1487,7 +1232,7 @@ module Dispatcher
       env = { "COORD_DIR" => config.coord_dir, "COORD_ROLE" => config.role, "COORD_WORKER" => config.worker,
               "COORD_DISPATCHED" => "1", "PWD" => Dir.pwd }
       taskrc = File.join(config.coord_dir, "taskrc")
-      env.merge(File.exist?(taskrc) ? { "TASKRC" => taskrc } : {}, FlowConfig.opencode_env(config))
+      env.merge(File.exist?(taskrc) ? { "TASKRC" => taskrc } : {}, Harness.for(config).run_env(config))
     end
 
     def run
@@ -1624,7 +1369,7 @@ module Dispatcher
     SWITCHES = { "--no-skill" => [:no_skill, true], "--no-poll-tasks" => [:poll_tasks, false],
                  "--full-harness" => [:lean, false],
                  "--once" => [:once, true], "--verbose" => [:verbose, true] }.freeze
-    DEFAULTS = { harness: "hermes", interval: 60, max_turns: 50, idle_timeout: 0, grace: Spawn::GRACE,
+    DEFAULTS = { interval: 60, idle_timeout: 0, grace: Spawn::GRACE,
                  poll_tasks: true, lean: true,
                  no_skill: false, once: false, verbose: false }.freeze
 
@@ -1632,16 +1377,15 @@ module Dispatcher
     DEFAULT_SESSION_RUNS = 5
     DEFAULT_CONTEXT = 150_000
 
-    # Claude Code caches for 1 hour. The OpenAI cache of Codex is best effort:
-    # a probe missed it after 5 idle minutes. A cold resume costs more than a
-    # fresh session with the handoff note.
-    CACHE_WINDOWS = { "codex" => 300 }.freeze
+    # Claude Code caches for 1 hour. A harness with a shorter cache sets its
+    # cache_window. A cold resume costs more than a fresh session with the handoff note.
     DEFAULT_CACHE_WINDOW = 3300
 
     def self.parse(argv, env = ENV)
       config = Config.new(**DEFAULTS)
       parser(config).parse!(argv)
       config.role = argv.shift || abort("dispatcher: role is required (usage: dispatcher ROLE)")
+      abort "dispatcher: --harness NAME or --command TEMPLATE is required" unless config.harness || config.command
       validate(finish(config, env))
     end
 
@@ -1679,7 +1423,7 @@ module Dispatcher
       config.coord_dir = File.expand_path(env.fetch("COORD_DIR", ".maf/coordination"))
       config.worker = env.fetch("COORD_WORKER", "#{config.role}-bot")
       config.poll_tasks = false if LEADS.include?(config.role)
-      skill(limits(config))
+      Harness.for(config).prepare(limits(config))
     end
 
     def self.limits(config)
@@ -1691,17 +1435,12 @@ module Dispatcher
     # "team": { "limits": { "frontend-developer": { "max_context": 80000 } } }.
     # `maf worker restart ID --max-context N` writes them. A command-line flag wins.
     # NOTE: assets/dashboard reads the limits of each run from the run history.
+    def self.cache_window(config) = Harness.for(config).cache_window || DEFAULT_CACHE_WINDOW
+
     def self.session_limits(config, saved)
-      config.cache_window ||= saved["cache_window"] || CACHE_WINDOWS.fetch(config.harness, DEFAULT_CACHE_WINDOW)
+      config.cache_window ||= saved["cache_window"] || cache_window(config)
       config.max_session_runs ||= saved["max_session_runs"] || DEFAULT_SESSION_RUNS
       config.max_context ||= saved["max_context"] || DEFAULT_CONTEXT
-      config
-    end
-
-    # --no-skill drops a skill. Without --skill, the generated Hermes skill of the role loads.
-    def self.skill(config)
-      config.skill = nil if config.no_skill
-      config.skill ||= HermesSkill.name(config.role) if !config.no_skill && HermesSkill.installed?(config.role)
       config
     end
   end
