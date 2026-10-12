@@ -9,6 +9,9 @@ module Maf
       TASKWARRIOR = "3.5.0"
       TASKWARRIOR_URL = "https://github.com/GothenburgBitFactory/taskwarrior/releases/download/" \
                         "v%<version>s/task-%<version>s.tar.gz"
+      # The VM type and the mount type of Lima for each host OS.
+      HOSTS = { "darwin" => { vm_type: "vz", mount_type: "virtiofs" },
+                "linux" => { vm_type: "qemu", mount_type: "9p" } }.freeze
 
       def initialize(root, options, harnesses)
         @root = root
@@ -26,8 +29,11 @@ module Maf
       def values
         { project: @root, cpus: @options.cpus, memory: @options.memory, disk: @options.disk, gem: @options.gem,
           taskwarrior: TASKWARRIOR, taskwarrior_url: format(TASKWARRIOR_URL, version: TASKWARRIOR),
-          harness_installs: @harnesses.select(&:vm_install).to_h { |harness| [harness.name, harness.vm_install] } }
+          harness_installs: @harnesses.select(&:vm_install).to_h { |harness| [harness.name, harness.vm_install] },
+          **HOSTS.fetch(host) }
       end
+
+      def host = RUBY_PLATFORM.include?("darwin") ? "darwin" : "linux"
     end
   end
 end

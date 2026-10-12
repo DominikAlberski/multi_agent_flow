@@ -51,6 +51,19 @@ class VmTest < Minitest::Test
     end
   end
 
+  def rendered_for(dir, os)
+    vm = template(dir).tap { |t| t.define_singleton_method(:host) { os } }
+    YAML.safe_load(vm.render)
+  end
+
+  def test_the_vm_type_follows_the_host_os
+    in_project do |dir|
+      { "darwin" => %w[vz virtiofs], "linux" => %w[qemu 9p] }.each do |os, types|
+        assert_equal types, rendered_for(dir, os).values_at("vmType", "mountType")
+      end
+    end
+  end
+
   # The VM sees only the project, so a local gem goes into the project.
   def test_a_local_gem_is_copied_into_the_project
     in_project do |dir|

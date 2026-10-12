@@ -26,14 +26,16 @@ module Maf
   # folders, files, and cleaners (Maf::Shared::Harness).
   module Uninstall
     KEPT_DIRS = %w[graphify-out].freeze
+    # The folders of the shared library in .maf/lib/. Children come before parents.
+    LIB_DIRS = [*%w[harness harnesses sandbox].map { |dir| [".maf", "lib", "maf", "shared", dir] },
+                %w[.maf lib maf shared], %w[.maf lib maf], %w[.maf lib]].freeze
 
     # Removed after all steps if empty. Children come before parents.
     def self.empty_dirs
       harnesses = Maf::Shared::Harness.all
       harnesses.flat_map(&:empty_dirs).map { |dir| dir.split("/") } + [%w[.maf bin]] +
         harnesses.map { |harness| [".maf", "agents", harness.name] } +
-        [%w[.maf agents], %w[.maf worktrees], %w[.maf lib maf shared harness], %w[.maf lib maf shared harnesses],
-         %w[.maf lib maf shared], %w[.maf lib maf], %w[.maf lib], %w[.maf]]
+        [%w[.maf agents], %w[.maf worktrees], *LIB_DIRS, %w[.maf]]
     end
 
     # Files outside the project that uninstall keeps: other projects can use them.

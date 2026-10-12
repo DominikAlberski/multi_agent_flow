@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Linux support: sandbox mode `bwrap` (bubblewrap) and mode `auto` (seatbelt on macOS, bwrap on Linux).
+  `maf vm` also runs on a Linux host with QEMU, and copies the claude login from `~/.claude/.credentials.json`.
 - New command `maf vm`: run the whole team in a Lima VM on macOS. `maf vm create` makes a VM that
   sees only the project folder, at the same path as on the host. It installs Ruby, git, tmux,
   Taskwarrior 3, maf, and the CLI of each harness of the project. Then it asks for each harness

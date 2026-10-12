@@ -541,15 +541,23 @@ Put dispatcher flags after `--dispatch`. Example:
 ### Sandbox the agents
 
 The sandbox limits where an agent can write files. The agent can read all files.
-The sandbox uses Seatbelt (`sandbox-exec`), so it works on macOS only.
+
+| Mode | Platform | Tool |
+|---|---|---|
+| `seatbelt` | macOS | `sandbox-exec`, part of macOS |
+| `bwrap` | Linux | bubblewrap: `apt install bubblewrap` |
+| `auto` | both | `seatbelt` on macOS, `bwrap` on Linux |
+| `off` | both | no sandbox (the default) |
+
+Use `auto` if the team works on macOS and on Linux.
 
 Turn the sandbox on for the project in `.maf/config.json`:
 
 ```json
-"sandbox": { "mode": "seatbelt", "write": ["~/.npm"] }
+"sandbox": { "mode": "auto", "write": ["~/.npm"] }
 ```
 
-Or turn it on for one session: `MAF_SANDBOX=seatbelt maf start claude reviewer --dispatch`.
+Or turn it on for one session: `MAF_SANDBOX=auto maf start claude reviewer --dispatch`.
 `MAF_SANDBOX=off` turns it off for one session.
 
 In the sandbox, the agent can write only to these paths:
@@ -563,6 +571,12 @@ In the sandbox, the agent can write only to these paths:
 The sandbox applies to `maf start` and to each dispatched run. A dispatcher prints the
 allowed paths in its first log lines. If a tool fails with `Operation not permitted`,
 add its folder to the `write` list. Examples: `~/.npm`, `~/.gem`, `~/.bundle`.
+
+On Linux, bubblewrap 0.10 and later put a temporary overlay on the home folder.
+A write to another path in the home folder does not fail, but maf discards it after the run.
+Claude Code needs this: it saves `~/.claude.json` through a temporary file in the home folder.
+With an older bubblewrap (Ubuntu 24.04 has 0.9), the home folder is read-only, and
+Claude Code cannot save `~/.claude.json`.
 
 The sandbox does not:
 
@@ -579,7 +593,10 @@ For full isolation, run the whole team in a VM. See [Run the team in a Lima VM](
 The VM sees only the project folder. It does not see your home folder, your keys,
 or your other projects. If an agent breaks the VM, delete the VM and create it again.
 
-Requirements: macOS on Apple silicon, and Lima (`brew install lima`).
+Requirements:
+
+- macOS on Apple silicon, and Lima: `brew install lima`. The VM uses Apple Virtualization and virtiofs.
+- Linux with KVM, Lima, and QEMU. See https://lima-vm.io/docs/installation/. The VM uses QEMU and 9p.
 
 ```sh
 cd ~/Projects/my-app
@@ -600,12 +617,13 @@ Without a terminal, maf copies none. `maf vm login` asks again later.
 
 | Harness | Login on this Mac | Login in the VM |
 |---|---|---|
-| claude | Keychain item `Claude Code-credentials`. macOS can ask you to allow the access. | `~/.claude/.credentials.json` |
+| claude | macOS: Keychain item `Claude Code-credentials`. macOS can ask you to allow the access. Linux: `~/.claude/.credentials.json` | `~/.claude/.credentials.json` |
 | codex | `~/.codex/auth.json` | `~/.codex/auth.json` |
 | opencode | `~/.local/share/opencode/auth.json` | the same path |
 | hermes | `~/.hermes/.env` (the API keys) | `~/.hermes/.env` |
 | cursor | not documented, so maf cannot copy it | `NO_OPEN_BROWSER=1 agent login`, or `CURSOR_API_KEY` |
 
+On a Linux host, the same files are copied. Only the claude login comes from a file instead of the Keychain.
 A copied login is a second copy of your tokens. `maf vm delete` removes it.
 If a harness refreshes the login on one side, the other side can lose its login. Then log in again on that side.
 

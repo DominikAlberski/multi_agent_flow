@@ -8,6 +8,7 @@
 #   maf vm shell [COMMAND ...]
 #
 # The VM mounts only the project folder, at the same path as on the host.
+# The host is macOS (Apple Virtualization) or Linux (QEMU with KVM).
 # Run maf, coord, and each agent in the VM. Read and review the work on the host.
 require "erb"
 require "fileutils"
@@ -22,6 +23,7 @@ module Maf
     USAGE = "usage: maf vm create [--cpus N] [--memory GIB] [--disk GIB] [--gem FILE] [--[no-]copy-logins]" \
             "|login|start|stop|delete|status|shell [COMMAND ...]"
     LIMACTL = "limactl"
+    INSTALL = "brew install lima (macOS), or Lima and QEMU from https://lima-vm.io/docs/installation/ (Linux)"
 
     def initialize(argv, root)
       @action, *@args = argv
@@ -29,7 +31,7 @@ module Maf
     end
 
     def run
-      abort "maf: maf vm needs Lima. Install it: brew install lima" unless Shared::Harness.on_path?(LIMACTL)
+      abort "maf: maf vm needs Lima. Install it: #{INSTALL}" unless Shared::Harness.on_path?(LIMACTL)
 
       action = { "create" => :create, "login" => :login, "shell" => :shell, "status" => :status }[@action]
       action ? send(action) : lifecycle

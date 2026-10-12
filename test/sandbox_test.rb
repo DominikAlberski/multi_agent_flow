@@ -4,31 +4,11 @@
 # test/sandbox_test.rb - tests for lib/maf/shared/sandbox.rb.
 #
 # Run: ruby test/sandbox_test.rb
-require_relative "harnesses/helper"
-require_relative "../lib/maf/shared/sandbox"
+require_relative "sandbox_helper"
 
 class SandboxTest < Minitest::Test
   include HarnessTestHelpers
-
-  Sandbox = Maf::Shared::Sandbox
-  CMD = %w[claude -p go].freeze
-
-  def in_project(config = nil, &block)
-    in_tmpdir do |dir|
-      system("git", "init", "-q", dir)
-      write(".maf/config.json", JSON.generate(config)) if config
-      with_env("MAF_SANDBOX" => nil) { with_seatbelt(true) { block.call(dir) } }
-    end
-  end
-
-  # The tests also run on Linux, where sandbox-exec is missing.
-  def with_seatbelt(available)
-    original = Sandbox::Seatbelt.method(:available?)
-    Sandbox::Seatbelt.define_singleton_method(:available?) { available }
-    yield
-  ensure
-    Sandbox::Seatbelt.define_singleton_method(:available?, original)
-  end
+  include SandboxHelpers
 
   def test_the_sandbox_is_off_by_default
     in_project { assert_equal CMD, Sandbox.wrap(CMD, harness("claude")) }
@@ -96,8 +76,6 @@ class SandboxTest < Minitest::Test
     run = %w[codex exec --dangerously-bypass-approvals-and-sandbox go]
     assert_equal run, harness("codex").sandboxed(run)
   end
-
-  def touch_sandboxed(path) = system(*Sandbox.wrap(["touch", path], harness("claude")), err: File::NULL)
 
   def test_the_sandbox_blocks_a_write_outside_the_project
     skip "sandbox-exec is macOS only" unless RUBY_PLATFORM.include?("darwin")

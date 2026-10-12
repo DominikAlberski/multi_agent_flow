@@ -6,8 +6,9 @@ minimumLimaVersion: 2.0.0
 base:
 - template:_images/ubuntu-lts
 
-vmType: vz
-mountType: virtiofs
+# macOS: vz and virtiofs. Linux: QEMU with KVM, and 9p.
+vmType: <%= vm_type %>
+mountType: <%= mount_type %>
 cpus: <%= cpus %>
 memory: "<%= memory %>GiB"
 disk: "<%= disk %>GiB"

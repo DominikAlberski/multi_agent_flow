@@ -48,7 +48,10 @@ module Maf
         def wait = :watch
         def vm_install = "curl -fsSL https://claude.ai/install.sh | bash"
         # On macOS the login is in the Keychain. On Linux it is in ~/.claude/.credentials.json.
-        def vm_credentials = [Harness::VmCredential.keychain("Claude Code-credentials", ".claude/.credentials.json")]
+        LOGIN = ".claude/.credentials.json"
+        def vm_credentials = [RUBY_PLATFORM.include?("darwin") ? keychain_login : file_login]
+        def keychain_login = Harness::VmCredential.keychain("Claude Code-credentials", LOGIN)
+        def file_login = Harness::VmCredential.file(File.join(sandbox_dirs.first, ".credentials.json"), LOGIN)
 
         # Claude Code keeps its state in ~/.claude.json and its backup files.
         def sandbox_dirs = [ENV.fetch("CLAUDE_CONFIG_DIR", File.join(Dir.home, ".claude"))]
