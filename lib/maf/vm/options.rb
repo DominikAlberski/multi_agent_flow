@@ -2,11 +2,12 @@
 
 module Maf
   class Vm
-    # VmOptions holds the flags of maf vm create.
-    VmOptions = Struct.new(:cpus, :memory, :disk, :gem, keyword_init: true) do
+    # VmOptions holds the flags of maf vm create and maf vm login.
+    # login: :ask on a terminal, else :none. --copy-logins gives :all.
+    VmOptions = Struct.new(:cpus, :memory, :disk, :gem, :login, keyword_init: true) do
       # The VM sees only the project, so maf copies a local gem file into .maf/vm/.
       def self.parse(argv, root)
-        options = new(cpus: 4, memory: 8, disk: 50, gem: "maf")
+        options = new(cpus: 4, memory: 8, disk: 50, gem: "maf", login: $stdin.tty? ? :ask : :none)
         parser(options).parse!(argv.dup)
         options.gem = copy_gem(options.gem, root) if options.gem.end_with?(".gem")
         options
@@ -16,6 +17,7 @@ module Maf
         OptionParser.new(USAGE) do |o|
           %i[cpus memory disk].each { |key| o.on("--#{key} N", Integer) { |value| options[key] = value } }
           o.on("--gem FILE") { |file| options.gem = file }
+          o.on("--[no-]copy-logins") { |copy| options.login = copy ? :all : :none }
         end
       end
 

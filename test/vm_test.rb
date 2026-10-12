@@ -17,7 +17,8 @@ class VmTest < Minitest::Test
     end
   end
 
-  def template(dir, *args) = Maf::Vm::Template.new(dir, Maf::Vm::VmOptions.parse(args, dir))
+  def harnesses = Maf.agents.map { |agent| Maf::Shared::Harness.fetch(agent["harness"]) }.uniq
+  def template(dir, *args) = Maf::Vm::Template.new(dir, Maf::Vm::VmOptions.parse(args, dir), harnesses)
   def yaml(dir, *args) = YAML.safe_load(template(dir, *args).render)
 
   def test_the_name_comes_from_the_project_folder

@@ -2,7 +2,8 @@
 
 # vm.rb - run the whole team in a Lima VM (https://lima-vm.io).
 #
-#   maf vm create [--cpus N] [--memory GIB] [--disk GIB] [--gem FILE]
+#   maf vm create [--cpus N] [--memory GIB] [--disk GIB] [--gem FILE] [--[no-]copy-logins]
+#   maf vm login [--copy-logins]
 #   maf vm start | stop | delete | status
 #   maf vm shell [COMMAND ...]
 #
@@ -18,8 +19,8 @@ require_relative "shared/harness"
 module Maf
   # Vm runs limactl for the VM of the project.
   class Vm
-    USAGE = "usage: maf vm create [--cpus N] [--memory GIB] [--disk GIB] [--gem FILE]" \
-            "|start|stop|delete|status|shell [COMMAND ...]"
+    USAGE = "usage: maf vm create [--cpus N] [--memory GIB] [--disk GIB] [--gem FILE] [--[no-]copy-logins]" \
+            "|login|start|stop|delete|status|shell [COMMAND ...]"
     LIMACTL = "limactl"
 
     def initialize(argv, root)
@@ -30,7 +31,7 @@ module Maf
     def run
       abort "maf: maf vm needs Lima. Install it: brew install lima" unless Shared::Harness.on_path?(LIMACTL)
 
-      action = { "create" => :create, "shell" => :shell, "status" => :status }[@action]
+      action = { "create" => :create, "login" => :login, "shell" => :shell, "status" => :status }[@action]
       action ? send(action) : lifecycle
     end
 
@@ -45,10 +46,16 @@ module Maf
     end
 
     def create
-      template = Template.new(@root, VmOptions.parse(@args, @root))
+      options = VmOptions.parse(@args, @root)
+      template = Template.new(@root, options, harnesses)
       Tempfile.create(["maf-vm", ".yaml"]) { |file| create_from(file.path, template.render) }
       template.notes.each { |note| puts note }
+      Login.new(name, harnesses, options.login).run
     end
+
+    # Copy the logins again, for example after a harness was added.
+    def login = Login.new(name, harnesses, VmOptions.parse(@args, @root).login).run
+    def harnesses = Maf.agents.map { |agent| agent["harness"] }.uniq.filter_map { |id| Shared::Harness[id] }
 
     def create_from(path, yaml)
       File.write(path, yaml)
@@ -63,3 +70,4 @@ end
 
 require_relative "vm/options"
 require_relative "vm/template"
+require_relative "vm/login"

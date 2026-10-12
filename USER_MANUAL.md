@@ -593,12 +593,28 @@ It also installs the CLI of each harness in `.maf/config.json`. maf cannot insta
 Flags: `--cpus N` (default 4), `--memory GIB` (default 8), `--disk GIB` (default 50).
 `--gem FILE` installs maf from a local gem file instead of RubyGems.
 
+At the end, `maf vm create` asks for each harness: `Copy your <harness> login from this Mac into the VM? [y/N]`.
+If you answer `y`, maf copies the login into the VM. Only the VM user can read the file.
+`--copy-logins` copies each login without a question. `--no-copy-logins` copies none.
+Without a terminal, maf copies none. `maf vm login` asks again later.
+
+| Harness | Login on this Mac | Login in the VM |
+|---|---|---|
+| claude | Keychain item `Claude Code-credentials`. macOS can ask you to allow the access. | `~/.claude/.credentials.json` |
+| codex | `~/.codex/auth.json` | `~/.codex/auth.json` |
+| opencode | `~/.local/share/opencode/auth.json` | the same path |
+| hermes | `~/.hermes/.env` (the API keys) | `~/.hermes/.env` |
+| cursor | not documented, so maf cannot copy it | `NO_OPEN_BROWSER=1 agent login`, or `CURSOR_API_KEY` |
+
+A copied login is a second copy of your tokens. `maf vm delete` removes it.
+If a harness refreshes the login on one side, the other side can lose its login. Then log in again on that side.
+
 The VM mounts the project at the same path as on the host. The worktrees and the
 taskrc hold absolute paths, so git and the board work on both sides.
 
 After create:
 
-1. Run `maf vm shell`. Start each harness once and log in. The VM keeps the login.
+1. If you did not copy a login, run `maf vm shell`, start the harness once, and log in. The VM keeps the login.
 2. Start the agents in the VM. Use tmux for one terminal per agent:
    `tmux new -s team`, then `maf start claude architect` in each tmux window.
 3. Read and review the work on the host. Git sees the same worktrees and branches.
@@ -1503,6 +1519,7 @@ This section holds the board details for the operator.
 | `maf start HARNESS ROLE[_WORKER]` | Worktree + env + role + launch the harness, in one command. |
 | `maf start HARNESS ROLE --dispatch [FLAGS]` | Same setup, then run `dispatcher`. |
 | `maf vm create\|start\|stop\|delete\|status` | Manage the Lima VM of the project. See "Run the team in a Lima VM". |
+| `maf vm login [--copy-logins]` | Ask for each harness, then copy its login from this Mac into the VM. |
 | `maf vm shell [COMMAND]` | Open a shell in the VM, in the project folder, or run one command there. |
 
 ---

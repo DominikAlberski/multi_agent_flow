@@ -57,6 +57,8 @@ module Maf
         DATA_DIRS = %w[.local/share/opencode .local/state/opencode .config/opencode].freeze
         def sandbox_dirs = DATA_DIRS.map { |dir| File.join(Dir.home, dir) }
         def vm_install = "curl -fsSL https://opencode.ai/install | bash"
+        AUTH = ".local/share/opencode/auth.json"
+        def vm_credentials = [Harness::VmCredential.file(File.join(Dir.home, AUTH), AUTH)]
 
         def mcp
           { file: ".maf/mcp/opencode.json", key: "mcp", schema: "https://opencode.ai/config.json",

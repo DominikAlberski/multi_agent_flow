@@ -25,6 +25,8 @@ module Maf
         KILL_GRACE = 5
 
         def sandbox_dirs = [File.join(Dir.home, ".hermes")]
+        # Hermes keeps the API keys of its providers in ~/.hermes/.env.
+        def vm_credentials = [Harness::VmCredential.file(File.join(Dir.home, ".hermes", ".env"), ".hermes/.env")]
 
         def role_destination(project, role, settings = {})
           File.join(settings["hermes_dir"] || DEFAULT_DIR, "#{File.basename(project)}-#{role}", "SKILL.md")

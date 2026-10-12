@@ -4,6 +4,7 @@
 # The installer copies this folder to .maf/lib/maf/shared/. maf update replaces it.
 # Use the Ruby stdlib only: a script loads this file without a gem bundle.
 require_relative "../project"
+require_relative "vm_credential"
 
 module Maf
   module Shared
@@ -73,6 +74,10 @@ module Maf
         # The shell command that installs the CLI in a Linux VM (maf vm create).
         # nil: the user installs the CLI in the VM.
         def vm_install = nil
+        # The login files that maf vm can copy into the VM (VmCredential). []: the user logs in in the VM.
+        def vm_credentials = []
+        # How to log in in the VM when maf cannot copy the login.
+        def vm_login_hint = "maf vm shell, then start #{command} and log in"
 
         # The top folder of the harness. maf retire ignores changes in it.
         def home_dir = role_dir&.split("/")&.first

@@ -21,6 +21,8 @@ module Maf
         def role_dir = ".cursor/agents"
         def sandbox_dirs = [File.join(Dir.home, ".cursor"), File.join(Dir.home, ".config", "cursor")]
         def vm_install = "curl -fsSL https://cursor.com/install | bash"
+        # Cursor does not document where it keeps the login, so maf cannot copy it.
+        def vm_login_hint = "maf vm shell, then NO_OPEN_BROWSER=1 agent login (or export CURSOR_API_KEY)"
 
         def role_template = <<~ERB
           ---
