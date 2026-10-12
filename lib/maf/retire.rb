@@ -7,7 +7,7 @@ require_relative "shared/processes"
 
 module Maf
   class Retire
-    RUNTIME_PREFIXES = %w[.maf/ .claude/ .opencode/ .codex/].freeze
+    RUNTIME_PREFIXES = %w[.maf/ .claude/ .opencode/ .codex/ .cursor/].freeze
 
     def initialize(root, spec)
       @root = root

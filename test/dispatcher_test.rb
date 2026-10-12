@@ -1162,6 +1162,30 @@ class AdapterTest < Minitest::Test
     assert harness("codex").stale_session?("thread/resume failed: no rollout found for thread id 0000")
   end
 
+  # The Cursor CLI has no agent flag: a fresh session gets the role file body.
+  def test_cursor_command
+    Dir.mktmpdir do |dir|
+      Dir.chdir(dir) do
+        FileUtils.mkdir_p(".maf/agents/cursor")
+        File.write(".maf/agents/cursor/backend-developer.md", "---\nname: backend-developer\n---\n\nROLE")
+        fresh = harness("cursor").build_command(config, "go", nil)
+        resumed = harness("cursor").build_command(config, "go", "c-1")
+        assert_equal %w[agent -p --output-format json --force], fresh.first(5)
+        assert_equal "ROLE\n\ngo", fresh.last
+        assert_equal ["--resume", "c-1", "go"], resumed.last(3)
+      end
+    end
+  end
+
+  def test_cursor_output
+    output = %({"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"c-1"}\n)
+    assert_equal "c-1", harness("cursor").session_id(output)
+    assert_equal "done", harness("cursor").result_text(output)
+    assert_nil harness("cursor").usage(output)
+    refute harness("cursor").stale_session?(output.sub("done", "file not found"))
+    assert harness("cursor").stale_session?("Error: chat c-1 not found")
+  end
+
   def test_claude_usage_comes_from_the_result_event
     output = %({"result":"ok","session_id":"s","usage":{"input_tokens":12,"output_tokens":3,"cache_read_input_tokens":9,"cache_creation_input_tokens":4}}\n)
     expected = { "input_tokens" => 25, "cached_input_tokens" => 9, "cache_write_input_tokens" => 4, "output_tokens" => 3 }

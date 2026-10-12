@@ -14,6 +14,7 @@ module Maf
         REGISTRY["claude"] = Claude
         REGISTRY["opencode"] = Opencode
         REGISTRY["codex"] = Codex
+        REGISTRY["cursor"] = Cursor
         REGISTRY["hermes"] = Hermes
       end
 
@@ -49,6 +50,16 @@ module Maf
           ENV["OPENCODE_CONFIG"] = config if File.exist?(config)
           cmd = ["opencode", ".", "--agent", role, "--prompt", "Start your work loop now."]
           Launcher.exec_or_die(cmd + (model ? ["--model", model] : []))
+        end
+      end
+
+      # The Cursor CLI (`agent`) has no flag that picks a subagent, so the
+      # prompt names the role file. Cursor reads MCP servers only from
+      # .cursor/mcp.json, so the flow passes no MCP config.
+      module Cursor
+        def self.launch(role, _worker, model)
+          prompt = "Read .maf/agents/cursor/#{role}.md and follow it exactly. Start your work loop now."
+          Launcher.exec_or_die(["agent"] + (model ? ["--model", model] : []) + [prompt])
         end
       end
 

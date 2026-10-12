@@ -11,7 +11,7 @@ module Maf
   # locally, and runs maf update. The user reviews the change and commits it.
   class Untrack
     USAGE = "Usage: maf untrack [--check] [--yes]"
-    PATHS = [".maf", ".opencode/agents", ".codex/prompts", Bootstrap::OPENCODE_PLUGIN].freeze
+    PATHS = [".maf", ".opencode/agents", ".codex/prompts", ".cursor/agents", Bootstrap::OPENCODE_PLUGIN].freeze
 
     def initialize(root, argv)
       @root = root

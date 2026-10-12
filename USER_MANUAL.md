@@ -206,8 +206,8 @@ Expected output:
   - `~/.hermes/skills/my-app-tester/SKILL.md`
 - New files in the project: the folder `.maf/` (with `bin/`, `coordination/`,
   `agents/`, `claude/`, `mcp/`, `config.json`, and `env.sh`).
-  The folders `.claude/agents/`, `.opencode/agents/`, and `.codex/prompts/`
-  are symlinks into `.maf/agents/`.
+  The folders `.claude/agents/`, `.opencode/agents/`, `.codex/prompts/`, and
+  `.cursor/agents/` are symlinks into `.maf/agents/`.
 - maf does not change `AGENTS.md`, `CLAUDE.md`, `.gitignore`, `.mcp.json`,
   `opencode.json`, or `.claude/settings.json`. These files belong to the project.
 
@@ -505,7 +505,9 @@ Put dispatcher flags after `--dispatch`. Example:
 > opencode uses the permissions of its role file. The agent runs these tool calls
 > without approval. Always run a dispatcher in its own worktree.
 
-The built-in harnesses are `hermes` (default), `claude`, `codex`, and `opencode`.
+The built-in harnesses are `hermes` (default), `claude`, `codex`, `cursor`, and `opencode`.
+The `cursor` harness runs the Cursor CLI (`agent -p --force --trust --approve-mcps`).
+Cursor reports no token usage.
 For any other harness, use `--command` with a template:
 
 ```sh
@@ -1009,7 +1011,7 @@ root as the Obsidian vault.
 `.maf/coordination/message-hooks/<role>.sh` when a message is delivered. The hook is a plain
 shell script. If there is no hook, `coord` only writes the inbox file.
 An agent does not need a hook to get a message. The board watcher (Claude Code
-and opencode), `coord await` (Codex), and `coord next --wait` (Hermes) wake the agent on an unread message.
+and opencode), `coord await` (Codex), and `coord next --wait` (Hermes and Cursor) wake the agent on an unread message.
 `coord msg --fyi` writes a message that wakes no one: no hook runs, no dispatcher run starts, and no
 watcher pokes. The next run of the role reads the message together with the next waking message.
 
@@ -1108,7 +1110,7 @@ maf update                            # regenerate the current agents
 Without arguments on a terminal, `maf add` asks. It offers only the harnesses
 on `PATH`, and the models that each harness lists: Claude Code aliases and IDs,
 the Codex model cache (`~/.codex/models_cache.json`), and `opencode models`. Hermes
-lists no models, so you type a name. A name that the harness does not list needs
+and Cursor list no models, so you type a name. A name that the harness does not list needs
 a confirmation. `maf add` and `maf update` also warn about such a name in the
 roster, because a typo makes every dispatched run fail.
 
@@ -1145,7 +1147,7 @@ The uninstaller removes:
 - `.maf/coordination/`, with the task board, messages, locks, and message hooks.
 - Clean worktrees in `.maf/worktrees/`.
 - Generated role files in `.maf/agents/`, the symlinks `.claude/agents`,
-  `.opencode/agents`, and `.codex/prompts`, and the project's Hermes skills.
+  `.opencode/agents`, `.codex/prompts`, and `.cursor/agents`, and the project's Hermes skills.
 - `.maf/claude/` and `.maf/mcp/` (the hooks and the MCP config of the flow).
 - The flow hooks in `.codex/hooks.json`.
 - The flow blocks in the `post-commit` and `post-merge` git hooks.
@@ -1246,7 +1248,7 @@ them in one folder, `.maf/`, except the graph, which stays in `graphify-out/`. T
 | `obsidian/` | `graphify-out/obsidian/` |
 | `.agent-flow.json` | `.maf/config.json` |
 | `coord-env.sh` | `.maf/env.sh` |
-| `.claude/agents/`, `.opencode/agents/`, `.codex/prompts/` | symlinks to `.maf/agents/<harness>/` |
+| `.claude/agents/`, `.opencode/agents/`, `.codex/prompts/`, `.cursor/agents/` | symlinks to `.maf/agents/<harness>/` |
 
 `maf update`, `maf add`, and the other commands stop on an old layout. They
 print this hint: `This project uses the old layout. Run: maf migrate`.
@@ -1417,3 +1419,5 @@ This section holds the board details for the operator.
   is not tested.
 - Codex and opencode: session ID output and "session not found" errors verified.
   A successful run is not tested.
+- Cursor: built from the CLI docs (`agent -p --output-format json`). Not tested
+  with a real run.

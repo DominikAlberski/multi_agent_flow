@@ -36,7 +36,7 @@ All shared state lives in a `.maf/coordination/` folder inside your project.
 
 [docs/flow-glossary.md](docs/flow-glossary.md) defines every term. In short:
 
-- A **harness** (Claude Code, opencode, Codex, Hermes) runs a **role** (architect,
+- A **harness** (Claude Code, opencode, Codex, Cursor, Hermes) runs a **role** (architect,
   tester) as a **worker** (`tester-1`). That running session is an **agent**.
 - A **task** belongs to a role. A worker **claims** a task. A **lock** is held by a worker.
 - A **message** goes to a role's inbox.
@@ -119,7 +119,7 @@ Use `maf roles` to see all roles. Each argument is `HARNESS:ROLE`.
    is local to your clone, so nothing of the flow goes into git.
 5. Writes a role file per agent into `.maf/agents/<harness>/`. Each role file ends
    with the coordination contract. The folders of the harnesses
-   (`.claude/agents/`, `.opencode/agents/`, `.codex/prompts/`) are symlinks to
+   (`.claude/agents/`, `.opencode/agents/`, `.codex/prompts/`, `.cursor/agents/`) are symlinks to
    them. Writes the `.maf/config.json` manifest.
 
 maf does not change `AGENTS.md`, `CLAUDE.md`, `.gitignore`, `.mcp.json`,

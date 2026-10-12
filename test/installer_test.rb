@@ -576,6 +576,18 @@ class FlowTest < InstallerTestCase
     refute_includes content, "coord next --wait"
   end
 
+  # Cursor has no hook that wakes an idle session, so the worker waits in coord.
+  def test_cursor_role_file_is_a_cursor_subagent
+    out, status = flow("--agent", "cursor:reviewer")
+
+    assert_equal 0, status, out
+    content = File.read(File.join(@dir, ".cursor", "agents", "reviewer.md"))
+    assert_includes content, "name: reviewer"
+    assert_includes content, "readonly: true"
+    assert_includes content, "coord next --wait"
+    assert_equal File.join("..", ".maf", "agents", "cursor"), File.readlink(File.join(@dir, ".cursor", "agents"))
+  end
+
   # Codex returns a long tool call to the model about every 30 seconds. The
   # worker arms the stop hook with `coord await`, and the hook waits instead.
   def test_codex_worker_waits_in_the_stop_hook
@@ -809,6 +821,15 @@ class SetupAgentTest < Minitest::Test
       end
       assert_equal ["--add-dir", File.join(File.realpath(dir), ".maf", "coordination")], calls.first[1, 2]
     end
+  end
+
+  def test_cursor_launch_names_the_role_file
+    calls = []
+    with_exec_stub(->(cmd) { calls << cmd }) do
+      Maf::SetupAgent::Launcher::Cursor.launch("tester", "tester-1", "gpt-5")
+    end
+    assert_equal %w[agent --model gpt-5], calls.first.first(3)
+    assert_includes calls.first.last, ".maf/agents/cursor/tester.md"
   end
 
   # Untrusted Codex hooks record no usage and never wake the session.

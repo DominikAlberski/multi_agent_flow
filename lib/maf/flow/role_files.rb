@@ -32,7 +32,7 @@ module Maf
       def destination(harness, role)
         return hermes_path(role) if harness == "hermes"
 
-        File.join(@options.project, Flow.role_path(harness, role)) if %w[opencode claude codex].include?(harness)
+        File.join(@options.project, Flow.role_path(harness, role)) if %w[opencode claude codex cursor].include?(harness)
       end
 
       def hermes_path(role)

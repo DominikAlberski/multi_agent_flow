@@ -1,6 +1,6 @@
 ---
 name: multi-agent-flow
-description: Use when setting up or running multiple coding agents (opencode, Claude Code, Hermes, Codex) on one project and they need shared task state, messaging, resource locks, and a shared knowledge base. Installs a Taskwarrior-backed `coord` CLI, a .maf/coordination/ directory, a coordination contract in each role file, and a graphify/Obsidian knowledge base. Nothing of it goes into the project's git.
+description: Use when setting up or running multiple coding agents (opencode, Claude Code, Hermes, Codex, Cursor) on one project and they need shared task state, messaging, resource locks, and a shared knowledge base. Installs a Taskwarrior-backed `coord` CLI, a .maf/coordination/ directory, a coordination contract in each role file, and a graphify/Obsidian knowledge base. Nothing of it goes into the project's git.
 ---
 
 # Multi-agent flow
@@ -224,6 +224,7 @@ watcher, with its pid in `.maf/coordination/vault.pid` and its output in
   the commits since the build. `coord status` and the dashboard show it too.
 - `maf add` writes the MCP server into `.maf/mcp/` (Claude Code and opencode); `maf start`
   passes the file. For Codex and Hermes, it prints the command that adds the server.
+  Cursor reads MCP servers only from `.cursor/mcp.json`. maf does not write it.
   Set `"mcp": false` in `.maf/config.json` to turn this off.
 - The graph holds code knowledge. Plans and specs use artifacts, not the graph.
 - Work memory: `coord done` saves a `graphify save-result` note in `graphify-out/memory/`,
