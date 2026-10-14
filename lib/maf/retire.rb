@@ -7,6 +7,10 @@ require_relative "shared/processes"
 
 module Maf
   class Retire
+    NOT_OURS = "maf: pid %<pid>s is not the dispatcher of %<worker>s: another process has the pid now. " \
+               "maf does not stop it."
+    DISPATCHER_COMMAND = %r{(\A|[\s/])\.maf/bin/dispatcher(\s|\z)}
+
     # Changes in these folders belong to the flow, not to the work of the worker.
     def self.runtime_prefixes = [".maf/"] + Maf::Shared::Harness.all.filter_map(&:home_dir).map { |dir| "#{dir}/" }
 
@@ -39,11 +43,41 @@ module Maf
     def stop_dispatcher
       pid = Workers.at(@root).find(@worker)&.fetch("pid", nil)
       return unless pid && Shared::Processes.alive?(pid)
+      return warn(format(NOT_OURS, pid: pid, worker: @worker)) unless dispatcher?(pid)
 
       puts "Stopping the dispatcher of #{@worker} (pid #{pid}). A running agent finishes first."
       RunningProcesses.terminate(pid)
       abort "maf: pid #{pid} did not stop. Stop it with: kill #{pid}" unless RunningProcesses.wait_for_exit(pid)
     end
+
+    def dispatcher?(pid)
+      workers = Workers.at(@root)
+      return workers.dispatcher?(@worker) unless workers.started(@worker).to_s.empty?
+      return true if legacy_dispatcher?(pid)
+
+      abort "maf: maf cannot check pid #{pid}. Stop it with: kill #{pid}, then run this again." if beating?(pid)
+      false
+    end
+
+    def legacy_dispatcher?(pid)
+      command = IO.popen(["ps", "-o", "command=", "-p", pid.to_s], err: File::NULL, &:read).to_s.strip
+      command.match?(DISPATCHER_COMMAND) && RunningProcesses.in(@dir).include?(pid.to_i)
+    rescue SystemCallError
+      false
+    end
+
+    def beating?(pid)
+      presence = read_presence
+      presence["pid"].to_i == pid.to_i && Shared::Processes.recent?(presence["seen_at"])
+    end
+
+    def read_presence
+      JSON.parse(File.read(presence_path))
+    rescue SystemCallError, JSON::ParserError
+      {}
+    end
+
+    def presence_path = File.join(@root, ".maf", "coordination", "presence", "#{@worker}.json")
 
     def release_tasks
       env = { "COORD_ROLE" => role, "COORD_WORKER" => @worker }
@@ -57,10 +91,7 @@ module Maf
       Team.coord(@root, "annotate", id, "Worker #{@worker} was retired. Continue on the existing task branch.")
     end
 
-    def remove_presence
-      coord_dir = File.join(@root, ".maf", "coordination")
-      FileUtils.rm_f(File.join(coord_dir, "presence", "#{@worker}.json"))
-    end
+    def remove_presence = FileUtils.rm_f(presence_path)
 
     def remove_worker
       remove_worktree

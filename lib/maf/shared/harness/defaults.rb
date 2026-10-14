@@ -71,12 +71,8 @@ module Maf
         # Files outside the project that uninstall keeps: other projects can use them.
         def global_files = []
 
-        # The shell command that installs the CLI in a Linux VM (maf vm create).
-        # nil: the user installs the CLI in the VM.
         def vm_install = nil
-        # The login files that maf vm can copy into the VM (VmCredential). []: the user logs in in the VM.
         def vm_credentials = []
-        # How to log in in the VM when maf cannot copy the login.
         def vm_login_hint = "maf vm shell, then start #{command} and log in"
 
         # The top folder of the harness. maf retire ignores changes in it.
@@ -103,11 +99,13 @@ module Maf
         def launch(_role, _model) = raise(NotImplementedError, "#{name}: launch")
         def launch_env = {}
 
-        # The sandbox (Maf::Shared::Sandbox) lets the harness write to these
-        # folders, and to the files that start with a prefix. Both are outside the project.
         def sandbox_dirs = []
+        def sandbox_state = []
         def sandbox_prefixes = []
-        # A harness with its own OS sandbox turns it off: a sandbox cannot start inside a sandbox.
+        def sandbox_protected = []
+        def sandbox_project = []
+        def in_dir(dir, names) = names.map { |name| File.join(dir, name) }
+        def sandbox_placeholders = sandbox_protected.reject { |path| path.end_with?(".md", ".yaml") }
         def sandboxed(cmd) = cmd
 
         # The command of one dispatched run. session_id is nil for a fresh session.

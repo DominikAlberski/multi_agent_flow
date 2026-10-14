@@ -20,8 +20,15 @@ module Maf
         def command = "agent"
         def role_dir = ".cursor/agents"
         def sandbox_dirs = [File.join(Dir.home, ".cursor"), File.join(Dir.home, ".config", "cursor")]
+        PROTECTED = %w[cli-config.json hooks.json mcp.json hooks agents skills plugins rules].freeze
+        def sandbox_protected = in_dir(File.join(Dir.home, ".cursor"), PROTECTED)
+        def sandbox_placeholders = super - [File.join(Dir.home, ".cursor", "cli-config.json")]
+        STATE = %w[.cursor/agent-cli-state.json* .cursor/statsig-cache.json* .cursor/chats .cursor/projects
+                   .cursor/ai-tracking .config/cursor/auth.json* .config/cursor/*.lock].freeze
+        def sandbox_state = in_dir(Dir.home, STATE)
+        PROJECT = %w[.cursor/mcp.json .cursor/hooks.json .cursor/hooks .cursor/cli.json .cursor/agents].freeze
+        def sandbox_project = PROJECT
         def vm_install = "curl -fsSL https://cursor.com/install | bash"
-        # Cursor does not document where it keeps the login, so maf cannot copy it.
         def vm_login_hint = "maf vm shell, then NO_OPEN_BROWSER=1 agent login (or export CURSOR_API_KEY)"
 
         def role_template = <<~ERB

@@ -40,9 +40,10 @@ module Maf
         manifest = Manifest.new(project)
         [VaultWatcher.new(project), Worktrees.new(project, @opts[:force]), Scripts.new(project),
          CommitGuard.new(project), DocGraphHooks.new(project), RoleFiles.new(project, manifest),
-         *Uninstall.harness_cleaners(project), McpEntries.new(project),
-         MarkedFiles.new(project), LocalFiles.new(project), Coordination.new(project), manifest].flat_map(&:steps)
+         *Uninstall.harness_cleaners(project), *file_cleaners, manifest].flat_map(&:steps)
       end
+
+      def file_cleaners = [McpEntries, MarkedFiles, LocalFiles, Coordination, VmFiles].map { |step| step.new(project) }
 
       def apply(steps)
         abort "uninstall: cancelled" unless @opts[:yes] || confirmed?

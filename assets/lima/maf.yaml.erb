@@ -1,12 +1,8 @@
-# Lima template of `maf vm create`. maf renders this file for one project.
-# The VM sees only the project folder, at the same path as on the host,
-# so the worktrees and the taskrc keep their absolute paths.
-minimumLimaVersion: 2.0.0
+minimumLimaVersion: 2.2.0
 
 base:
-- template:_images/ubuntu-lts
+- template:_images/ubuntu-26.04
 
-# macOS: vz and virtiofs. Linux: QEMU with KVM, and 9p.
 vmType: <%= vm_type %>
 mountType: <%= mount_type %>
 cpus: <%= cpus %>
@@ -14,7 +10,8 @@ memory: "<%= memory %>GiB"
 disk: "<%= disk %>GiB"
 
 mounts:
-- location: "<%= project %>"
+# JSON quoting is valid YAML, so a quote in the path stays in the path.
+- location: <%= project.to_json %>
   writable: true
 
 containerd:
@@ -22,8 +19,6 @@ containerd:
   user: false
 
 provision:
-# maf needs Ruby, git, and Taskwarrior 3. The host Taskwarrior must have the
-# same major version: Taskwarrior 2 and 3 store the board in different files.
 - mode: system
   script: |
     #!/bin/bash
@@ -31,19 +26,22 @@ provision:
     export DEBIAN_FRONTEND=noninteractive
     command -v maf >/dev/null 2>&1 && exit 0
     apt-get update
-    apt-get install -y ruby-full git tmux curl nodejs npm build-essential cmake cargo rustc uuid-dev libsqlite3-dev
+    apt-get install -y ruby-full git tmux curl bubblewrap nodejs npm build-essential cmake cargo rustc uuid-dev libsqlite3-dev
     cd /tmp
     curl -fsSL -o task.tar.gz <%= taskwarrior_url %>
+    echo "<%= taskwarrior_sha256 %>  task.tar.gz" | sha256sum -c -
     tar xzf task.tar.gz && cd task-<%= taskwarrior %>
     cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$(nproc)" && cmake --install build
-    gem install <%= gem %>
-<% harness_installs.each do |name, command| -%>
-# The <%= name %> harness.
+    cd / && rm -rf /tmp/task.tar.gz /tmp/task-<%= taskwarrior %> /root/.cargo/registry && apt-get clean
+    gem install <%= gem_args %>
+<% harness_installs.each do |name, (cli, install)| -%>
 - mode: user
   script: |
     #!/bin/bash
     set -eux -o pipefail
-    <%= command %>
+    export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"
+    command -v <%= cli %> >/dev/null 2>&1 && exit 0
+    <%= install %>
 <% end -%>
 - mode: user
   script: |

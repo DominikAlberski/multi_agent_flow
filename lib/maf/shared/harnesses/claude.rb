@@ -47,15 +47,24 @@ module Maf
 
         def wait = :watch
         def vm_install = "curl -fsSL https://claude.ai/install.sh | bash"
-        # On macOS the login is in the Keychain. On Linux it is in ~/.claude/.credentials.json.
         LOGIN = ".claude/.credentials.json"
         def vm_credentials = [RUBY_PLATFORM.include?("darwin") ? keychain_login : file_login]
         def keychain_login = Harness::VmCredential.keychain("Claude Code-credentials", LOGIN)
         def file_login = Harness::VmCredential.file(File.join(sandbox_dirs.first, ".credentials.json"), LOGIN)
 
-        # Claude Code keeps its state in ~/.claude.json and its backup files.
         def sandbox_dirs = [ENV.fetch("CLAUDE_CONFIG_DIR", File.join(Dir.home, ".claude"))]
         def sandbox_prefixes = [File.join(Dir.home, ".claude.json")]
+        PROTECTED = %w[settings.json settings.local.json CLAUDE.md hooks skills agents commands plugins
+                       output-styles rules].freeze
+        def sandbox_protected = in_dir(sandbox_dirs.first, PROTECTED)
+        STATE = %w[projects sessions session-env shell-snapshots file-history todos tasks plans paste-cache statsig
+                   telemetry ide debug logs cache backups jobs downloads feedback state daemon daemon.log* daemon-auth-*
+                   history.jsonl* stats-cache.json* *-cache.json* .last-* .credentials* .claude.json*].freeze
+        LOGS = ["Library/Caches/claude-cli-nodejs", ".cache/claude-cli-nodejs"].freeze
+        def sandbox_state = in_dir(sandbox_dirs.first, STATE) + in_dir(Dir.home, LOGS)
+        PROJECT = %w[.mcp.json .claude/settings.json .claude/settings.local.json .claude/hooks .claude/commands
+                     .claude/skills .claude/agents .claude/output-styles .claude/rules].freeze
+        def sandbox_project = PROJECT
 
         # Only Claude Code has ScheduleWakeup.
         def architect_rule

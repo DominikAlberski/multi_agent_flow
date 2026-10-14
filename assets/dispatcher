@@ -503,10 +503,7 @@ module Dispatcher
   # CoordCall runs coord with this Ruby, so an old system Ruby on the
   # shebang path never parses it.
   module CoordCall
-    def self.command
-      local = File.expand_path(COORD_BIN)
-      [RbConfig.ruby, File.executable?(local) ? local : File.join(Project.root, COORD_BIN)]
-    end
+    def self.command = [RbConfig.ruby, File.join(Project.root, COORD_BIN)]
 
     # Returns true when the command succeeds.
     def self.run(env, *args)
@@ -647,10 +644,25 @@ module Dispatcher
 
     def self.run(cmd, env:, timeout:, limits: Limits.new(0, GRACE))
       reader, writer = IO.pipe
-      pid = Process.spawn(env, *cmd, in: File::NULL, out: writer, err: writer, pgroup: true)
+      pid = start(env, cmd, writer)
       collect(pid, Stream.new(reader.tap { writer.close }), Watch.new(timeout, limits))
-    rescue Errno::ENOENT => e
-      Result.new(e.message, false, false, :missing)
+    end
+
+    def self.start(env, cmd, writer)
+      ready, done = IO.pipe
+      pid = fork { session_exec(env, cmd, writer, done) }
+      done.close
+      ready.read && ready.close
+      pid
+    end
+
+    def self.session_exec(env, cmd, writer, done)
+      Process.setsid
+      done.close
+      exec(env, *cmd, in: File::NULL, out: writer, err: writer)
+    rescue StandardError => e
+      writer.write(e.message)
+      exit!(127)
     end
 
     def self.collect(pid, stream, watch)
@@ -750,6 +762,8 @@ module Dispatcher
   module Harness
     # Generic: a user-provided shell template. No session resume, no parsing.
     module Generic
+      extend Maf::Shared::Harness::Run
+
       PLACEHOLDERS = %i[prompt role skill model].freeze
 
       def self.build_command(config, prompt, _session_id)
@@ -757,20 +771,6 @@ module Dispatcher
         line = PLACEHOLDERS.reduce(config.command) { |cmd, key| cmd.gsub("%{#{key}}") { values[key].to_s.shellescape } }
         ["sh", "-c", line]
       end
-
-      def self.prepare(config) = config
-      def self.run_env(_config) = {}
-      def self.sandbox_dirs = []
-      def self.sandbox_prefixes = []
-      def self.sandboxed(cmd) = cmd
-      def self.cache_window = nil
-      def self.peak_rate?(_config) = false
-      def self.stale_session?(_output) = false
-      def self.session_id(_output) = nil
-      def self.result_text(_output) = nil
-      def self.usage(_output) = nil
-      def self.context(_output) = nil
-      def self.model(_output) = nil
     end
 
     def self.for(config)
@@ -838,7 +838,13 @@ module Dispatcher
       command = Project.manifest["verify"].to_s
       return true if command.empty? || LEADS.include?(config.role)
 
-      check(Spawn.run(["sh", "-c", command], env: env, timeout: config.timeout), command)
+      sandbox = Maf::Shared::Sandbox
+      run = -> { Spawn.run(sandboxed(command, config), env: env, timeout: config.timeout) }
+      check(sandbox.keeping_links(Harness::Generic, coord_dir: config.coord_dir, &run), command)
+    end
+
+    def self.sandboxed(command, config)
+      Maf::Shared::Sandbox.wrap(["sh", "-c", command], Harness::Generic, coord_dir: config.coord_dir)
     end
 
     def self.check(result, command)
@@ -1035,11 +1041,13 @@ module Dispatcher
     end
 
     def sandboxed(cmd) = Maf::Shared::Sandbox.wrap(cmd, @harness, coord_dir: @config.coord_dir)
+    def keeping_links(&block) = Maf::Shared::Sandbox.keeping_links(@harness, coord_dir: @config.coord_dir, &block)
 
     def session_label(id) = id ? "#{id}, idle #{(@session.idle_seconds / 60).round}m" : "new"
 
     def spawn(cmd)
-      result = Spawn.run(sandboxed(cmd), env: @env, timeout: @config.timeout, limits: Limits.from(@config))
+      limits = Limits.from(@config)
+      result = keeping_links { Spawn.run(sandboxed(cmd), env: @env, timeout: @config.timeout, limits: limits) }
       record(@harness.usage(result.output), result.output)
       @model = @harness.model(result.output) || @model
       result

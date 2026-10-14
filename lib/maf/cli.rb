@@ -55,7 +55,7 @@ module Maf
       "uninstall" => "[--check] [--yes] [--force]             remove the flow from the project",
       "migrate" => "[--check] [--yes]                       move an old-layout install into .maf/",
       "untrack" => "[--check] [--yes]                       remove the flow from git; the files stay (then commit)",
-      "vm" => "create|login|start|stop|delete|status|shell [ARGS]  run the team in a Lima VM (macOS)",
+      "vm" => "create|login|start|stop|delete|status|shell [ARGS]  run the team in a Lima VM (macOS, Linux)",
       "menu" => "                                        interactive mode (also: maf without a command)",
       "guide" => "                                        print the setup guide for an AI agent (install.md)",
       "version" => "                                        print the maf version (also: --version)"

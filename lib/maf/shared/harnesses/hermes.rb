@@ -25,7 +25,15 @@ module Maf
         KILL_GRACE = 5
 
         def sandbox_dirs = [File.join(Dir.home, ".hermes")]
-        # Hermes keeps the API keys of its providers in ~/.hermes/.env.
+        PROTECTED = %w[config.yaml .env shell_init.sh SOUL.md hooks agent-hooks shell-hooks-allowlist.json bin scripts
+                       cron skills plugins hermes-agent].freeze
+        def sandbox_protected = in_dir(File.join(Dir.home, ".hermes"), PROTECTED)
+        STATE = %w[sessions logs cache memories state *.db* pastes composer-pastes image_cache audio_cache locks
+                   pending runtime telemetry terminal-sessions processes.json* spawn-ledger.json* auth.json* auth.lock
+                   google_token.json* models_dev_cache* provider_models_cache.json* context_length_cache.yaml*
+                   .hermes_history* .*lock*].freeze
+        def sandbox_state = in_dir(File.join(Dir.home, ".hermes"), STATE)
+        def sandbox_placeholders = super - [File.join(Dir.home, ".hermes", "hermes-agent")]
         def vm_credentials = [Harness::VmCredential.file(File.join(Dir.home, ".hermes", ".env"), ".hermes/.env")]
 
         def role_destination(project, role, settings = {})

@@ -44,6 +44,8 @@ module Maf
     def stop
       return puts("#{@worker} is already stopped.") unless live?
 
+      abort "maf: #{@worker}: maf cannot check pid #{pid}. Stop it with: kill #{pid}" unless ours?
+
       @entry["dispatch"] ? stop_dispatcher : stop_session
     end
 
@@ -84,13 +86,8 @@ module Maf
     def coord_dir = File.join(@root, ".maf", "coordination")
     def presence = read(File.join(coord_dir, "presence", "#{@worker}.json"))
     def pid = presence["pid"].to_i
-    def live? = Shared::Processes.alive?(pid) && started_matches?
-
-    # A pid can belong to a new process. The start time tells them apart.
-    def started_matches?
-      recorded = presence["started"].to_s
-      recorded.empty? || recorded == Shared::Processes.started_at(pid)
-    end
+    def live? = Shared::Processes.live?(presence)
+    def ours? = Shared::Processes.same?(pid, presence["started"])
 
     # The context-watch hook records the transcript of Claude Code and Codex
     # sessions. opencode has no such hook, so its idle state is unknown.

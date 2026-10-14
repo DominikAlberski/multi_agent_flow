@@ -66,6 +66,20 @@ class UninstallRemovesTest < UninstallerTestCase
     refute Dir.exist?(File.join(@hermes, "#{File.basename(@dir)}-reviewer"))
   end
 
+  def test_removes_the_sandbox_policy
+    install
+    write(".maf/sandbox.json", %({"mode": "auto"}\n))
+    uninstall("--yes")
+    refute File.exist?(path(".maf"))
+  end
+
+  def test_removes_the_gem_file_of_the_vm
+    install
+    write(".maf/vm/maf-0.2.0.gem", "gem\n")
+    uninstall("--yes")
+    refute File.exist?(path(".maf"))
+  end
+
   def test_removes_the_shared_library_and_keeps_a_foreign_file
     install
     write(".maf/lib/maf/shared/mine.rb", "mine\n")

@@ -13,7 +13,6 @@ class VmLoginTest < Minitest::Test
   Credential = Maf::Shared::Harness::VmCredential
   FakeHarness = Struct.new(:name, :vm_credentials, :vm_login_hint)
 
-  # A fake limactl runs the write command of the VM on the host, with HOME set to vm_home.
   def with_fake_vm
     in_tmpdir do |dir|
       fake_limactl(dir)
@@ -43,6 +42,14 @@ class VmLoginTest < Minitest::Test
     end
   end
 
+  def test_an_old_readable_login_file_becomes_private
+    with_fake_vm do |home|
+      path = File.join(home, ".codex/auth.json").tap { |file| write(file, "old") && File.chmod(0o644, file) }
+      login(codex, :all)
+      assert_equal 0o600, File.stat(path).mode & 0o777
+    end
+  end
+
   def test_a_no_copies_nothing_and_shows_the_hint
     with_fake_vm do |home|
       assert_includes login(codex, :ask, "n\n"), "codex: Log in in the VM: log in"
@@ -64,7 +71,7 @@ class VmLoginTest < Minitest::Test
   end
 
   def test_a_missing_host_login_gets_the_hint
-    with_fake_vm { assert_includes login(codex(nil), :ask, "y\n"), "maf found no login on this Mac" }
+    with_fake_vm { assert_includes login(codex(nil), :ask, "y\n"), "maf found no login on this computer" }
   end
 
   def test_a_file_credential_reads_the_host_file

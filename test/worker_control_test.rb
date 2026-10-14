@@ -50,6 +50,8 @@ class WorkerControlTest < Minitest::Test
     capture_io { Maf::WorkerControl.new(@root, "architect_1", force: force).run(action) }
   end
 
+  def refused(action) = assert_raises(SystemExit) { control(action) }.message
+
   def test_stop_of_a_stopped_worker_does_nothing
     register(dispatch: true)
     out, = control("stop")
@@ -63,6 +65,14 @@ class WorkerControlTest < Minitest::Test
     out, = control("start")
 
     assert_includes out, "already runs (pid #{pid})"
+  end
+
+  def test_a_worker_without_a_start_time_stays_and_is_not_signaled
+    register(dispatch: true)
+    pid = spawn_worker
+    write("presence", "pid" => pid, "seen_at" => Time.now.utc.iso8601)
+    assert_includes control("start").first, "already runs (pid #{pid})"
+    assert_includes refused("stop"), "Stop it with: kill #{pid}"
   end
 
   def test_stop_ends_a_dispatcher
@@ -119,6 +129,24 @@ class WorkerControlTest < Minitest::Test
     out, = control("status")
 
     assert_includes out, "stopped"
+  end
+
+  def test_restart_of_a_worker_with_an_unknown_pid_fails
+    register(dispatch: true)
+    write("presence", "pid" => Process.pid, "seen_at" => Time.now.utc.iso8601)
+    assert_includes refused("restart"), "kill #{Process.pid}"
+  end
+
+  def test_an_empty_start_time_takes_the_start_time_of_the_presence
+    Maf::Workers.at(@root).update("architect-1", "pid" => Process.pid, "started" => "")
+    write("presence", "pid" => Process.pid, "started" => "Mon Jan  1 00:00:00 2001")
+    assert_equal "Mon Jan  1 00:00:00 2001", Maf::Workers.at(@root).started("architect-1")
+  end
+
+  def test_a_dispatcher_without_a_start_time_runs_while_its_heartbeat_is_recent
+    Maf::Workers.at(@root).update("architect-1", "pid" => Process.pid)
+    write("presence", "pid" => Process.pid, "seen_at" => Time.now.utc.iso8601)
+    assert Maf::Workers.at(@root).running?("architect-1")
   end
 
   def test_a_second_action_at_the_same_time_is_refused

@@ -31,10 +31,20 @@ module Maf
         def wait = :await
         def home = ENV.fetch("CODEX_HOME", File.join(Dir.home, ".codex"))
         def sandbox_dirs = [home]
+        PROTECTED = %w[config.toml hooks.json hooks rules skills plugins prompts packages AGENTS.md
+                       AGENTS.override.md].freeze
+        def sandbox_protected = in_dir(home, PROTECTED)
+        def sandbox_placeholders = super - [File.join(home, "packages")]
+        STATE = %w[sessions archived_sessions memories log logs* *.sqlite* history.jsonl* session_index.jsonl*
+                   auth.json* models_cache.json* version.json* installation_id* .sqlite-maintenance.lock tmp .tmp
+                   shell_snapshots attachments thread-writer-locks tui-*].freeze
+        def sandbox_state = in_dir(home, STATE)
+        PROJECT = %w[.codex/config.toml .codex/hooks.json .codex/hooks .codex/rules .codex/prompts
+                     .agents/skills].freeze
+        def sandbox_project = PROJECT
         def vm_install = "sudo npm install -g @openai/codex"
         def vm_credentials = [Harness::VmCredential.file(File.join(home, "auth.json"), ".codex/auth.json")]
 
-        # The Codex sandbox uses sandbox-exec too, and it fails inside the maf sandbox.
         def sandboxed(cmd)
           return cmd if cmd.include?("--dangerously-bypass-approvals-and-sandbox")
 
@@ -77,16 +87,16 @@ module Maf
            File.read(role_path(role))]
         end
 
-        UNTRUSTED = "maf: Codex does not trust the hooks in %<file>s yet. Trust them when Codex asks. " \
-                    "Without the hooks, the session records no token usage, and coord await cannot wake it."
+        UNTRUSTED = "maf: Codex does not trust the hooks in %<file>s yet. Without the hooks, the session " \
+                    "records no token usage, and coord await cannot wake it. The sandbox cannot save the trust: " \
+                    "start codex once in %<root>s without the sandbox, and trust the hooks when Codex asks."
 
-        # Codex runs the hooks of a project only after the user trusts them, and
-        # a worktree is a new project for Codex. Codex records the trust in its config.toml.
         def warn_untrusted
-          hooks = File.join(File.realpath(Dir.pwd), ".codex", "hooks.json")
+          root = File.realpath(Project.root)
+          hooks = File.join(root, ".codex", "hooks.json")
           config = File.join(home, "config.toml")
           trusted = File.exist?(config) && File.read(config).include?("#{hooks}:stop:")
-          warn format(UNTRUSTED, file: hooks) if File.exist?(hooks) && !trusted
+          warn format(UNTRUSTED, file: hooks, root: root) if File.exist?(hooks) && !trusted
         end
 
         # The OpenAI cache of Codex is best effort: a probe missed it after 5 idle minutes.

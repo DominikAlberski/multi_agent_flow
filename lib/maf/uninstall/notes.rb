@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "../vm"
+
 module Maf
   module Uninstall
     # Tells the user what the uninstaller keeps on purpose.
@@ -7,7 +9,7 @@ module Maf
       def initialize(project) = @project = project
 
       def lines
-        [kept_dirs, branches, global_hooks].compact
+        [kept_dirs, branches, global_hooks, vm].compact
       end
 
       private
@@ -21,6 +23,15 @@ module Maf
         list = Git.lines(@project, "branch", "--list", "worker/*", "--format=%(refname:short)")
         "kept   branches #{list.join(", ")} (delete with git branch -D)" if list.any?
       end
+
+      def vm
+        return unless Maf::Shared::Harness.on_path?(Vm::LIMACTL)
+
+        name = Vm.new([], @project).name
+        "kept   the VM #{name} (delete with maf vm delete)" if vm_names.include?(name)
+      end
+
+      def vm_names = IO.popen([Vm::LIMACTL, "list", "--quiet"], err: File::NULL, &:readlines).map(&:strip)
 
       def global_hooks
         hooks = Uninstall.global_files.select { |path| File.exist?(path) }

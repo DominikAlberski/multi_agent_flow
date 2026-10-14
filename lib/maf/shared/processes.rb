@@ -3,6 +3,7 @@
 # maf shared library - code that the maf CLI and the scripts in .maf/bin share.
 # The installer copies this folder to .maf/lib/maf/shared/. maf update replaces it.
 # Use the Ruby stdlib only: a script loads this file without a gem bundle.
+require "time"
 
 module Maf
   module Shared
@@ -18,6 +19,25 @@ module Maf
         false
       rescue Errno::EPERM
         true
+      end
+
+      def self.same?(pid, started)
+        !started.to_s.empty? && alive?(pid) && started_at(pid) == started.to_s
+      end
+
+      LEGACY_LIVE_WINDOW = 3600
+
+      def self.live?(entry)
+        return false unless alive?(entry["pid"])
+
+        recorded = entry["started"].to_s
+        recorded.empty? ? recent?(entry["seen_at"]) : recorded == started_at(entry["pid"])
+      end
+
+      def self.recent?(seen_at)
+        Time.now - Time.parse(seen_at.to_s) < LEGACY_LIVE_WINDOW
+      rescue ArgumentError
+        false
       end
 
       # The start time as ps prints it, or "" when ps fails.

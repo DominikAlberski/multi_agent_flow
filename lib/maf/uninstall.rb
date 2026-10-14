@@ -20,6 +20,7 @@ require_relative "flow"
 require_relative "env_exclude"
 require_relative "local_exclude"
 require_relative "migrate"
+require_relative "shared/sandbox"
 
 module Maf
   # Uninstall removes the flow from a project. Each harness adds its own
@@ -69,4 +70,5 @@ require_relative "uninstall/marked_files"
 require_relative "uninstall/coordination"
 require_relative "uninstall/local_files"
 require_relative "uninstall/notes"
+require_relative "uninstall/vm_files"
 require_relative "uninstall/runner"

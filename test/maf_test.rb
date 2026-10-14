@@ -474,6 +474,49 @@ class MafTeamTest < Minitest::Test
     Process.kill("KILL", pid) if pid
   end
 
+  def test_retire_refuses_a_dispatcher_that_maf_cannot_check
+    pid = legacy_dispatcher("seen_at" => Time.now.utc.iso8601)
+    out, status = maf("retire", "architect_2")
+
+    assert_equal [1, true], [status, Dir.exist?(worktree("architect-2"))]
+    assert_includes out, "kill #{pid}"
+  ensure
+    Process.kill("KILL", pid) if pid
+  end
+
+  def test_retire_leaves_a_process_that_got_the_pid_of_an_old_dispatcher
+    pid = legacy_dispatcher("seen_at" => (Time.now - 7200).utc.iso8601)
+    out, status = maf("retire", "architect_2")
+
+    assert_equal [0, true], [status, Maf::Shared::Processes.alive?(pid)]
+    assert_includes out, "another process has the pid"
+  ensure
+    Process.kill("KILL", pid) if pid
+  end
+
+  def test_retire_stops_a_dispatcher_of_an_older_maf_in_a_long_run
+    dispatcher = File.join(@project, ".maf/bin/dispatcher")
+    cmd = [RbConfig.ruby, "-e", "sleep 30", "--", dispatcher]
+    pid = legacy_dispatcher({ "seen_at" => (Time.now - 7200).utc.iso8601 }, cmd, { chdir: worktree("architect-2") })
+    Process.detach(pid)
+    out, status = maf("retire", "architect_2")
+
+    assert_equal [0, false], [status, Maf::Shared::Processes.alive?(pid)], out
+  ensure
+    Process.kill("KILL", pid) rescue nil if pid
+  end
+
+  def legacy_dispatcher(presence, cmd = %w[sleep 30], options = {})
+    maf("prepare", "opencode", "architect_2", "--interactive")
+    pid = spawn(*cmd, **options)
+    File.write(File.join(@project, ".maf/coordination", "workers.json"),
+               JSON.generate(workers.tap { |all| all["architect-2"]["pid"] = pid }))
+    path = File.join(@project, ".maf/coordination/presence/architect-2.json")
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, JSON.generate(presence.merge("pid" => pid)))
+    pid
+  end
+
   def test_retire_refuses_uncommitted_work
     maf("prepare", "opencode", "architect_2", "--interactive")
     File.write(File.join(worktree("architect-2"), "work.rb"), "x = 1\n")
@@ -574,6 +617,7 @@ class MafTeamTest < Minitest::Test
 
     assert_equal 0, status, out
     assert Process.kill(0, pid)
+    assert_equal Maf::Shared::Processes.started_at(pid), workers.dig("architect-2", "started")
     assert_includes maf("team").first, "running (pid #{pid})"
     out, status = maf("retire", "architect_2")
     assert_equal 0, status, out
@@ -595,6 +639,31 @@ class MafTeamTest < Minitest::Test
     assert_includes command, File.join(@project, ".maf", "bin", "dispatcher")
   ensure
     Process.kill("KILL", pid) rescue nil if pid
+  end
+
+  def test_retire_does_not_stop_a_process_that_got_the_pid
+    other = Process.spawn("sleep", "30")
+    register_dispatcher("architect_2", other, "Mon Jan  1 00:00:00 2001")
+    out, status = maf("retire", "architect_2")
+
+    assert_equal 0, status, out
+    assert_includes out, "is not the dispatcher of architect-2"
+    assert Process.kill(0, other)
+  ensure
+    Process.kill("KILL", other) rescue nil if other
+  end
+
+  def test_team_shows_a_reused_pid_as_stopped
+    register_dispatcher("architect_2", Process.pid, "Mon Jan  1 00:00:00 2001")
+
+    assert_includes maf("team").first, "stopped"
+  end
+
+  def register_dispatcher(spec, pid, started)
+    maf("prepare", "opencode", spec, "--interactive")
+    path = File.join(@project, ".maf/coordination", "workers.json")
+    id = Maf::Workers.id(spec)
+    File.write(path, JSON.generate(workers.merge(id => workers[id].merge("pid" => pid, "started" => started))))
   end
 
   def test_retire_removes_the_presence_file

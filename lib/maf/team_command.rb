@@ -32,15 +32,15 @@ module Maf
 
     def line(id, entry)
       mode = entry["dispatch"] ? "dispatch" : "interactive"
-      [id.ljust(28), entry["role"].to_s.ljust(20), entry["harness"], entry["model"] || "-", mode, state(entry)]
+      [id.ljust(28), entry["role"].to_s.ljust(20), entry["harness"], entry["model"] || "-", mode, state(id, entry)]
         .join("  ")
     end
 
-    def state(entry)
+    def state(id, entry)
       pid = entry["pid"]
       return "-" unless pid
 
-      Shared::Processes.alive?(pid) ? "running (pid #{pid})" : "stopped"
+      Workers.at(@root).running?(id) ? "running (pid #{pid})" : "stopped"
     end
 
     # The budget keys replace the old budget. Keep every other manifest key,

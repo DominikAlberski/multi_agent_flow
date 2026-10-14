@@ -8,6 +8,7 @@
 require "json"
 require "fileutils"
 require "time"
+require_relative "shared/processes"
 
 module Maf
   class Workers
@@ -27,7 +28,33 @@ module Maf
     def remove(worker) = write(all.except(worker))
     def update(worker, fields) = add(worker, find(worker).to_h.merge(fields))
 
+    def dispatcher?(worker)
+      pid = find(worker)&.fetch("pid", nil)
+      pid ? Shared::Processes.same?(pid, started(worker)) : false
+    end
+
+    def started(worker)
+      entry = find(worker).to_h
+      presence = presence(worker)
+      recorded = entry["started"].to_s
+      recorded.empty? && presence["pid"].to_i == entry["pid"].to_i ? presence["started"] : entry["started"]
+    end
+
+    def running?(worker)
+      return dispatcher?(worker) unless started(worker).to_s.empty?
+
+      presence(worker)["pid"].to_i == find(worker).to_h["pid"].to_i && Shared::Processes.live?(presence(worker))
+    end
+
+    def presence(worker) = read(File.join(File.dirname(@path), "presence", "#{worker}.json"))
+
     private
+
+    def read(path)
+      File.exist?(path) ? JSON.parse(File.read(path)) : {}
+    rescue JSON::ParserError
+      {}
+    end
 
     def write(data)
       FileUtils.mkdir_p(File.dirname(@path))

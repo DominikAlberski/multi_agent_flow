@@ -35,6 +35,13 @@ class CodexProjectHooksTest < HookConfigCase
     assert_equal "User hooks", read.fetch("description")
   end
 
+  def test_an_unchanged_hooks_file_is_not_written
+    Maf::Flow::CodexHooks.new(@dir).install
+    File.chmod(0o444, path)
+    Maf::Flow::CodexHooks.new(@dir).install
+    assert_equal %w[SessionStart Stop], read.fetch("hooks").keys
+  end
+
   def test_corrupt_configuration_is_not_overwritten
     write({})
     File.write(path, "broken")

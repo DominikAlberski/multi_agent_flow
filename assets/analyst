@@ -20,11 +20,13 @@
 require "json"
 require "fileutils"
 require "open3"
+require "rbconfig"
 require "optparse"
 require "tmpdir"
 require "time"
 begin
   require_relative "../lib/maf/shared/harness"
+  require_relative "../lib/maf/shared/sandbox"
 rescue LoadError
   abort "analyst: the maf shared library is missing. Run maf update."
 end
@@ -131,13 +133,27 @@ module Analyst
 
   # Model sends the prompt to the analyst command and reads the hints.
   module Model
-    def self.ask(command, prompt)
-      out, err, status = Open3.capture3(MODEL_ENV, *command, stdin_data: prompt, chdir: Dir.tmpdir)
+    NEW_SESSION = [RbConfig.ruby, "-e", "Process.setsid; exec(*ARGV)"].freeze
+
+    def self.ask(command, prompt, coord)
+      out, err, status = run(command, prompt, coord)
       raise "#{command.first} failed: #{(err.empty? ? out : err).strip[0, 200]}" unless status.success?
 
       reply = JSON.parse(out) rescue nil
       reply = {} unless reply.is_a?(Hash)
       [hints(reply["result"] || out), reply["total_cost_usd"]]
+    end
+
+    def self.run(command, prompt, coord)
+      sandbox = Maf::Shared::Sandbox
+      wrapped = [*NEW_SESSION, *sandbox.wrap(command, harness(command), coord_dir: coord)]
+      run = -> { Open3.capture3(MODEL_ENV, *wrapped, stdin_data: prompt, chdir: Dir.tmpdir) }
+      sandbox.keeping_links(harness(command), coord_dir: coord, &run)
+    end
+
+    def self.harness(command)
+      name = File.basename(command.first.to_s)
+      Maf::Shared::Harness.all.find { |harness| harness.command == name } || Maf::Shared::Harness::Base.new
     end
 
     def self.hints(text)
@@ -176,9 +192,9 @@ module Analyst
       return puts(prompt) if @print
 
       write("running" => true)
-      hints, cost = Model.ask(command, prompt)
+      hints, cost = Model.ask(command, prompt, @coord)
       write("hints" => hints, "cost_usd" => cost)
-    rescue StandardError => e
+    rescue StandardError, SystemExit => e
       write("error" => e.message)
     end
 

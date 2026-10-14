@@ -21,11 +21,23 @@ class VmTest < Minitest::Test
   def template(dir, *args) = Maf::Vm::Template.new(dir, Maf::Vm::VmOptions.parse(args, dir), harnesses)
   def yaml(dir, *args) = YAML.safe_load(template(dir, *args).render)
 
-  def test_the_name_comes_from_the_project_folder
-    assert_equal "maf-my-app-2", Maf::Vm.new([], "/x/My_App.2").name
+  def vm_name(dir) = FileUtils.mkdir_p(dir).then { Maf::Vm.new([], dir).name }
+
+  def in_named_project(name)
+    in_tmpdir do |dir|
+      write(File.join(name, ".maf/config.json"), JSON.generate("agents" => []))
+      Dir.chdir(File.join(dir, name)) { yield File.join(dir, name) }
+    end
   end
 
-  # The worktrees and the taskrc hold absolute paths, so the VM mounts the project at the same path.
+  def test_the_name_comes_from_the_project_folder_and_its_path
+    in_tmpdir do |dir|
+      names = %w[a b].map { |parent| vm_name(File.join(dir, parent, "My_App.2")) }
+      assert_match(/\Amaf-my-app-2-\h{8}\z/, names.first)
+      refute_equal names.first, names.last
+    end
+  end
+
   def test_the_vm_mounts_only_the_project_at_its_host_path
     in_project { |dir| assert_equal [{ "location" => dir, "writable" => true }], yaml(dir)["mounts"] }
   end
@@ -64,11 +76,62 @@ class VmTest < Minitest::Test
     end
   end
 
-  # The VM sees only the project, so a local gem goes into the project.
+  def test_a_quote_in_the_project_path_stays_in_the_path
+    in_named_project(%(project "quoted")) { |project| assert_equal project, yaml(project)["mounts"].first["location"] }
+  end
+
+  def test_the_vm_runs_the_ubuntu_with_a_new_rust
+    in_project { |dir| assert_equal ["template:_images/ubuntu-26.04"], yaml(dir)["base"] }
+  end
+
+  def test_the_vm_installs_the_maf_version_of_the_host
+    in_project { |dir| assert_includes template(dir).render, "gem install maf -v #{Maf::VERSION}\n" }
+  end
+
   def test_a_local_gem_is_copied_into_the_project
     in_project do |dir|
       write("pkg/maf-9.gem", "gem")
       assert_includes template(dir, "--gem", "pkg/maf-9.gem").render, "gem install #{dir}/.maf/vm/maf-9.gem"
+    end
+  end
+
+  def test_a_space_in_the_gem_path_is_escaped
+    in_named_project("with space") do |project|
+      write("../maf-9.gem", "gem")
+      assert_includes template(project, "--gem", "../maf-9.gem").render, 'with\ space/.maf/vm'
+    end
+  end
+
+  def test_a_harness_script_skips_an_installed_cli
+    in_project([{ "harness" => "cursor", "role" => "a" }]) do |dir|
+      script = yaml(dir)["provision"].map { |step| step["script"] }.find { |text| text.include?("cursor.com") }
+      assert_operator script.index("command -v agent >/dev/null 2>&1 && exit 0"), :<, script.index("cursor.com")
+    end
+  end
+
+  def test_a_missing_or_unknown_action_shows_the_usage
+    in_project do |dir|
+      [[], ["statsu"]].each { |argv| assert_includes stopped(-> { Maf::Vm.new(argv, dir).run }), "usage: maf vm" }
+    end
+  end
+
+  def stopped(action) = capture_io { assert_raises(SystemExit) { action.call } }.last
+
+  def test_an_unknown_flag_shows_the_usage
+    in_project do |dir|
+      assert_includes stopped(-> { Maf::Vm::VmOptions.parse(["--bogus"], dir) }), "invalid option: --bogus"
+    end
+  end
+end
+
+class VmHarnessesTest < Minitest::Test
+  include HarnessTestHelpers
+
+  def test_the_vm_finds_the_harnesses_from_a_subfolder
+    in_tmpdir do |dir|
+      system("git", "init", "-q", dir)
+      write(".maf/config.json", JSON.generate("agents" => [{ "harness" => "codex", "role" => "tester" }]))
+      Dir.chdir(FileUtils.mkdir_p("sub").first) { assert_equal ["codex"], Maf::Vm.new([], dir).send(:harnesses).map(&:name) }
     end
   end
 end

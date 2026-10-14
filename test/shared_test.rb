@@ -52,6 +52,27 @@ class ProcessesTest < Minitest::Test
     assert_equal "", Processes.started_at(pid)
   end
 
+  def test_the_same_process_has_the_recorded_start_time
+    assert Processes.same?(Process.pid, Processes.started_at(Process.pid))
+  end
+
+  def test_another_start_time_is_another_process
+    refute Processes.same?(Process.pid, "Mon Jan  1 00:00:00 2001")
+  end
+
+  def test_a_pid_without_a_recorded_start_time_does_not_count
+    [nil, ""].each { |started| refute Processes.same?(Process.pid, started) }
+  end
+
+  def test_a_record_without_a_start_time_is_live_while_its_heartbeat_is_recent
+    recent, old = [Time.now, Time.now - 7200].map { |time| { "pid" => Process.pid, "seen_at" => time.utc.iso8601 } }
+    assert_equal [true, false], [Processes.live?(recent), Processes.live?(old)]
+  end
+
+  def test_a_record_with_another_start_time_is_not_live
+    refute Processes.live?("pid" => Process.pid, "started" => "Mon Jan  1 00:00:00 2001")
+  end
+
   # pid 1 belongs to root. kill(0) on it raises EPERM for other users.
   def test_a_process_of_another_user_is_alive
     skip "runs as root" if Process.uid.zero?

@@ -1217,6 +1217,18 @@ class WorktreeTest < Minitest::Test
     assert_includes err, "worktree-env.rb failed"
   end
 
+  def test_a_reused_worktree_does_not_write_a_protected_env_file
+    worktree = Coord::Worktree.new(@root)
+    worktree.create("tester", nil)
+    File.chmod(0o444, File.join(worktrees_root, "tester", ".maf/env.sh"))
+    _out, err = capture_subprocess_io { worktree.create("tester", nil) }
+    assert_empty err
+
+    File.write(File.join(@root, ".maf/coordination", "worktree-env.rb"), 'puts "export NEW=1"')
+    _out, err = capture_subprocess_io { worktree.create("tester", nil) }
+    assert_includes err, "cannot write"
+  end
+
   def test_a_worker_name_with_the_role_is_not_repeated
     assert_equal "frontend-developer-2", Coord::Worktree.slug("frontend-developer", "frontend-developer-2")
     assert_equal "frontend-developer-2", Coord::Worktree.slug("frontend-developer", "2")
