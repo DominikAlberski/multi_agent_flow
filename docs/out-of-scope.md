@@ -18,7 +18,7 @@ Decided: 2026-10-01.
 Source: review of Sandcastle (mattpocock/sandcastle).
 multi_agent_flow is CLI + files. Each worker runs in a git worktree on the host.
 A sandbox provider adds a container runtime and a second file system.
-Run the whole project in a container if you need isolation.
+For isolation, maf has sandbox mode and `maf vm`. See [sandbox.md](sandbox.md).
 
 ## Session fork
 

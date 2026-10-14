@@ -493,7 +493,9 @@ How `maf start` loads the role:
 5. Include `Harness::ResultEvent` if the CLI prints one JSON result event.
 6. Include `Harness::PrependsRole` if the CLI has no flag that selects a role.
    Define `sandbox_dirs` if the CLI writes outside the project, for example to `~/.name`.
-   See [Sandbox the agents](#sandbox-the-agents).
+   Define `sandbox_state` for the state paths in those folders: the agent can write only these paths.
+   Define `sandbox_protected` for the config names, and `sandbox_project` for the config in the project.
+   See [docs/sandbox.md](docs/sandbox.md#13-reference).
 7. Add `test/harnesses/<name>_test.rb`. `test/harnesses/contract_test.rb` checks the new file.
 8. Add one row to the table above.
 
@@ -536,117 +538,8 @@ Put dispatcher flags after `--dispatch`. Example:
 > **Warning:** the dispatcher disables the permission prompts — hermes `--yolo`,
 > claude `bypassPermissions`, codex `--dangerously-bypass-approvals-and-sandbox`.
 > opencode uses the permissions of its role file. The agent runs these tool calls
-> without approval. Always run a dispatcher in its own worktree.
-
-### Sandbox the agents
-
-The sandbox limits where an agent can write files. The agent can read all files.
-
-| Mode | Platform | Tool |
-|---|---|---|
-| `seatbelt` | macOS | `sandbox-exec`, part of macOS |
-| `bwrap` | Linux | bubblewrap: `apt install bubblewrap` |
-| `auto` | both | `seatbelt` on macOS, `bwrap` on Linux |
-| `off` | both | no sandbox (the default) |
-
-Use `auto` if the team works on macOS and on Linux.
-
-Turn the sandbox on for the project in `.maf/config.json`:
-
-```json
-"sandbox": { "mode": "auto", "write": ["~/.npm"] }
-```
-
-Or turn it on for one session: `MAF_SANDBOX=auto maf start claude reviewer --dispatch`.
-`MAF_SANDBOX=off` turns it off for one session.
-
-In the sandbox, the agent can write only to these paths:
-
-- the project folder, with the worktrees, `.git/`, and `.maf/`
-- the board folder (`COORD_DIR`)
-- the temporary folders, `~/.cache`, and `~/Library/Caches`
-- the folders of the harness, for example `~/.claude` and `~/.claude.json` for Claude Code
-- the paths in the `write` list
-
-The sandbox applies to `maf start` and to each dispatched run. A dispatcher prints the
-allowed paths in its first log lines. If a tool fails with `Operation not permitted`,
-add its folder to the `write` list. Examples: `~/.npm`, `~/.gem`, `~/.bundle`.
-
-On Linux, bubblewrap 0.10 and later put a temporary overlay on the home folder.
-A write to another path in the home folder does not fail, but maf discards it after the run.
-Claude Code needs this: it saves `~/.claude.json` through a temporary file in the home folder.
-With an older bubblewrap (Ubuntu 24.04 has 0.9), the home folder is read-only, and
-Claude Code cannot save `~/.claude.json`.
-
-The sandbox does not:
-
-- stop reads. The agent can read `~/.ssh` and other secrets.
-- stop network access. The agent can send what it reads.
-- run inside a second sandbox. Codex starts with `--sandbox danger-full-access` in the
-  maf sandbox. If you turned on the sandbox of Claude Code, turn it off for the project.
-
-For full isolation, run the whole team in a VM. See [Run the team in a Lima VM](#run-the-team-in-a-lima-vm).
-
-### Run the team in a Lima VM
-
-`maf vm` runs the whole team in a Linux VM with [Lima](https://lima-vm.io).
-The VM sees only the project folder. It does not see your home folder, your keys,
-or your other projects. If an agent breaks the VM, delete the VM and create it again.
-
-Requirements:
-
-- macOS on Apple silicon, and Lima: `brew install lima`. The VM uses Apple Virtualization and virtiofs.
-- Linux with KVM, Lima, and QEMU. See https://lima-vm.io/docs/installation/. The VM uses QEMU and 9p.
-
-```sh
-cd ~/Projects/my-app
-maf add claude:architect codex:backend-developer   # add the agents first
-maf vm create                                      # about 10 minutes the first time
-maf vm shell                                       # a shell in the VM, in the project folder
-```
-
-`maf vm create` makes the VM `maf-<project>` and installs Ruby, git, tmux, Taskwarrior 3, and maf.
-It also installs the CLI of each harness in `.maf/config.json`. maf cannot install Hermes. Install Hermes in the VM yourself.
-Flags: `--cpus N` (default 4), `--memory GIB` (default 8), `--disk GIB` (default 50).
-`--gem FILE` installs maf from a local gem file instead of RubyGems.
-
-At the end, `maf vm create` asks for each harness: `Copy your <harness> login from this Mac into the VM? [y/N]`.
-If you answer `y`, maf copies the login into the VM. Only the VM user can read the file.
-`--copy-logins` copies each login without a question. `--no-copy-logins` copies none.
-Without a terminal, maf copies none. `maf vm login` asks again later.
-
-| Harness | Login on this Mac | Login in the VM |
-|---|---|---|
-| claude | macOS: Keychain item `Claude Code-credentials`. macOS can ask you to allow the access. Linux: `~/.claude/.credentials.json` | `~/.claude/.credentials.json` |
-| codex | `~/.codex/auth.json` | `~/.codex/auth.json` |
-| opencode | `~/.local/share/opencode/auth.json` | the same path |
-| hermes | `~/.hermes/.env` (the API keys) | `~/.hermes/.env` |
-| cursor | not documented, so maf cannot copy it | `NO_OPEN_BROWSER=1 agent login`, or `CURSOR_API_KEY` |
-
-On a Linux host, the same files are copied. Only the claude login comes from a file instead of the Keychain.
-A copied login is a second copy of your tokens. `maf vm delete` removes it.
-If a harness refreshes the login on one side, the other side can lose its login. Then log in again on that side.
-
-The VM mounts the project at the same path as on the host. The worktrees and the
-taskrc hold absolute paths, so git and the board work on both sides.
-
-After create:
-
-1. If you did not copy a login, run `maf vm shell`, start the harness once, and log in. The VM keeps the login.
-2. Start the agents in the VM. Use tmux for one terminal per agent:
-   `tmux new -s team`, then `maf start claude architect` in each tmux window.
-3. Read and review the work on the host. Git sees the same worktrees and branches.
-
-Other commands: `maf vm start`, `maf vm stop`, `maf vm status`, `maf vm delete`.
-`maf vm shell COMMAND` runs one command in the project folder, for example `maf vm shell coord status`.
-
-Rules:
-
-- Run all agents and dispatchers in the VM. A pid in the VM is not a pid on the host,
-  so `coord who` and `maf worker stop` on the host do not see the agents in the VM.
-- The host Taskwarrior must be version 3 too. Taskwarrior 2 and 3 store the board in different files.
-- A local model on the host (Ollama) is not in the VM. Use the host address from the VM: `host.lima.internal`.
-- The macOS notification hook (`osascript`) does not work in the VM.
+> without approval. Always run a dispatcher in its own worktree. To limit what the agent can
+> change, use sandbox mode. See [Sandbox mode and the VM](#sandbox-mode-and-the-vm).
 
 The dispatcher needs `--harness NAME` or `--command TEMPLATE`. There is no default harness.
 `--harness` takes a harness of the registry. See [Harnesses](#harnesses).
@@ -773,6 +666,16 @@ Set `--cache-window` to your provider's cache time minus a margin. For a
 30-minute cache: `--cache-window 1500`. To never resume: `--cache-window 0`.
 
 ---
+
+## Sandbox mode and the VM
+
+**[docs/sandbox.md](docs/sandbox.md)** is the full manual. In short:
+
+- **Sandbox mode** limits where an agent can write: the project, the board, and the folders of the harnesses.
+  Turn it on with `{ "mode": "auto" }` in `.maf/sandbox.json`. It uses `sandbox-exec` on macOS and
+  bubblewrap 0.10 or later on Linux. The agent can still read all files and use the network.
+- **The VM** (`maf vm create`) runs the whole team in a Lima VM that sees only the project folder.
+  Use it if the agents must not read your files.
 
 ## Give the team work
 
@@ -1536,8 +1439,8 @@ This section holds the board details for the operator.
 | `maf uninstall [--check] [--yes] [--force]` | Remove the flow from the project. Keeps the graph, the vault, the code, and the decisions. |
 | `maf start HARNESS ROLE[_WORKER]` | Worktree + env + role + launch the harness, in one command. |
 | `maf start HARNESS ROLE --dispatch [FLAGS]` | Same setup, then run `dispatcher`. |
-| `maf vm create\|start\|stop\|delete\|status` | Manage the Lima VM of the project. See "Run the team in a Lima VM". |
-| `maf vm login [--copy-logins]` | Ask for each harness, then copy its login from this Mac into the VM. |
+| `maf vm create\|start\|stop\|delete\|status` | Manage the Lima VM of the project. See [docs/sandbox.md](docs/sandbox.md#11-run-the-team-in-a-vm). |
+| `maf vm login [--copy-logins]` | Ask for each harness, then copy its login from this computer into the VM. |
 | `maf vm shell [COMMAND]` | Open a shell in the VM, in the project folder, or run one command there. |
 
 ---
