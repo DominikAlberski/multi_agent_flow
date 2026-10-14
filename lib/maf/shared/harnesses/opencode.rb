@@ -9,10 +9,24 @@ require_relative "../harness/traits"
 module Maf
   module Shared
     module Harnesses
+      # OpencodeSandbox holds the sandbox paths of opencode.
+      module OpencodeSandbox
+        DATA_DIRS = %w[.local/share/opencode .local/state/opencode .config/opencode].freeze
+        def sandbox_dirs = DATA_DIRS.map { |dir| File.join(Dir.home, dir) }
+        PROTECTED = %w[opencode.json opencode.jsonc config.json package.json node_modules plugin plugins agent agents
+                       command commands skills AGENTS.md].freeze
+        def sandbox_protected = in_dir(sandbox_dirs.last, PROTECTED)
+        STATE = %w[auth.json* log opencode.db* repos snapshot tool-output storage project].freeze
+        def sandbox_state = [*in_dir(sandbox_dirs.first, STATE), File.join(sandbox_dirs[1], "*")]
+        def sandbox_project = %w[opencode.json opencode.jsonc .opencode]
+      end
+
       # opencode. `--agent` loads .opencode/agents/<role>.md. The board-watch
       # plugin in .opencode/plugins/ wakes an idle session. opencode merges the
       # file in OPENCODE_CONFIG with the project's opencode.json.
       class Opencode < Harness::Base
+        include OpencodeSandbox
+
         def role_dir = ".opencode/agents"
 
         def role_template = <<~ERB
@@ -52,6 +66,10 @@ module Maf
         end
 
         def wait = :watch
+
+        def vm_install = "curl -fsSL https://opencode.ai/install | bash"
+        AUTH = ".local/share/opencode/auth.json"
+        def vm_credentials = [Harness::VmCredential.file(File.join(Dir.home, AUTH), AUTH)]
 
         def mcp
           { file: ".maf/mcp/opencode.json", key: "mcp", schema: "https://opencode.ai/config.json",

@@ -145,6 +145,7 @@ section of [USER_MANUAL.md](USER_MANUAL.md).
 | **[GETTING_STARTED.md](GETTING_STARTED.md)** | First-time user | Concepts, prerequisites, manual install, basic workflow |
 | **[USER_MANUAL.md](USER_MANUAL.md)** | Setting up a real team | Full install (maf), all harnesses, dispatcher, monitoring |
 | **[install.md](install.md)** | An AI coding agent | Interactive wizard: asks the user for harnesses/roles, runs `maf add` |
+| **[docs/sandbox.md](docs/sandbox.md)** | Running agents without approvals | Sandbox mode (macOS and Linux), the protected files, the limits, and the Lima VM |
 | **[docs/releasing.md](docs/releasing.md)** | Maintainer | Release a new gem version: version bump, tag, the release workflow, fixes |
 | **[docs/out-of-scope.md](docs/out-of-scope.md)** | Contributor | Requests that the project rejects on purpose, with the reason |
 | **[SKILL.md](SKILL.md)** | Agent skill loader | Self-contained portable skill (frontmatter + full API reference) |

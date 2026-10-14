@@ -1,0 +1,61 @@
+minimumLimaVersion: 2.2.0
+
+base:
+- template:_images/ubuntu-26.04
+
+vmType: <%= vm_type %>
+mountType: <%= mount_type %>
+cpus: <%= cpus %>
+memory: "<%= memory %>GiB"
+disk: "<%= disk %>GiB"
+
+mounts:
+# JSON quoting is valid YAML, so a quote in the path stays in the path.
+- location: <%= project.to_json %>
+  writable: true
+
+containerd:
+  system: false
+  user: false
+
+provision:
+- mode: system
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    export DEBIAN_FRONTEND=noninteractive
+    command -v maf >/dev/null 2>&1 && exit 0
+    apt-get update
+    apt-get install -y ruby-full git tmux curl bubblewrap nodejs npm build-essential cmake cargo rustc uuid-dev libsqlite3-dev
+    cd /tmp
+    curl -fsSL -o task.tar.gz <%= taskwarrior_url %>
+    echo "<%= taskwarrior_sha256 %>  task.tar.gz" | sha256sum -c -
+    tar xzf task.tar.gz && cd task-<%= taskwarrior %>
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$(nproc)" && cmake --install build
+    cd / && rm -rf /tmp/task.tar.gz /tmp/task-<%= taskwarrior %> /root/.cargo/registry && apt-get clean
+    gem install <%= gem_args %>
+<% harness_installs.each do |name, (cli, install)| -%>
+- mode: user
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"
+    command -v <%= cli %> >/dev/null 2>&1 && exit 0
+    <%= install %>
+<% end -%>
+- mode: user
+  script: |
+    #!/bin/bash
+    grep -q 'maf vm' ~/.bashrc && exit 0
+    echo 'export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH" # maf vm' >> ~/.bashrc
+
+probes:
+- description: maf is installed
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    if ! timeout 1800s bash -c "until command -v maf >/dev/null 2>&1; do sleep 5; done"; then
+      echo >&2 "maf is not installed yet"
+      exit 1
+    fi
+  hint: See /var/log/cloud-init-output.log in the VM.

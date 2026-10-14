@@ -137,11 +137,7 @@ end
       {}
     end
 
-    # A pid can belong to a new process. The recorded start time tells them apart.
-    def live?(presence)
-      pid = presence["pid"].to_i
-      Maf::Shared::Processes.alive?(pid) && [nil, "", Maf::Shared::Processes.started_at(pid)].include?(presence["started"])
-    end
+    def live?(presence) = Maf::Shared::Processes.live?(presence)
 
     def tail(name)
       path = File.join(sessions, name)

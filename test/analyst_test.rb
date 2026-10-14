@@ -82,6 +82,32 @@ class AnalystTest < Minitest::Test
     assert_includes written["error"], "quota exceeded"
   end
 
+  def test_the_model_runs_in_the_sandbox
+    fake_model("result" => '{"hints":[]}')
+    calls = []
+    with_wrap(->(cmd, harness, coord_dir:) { (calls << [cmd.first, harness.name, coord_dir]) && cmd }) do
+      Analyst::Main.new(["w-bot", "--coord", @coord]).run
+    end
+    assert_equal [[File.join(@dir, "model"), "base", @coord]], calls
+  end
+
+  def test_the_model_runs_in_its_own_session
+    out, = Analyst::Model.run([RbConfig.ruby, "-e", "print Process.getsid"], "", @coord)
+    refute_equal Process.getsid.to_s, out
+  end
+
+  def test_the_sandbox_opens_the_state_paths_of_the_harness_of_the_command
+    assert_equal "claude", Analyst::Model.harness(Analyst::DEFAULT_COMMAND).name
+  end
+
+  def with_wrap(stub)
+    original = Maf::Shared::Sandbox.method(:wrap)
+    Maf::Shared::Sandbox.define_singleton_method(:wrap, &stub)
+    yield
+  ensure
+    Maf::Shared::Sandbox.define_singleton_method(:wrap, original)
+  end
+
   # Claude Code transcript: a tool_use block, then a tool_result block with the same ID.
   def test_the_digest_counts_the_tool_calls_of_a_claude_session
     projects = File.join(@dir, "home", ".claude", "projects", "p")

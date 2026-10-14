@@ -89,6 +89,19 @@ class CodexHarnessTest < Minitest::Test
     end
   end
 
+  def test_launch_in_a_worktree_checks_the_trust_of_the_main_checkout
+    in_tmpdir do |dir|
+      add_worktree(".maf/worktrees/w1")
+      write("config.toml", "[hooks.state.\"#{dir}/.codex/hooks.json:stop:0:0\"]\n") && write(".codex/hooks.json", "{}")
+      assert_empty Dir.chdir(".maf/worktrees/w1") { launch_warning(dir) }
+    end
+  end
+
+  def add_worktree(path)
+    system("git", "init", "-q") && system("git", "commit", "-q", "--allow-empty", "-m", "i", "--no-verify")
+    system("git", "worktree", "add", "-q", path, err: File::NULL)
+  end
+
   def launch_warning(home)
     %w[.maf/agents/codex/tester.md .codex/hooks.json].each { |path| write(path, "{}") }
     _, err = capture_io { with_env("CODEX_HOME" => home) { harness.launch("tester", nil) } }

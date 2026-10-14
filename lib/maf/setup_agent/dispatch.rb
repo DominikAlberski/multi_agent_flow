@@ -23,7 +23,7 @@ module Maf
       def self.detach(cmd, worker)
         log = File.join(ENV.fetch("COORD_DIR"), "sessions", "#{worker}.log")
         pid = spawn_detached(cmd, log)
-        Maf::Workers.at(Project.root).update(worker, "pid" => pid)
+        Maf::Workers.at(Project.root).update(worker, "pid" => pid, "started" => Maf::Shared::Processes.started_at(pid))
         puts "Started #{worker} in the background (pid #{pid}). Log: #{log}"
       end
 

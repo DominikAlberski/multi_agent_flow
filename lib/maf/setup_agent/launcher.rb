@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require_relative "../shared/sandbox"
+require_relative "pty_relay"
+
 module Maf
   module SetupAgent
     # Launcher replaces this process with the interactive session of a harness.
@@ -7,11 +10,22 @@ module Maf
     module Launcher
       def self.launch(harness, role, model)
         ENV.update(harness.launch_env)
-        exec_or_die(harness.launch(role, model))
+        return exec_or_die(harness.launch(role, model)) if Maf::Shared::Sandbox.mode == "off"
+
+        warn "maf: sandbox: #{Maf::Shared::Sandbox.describe(harness)}"
+        exit Maf::Shared::Sandbox.keeping_links(harness) { relay_or_die(sandboxed(harness, role, model)) }
       end
+
+      def self.sandboxed(harness, role, model) = Maf::Shared::Sandbox.wrap(harness.launch(role, model), harness)
 
       def self.exec_or_die(cmd)
         Kernel.exec(*cmd)
+      rescue Errno::ENOENT
+        abort "setup_agent: '#{cmd.first}' not found on PATH."
+      end
+
+      def self.relay_or_die(cmd)
+        PtyRelay.new(cmd).run
       rescue Errno::ENOENT
         abort "setup_agent: '#{cmd.first}' not found on PATH."
       end

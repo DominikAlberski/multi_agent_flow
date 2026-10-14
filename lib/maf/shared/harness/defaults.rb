@@ -4,6 +4,7 @@
 # The installer copies this folder to .maf/lib/maf/shared/. maf update replaces it.
 # Use the Ruby stdlib only: a script loads this file without a gem bundle.
 require_relative "../project"
+require_relative "vm_credential"
 
 module Maf
   module Shared
@@ -70,6 +71,10 @@ module Maf
         # Files outside the project that uninstall keeps: other projects can use them.
         def global_files = []
 
+        def vm_install = nil
+        def vm_credentials = []
+        def vm_login_hint = "maf vm shell, then start #{command} and log in"
+
         # The top folder of the harness. maf retire ignores changes in it.
         def home_dir = role_dir&.split("/")&.first
         # Files that the flow writes in a worktree. coord keeps them out of git.
@@ -93,6 +98,15 @@ module Maf
         # The command of an interactive session.
         def launch(_role, _model) = raise(NotImplementedError, "#{name}: launch")
         def launch_env = {}
+
+        def sandbox_dirs = []
+        def sandbox_state = []
+        def sandbox_prefixes = []
+        def sandbox_protected = []
+        def sandbox_project = []
+        def in_dir(dir, names) = names.map { |name| File.join(dir, name) }
+        def sandbox_placeholders = sandbox_protected.reject { |path| path.end_with?(".md", ".yaml") }
+        def sandboxed(cmd) = cmd
 
         # The command of one dispatched run. session_id is nil for a fresh session.
         def build_command(_config, _prompt, _session_id) = raise(NotImplementedError, "#{name}: build_command")

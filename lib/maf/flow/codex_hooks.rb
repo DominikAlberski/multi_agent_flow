@@ -33,8 +33,11 @@ module Maf
       private
 
       def save(data)
+        text = JSON.pretty_generate(data)
+        return if File.exist?(@path) && File.read(@path) == text
+
         FileUtils.mkdir_p(File.dirname(@path))
-        File.write(@path, JSON.pretty_generate(data))
+        File.write(@path, text)
       end
 
       # A project that tracks its own Codex hooks keeps the file in git.

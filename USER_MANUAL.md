@@ -492,6 +492,10 @@ How `maf start` loads the role:
    `lib/maf/shared/harness/defaults.rb` lists each method and its default.
 5. Include `Harness::ResultEvent` if the CLI prints one JSON result event.
 6. Include `Harness::PrependsRole` if the CLI has no flag that selects a role.
+   Define `sandbox_dirs` if the CLI writes outside the project, for example to `~/.name`.
+   Define `sandbox_state` for the state paths in those folders: the agent can write only these paths.
+   Define `sandbox_protected` for the config names, and `sandbox_project` for the config in the project.
+   See [docs/sandbox.md](docs/sandbox.md#13-reference).
 7. Add `test/harnesses/<name>_test.rb`. `test/harnesses/contract_test.rb` checks the new file.
 8. Add one row to the table above.
 
@@ -534,7 +538,8 @@ Put dispatcher flags after `--dispatch`. Example:
 > **Warning:** the dispatcher disables the permission prompts — hermes `--yolo`,
 > claude `bypassPermissions`, codex `--dangerously-bypass-approvals-and-sandbox`.
 > opencode uses the permissions of its role file. The agent runs these tool calls
-> without approval. Always run a dispatcher in its own worktree.
+> without approval. Always run a dispatcher in its own worktree. To limit what the agent can
+> change, use sandbox mode. See [Sandbox mode and the VM](#sandbox-mode-and-the-vm).
 
 The dispatcher needs `--harness NAME` or `--command TEMPLATE`. There is no default harness.
 `--harness` takes a harness of the registry. See [Harnesses](#harnesses).
@@ -661,6 +666,16 @@ Set `--cache-window` to your provider's cache time minus a margin. For a
 30-minute cache: `--cache-window 1500`. To never resume: `--cache-window 0`.
 
 ---
+
+## Sandbox mode and the VM
+
+**[docs/sandbox.md](docs/sandbox.md)** is the full manual. In short:
+
+- **Sandbox mode** limits where an agent can write: the project, the board, and the folders of the harnesses.
+  Turn it on with `{ "mode": "auto" }` in `.maf/sandbox.json`. It uses `sandbox-exec` on macOS and
+  bubblewrap 0.10 or later on Linux. The agent can still read all files and use the network.
+- **The VM** (`maf vm create`) runs the whole team in a Lima VM that sees only the project folder.
+  Use it if the agents must not read your files.
 
 ## Give the team work
 
@@ -1424,6 +1439,9 @@ This section holds the board details for the operator.
 | `maf uninstall [--check] [--yes] [--force]` | Remove the flow from the project. Keeps the graph, the vault, the code, and the decisions. |
 | `maf start HARNESS ROLE[_WORKER]` | Worktree + env + role + launch the harness, in one command. |
 | `maf start HARNESS ROLE --dispatch [FLAGS]` | Same setup, then run `dispatcher`. |
+| `maf vm create\|start\|stop\|delete\|status` | Manage the Lima VM of the project. See [docs/sandbox.md](docs/sandbox.md#11-run-the-team-in-a-vm). |
+| `maf vm login [--copy-logins]` | Ask for each harness, then copy its login from this computer into the VM. |
+| `maf vm shell [COMMAND]` | Open a shell in the VM, in the project folder, or run one command there. |
 
 ---
 

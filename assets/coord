@@ -201,7 +201,7 @@ module Coord
     def ensure_taskrc
       had_marker = File.exist?(@taskrc) && File.read(@taskrc).include?(MARKER)
       FileUtils.mkdir_p(File.dirname(@taskrc))
-      FileUtils.touch(@taskrc)
+      FileUtils.touch(@taskrc) unless File.exist?(@taskrc)
       ensure_data_location(warn_when_external: !had_marker)
       had_marker ? add_missing_udas : append_uda_block
     end
@@ -841,20 +841,7 @@ module Coord
       entries.each { |entry| puts line(entry) }
     end
 
-    LEGACY_LIVE_WINDOW = 3600
-
-    def self.live_entry?(entry)
-      return false unless Maf::Shared::Processes.alive?(entry["pid"])
-
-      recorded = entry["started"].to_s
-      recorded.empty? ? legacy_live?(entry) : recorded == Maf::Shared::Processes.started_at(entry["pid"])
-    end
-
-    def self.legacy_live?(entry)
-      Time.now - Time.parse(entry["seen_at"].to_s) < LEGACY_LIVE_WINDOW
-    rescue ArgumentError
-      false
-    end
+    def self.live_entry?(entry) = Maf::Shared::Processes.live?(entry)
 
     private
 
@@ -1824,10 +1811,16 @@ end
     def write(dir, slug)
       slot = Slots.new(@coord_dir).assign(slug)
       FileUtils.mkdir_p(File.join(dir, MAF_DIR))
-      File.write(File.join(dir, FILE), base_lines(slot) + hook_lines(dir, slot))
+      save(File.join(dir, FILE), base_lines(slot) + hook_lines(dir, slot))
     end
 
     private
+
+    def save(file, text)
+      File.write(file, text) unless File.exist?(file) && File.read(file) == text
+    rescue SystemCallError => e
+      warn "coord: cannot write #{file} (#{e.message}). Run coord worktree outside the sandbox to update it."
+    end
 
     def base_lines(slot)
       "export COORD_DIR=#{@coord_dir}\nexport TASKRC=#{File.join(@coord_dir, "taskrc")}\n" \
@@ -2027,6 +2020,14 @@ end
 
       FileUtils.mkdir_p(File.dirname(dest))
       FileUtils.cp(src, dest, preserve: true)
+    rescue Errno::EPERM, Errno::EROFS => e
+      blocked(src, e)
+    end
+
+    def blocked(src, error)
+      raise error unless src.start_with?(File.join(@root, MAF_DIR, ""))
+
+      abort "coord: cannot copy #{src} into the worktree in the sandbox. Run coord worktree on the host."
     end
 
     # The graph is not committed. A relative symlink gives the worktree the

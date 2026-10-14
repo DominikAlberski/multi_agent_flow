@@ -10,7 +10,8 @@ module Maf
         @path = File.join(project, ".maf/config.json")
       end
 
-      def steps = File.exist?(@path) ? [Owned.remove(@path)] : []
+      def steps = [@path, policy].select { |path| File.exist?(path) }.map { |path| Owned.remove(path) }
+      def policy = File.join(@project, Maf::Shared::Sandbox::POLICY)
 
       # The role files of the harnesses that keep them outside .maf/agents/.
       def outside_role_files
