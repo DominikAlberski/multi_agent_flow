@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-14
+
 - The sandbox also protects the flow config in `.maf/claude/` and `.maf/mcp/`, and each script
   that it names. `maf start` and the dispatcher give these files to the harness on the host.
 - Fix: `maf start` of a Codex worker in the sandbox stopped with `Errno::EPERM` on the protected
