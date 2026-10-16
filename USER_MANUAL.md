@@ -194,6 +194,23 @@ CLI accepts:
 If you do not pin a model, every `claude` role gets `claude-opus-5-5`.
 The other harnesses have no default. Their CLI picks the model.
 
+Add `--effort ROLE=LEVEL` to set the effort level (reasoning effort) per role.
+A high effort gives deeper work and uses more tokens. A low effort is faster and cheaper.
+Use the level that the harness CLI accepts. maf passes it as it is:
+
+| Harness | maf passes | Levels |
+|---|---|---|
+| `claude` | `--effort LEVEL` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `codex` | `-c model_reasoning_effort="LEVEL"` | the levels of the model in `~/.codex/models_cache.json` |
+| `hermes` | `--reasoning LEVEL` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
+| `opencode` | `--variant LEVEL` (dispatched), `variant:` in the role file (interactive) | the variants of the provider |
+| `cursor` | the model `MODEL[effort=LEVEL]` | the levels of the model. Pin a model too |
+
+If you do not set an effort, maf passes nothing, and the default of the harness applies.
+maf saves the effort in `.maf/config.json`. A re-run of `maf add` keeps it.
+`maf start` and `maf prepare` take `--effort LEVEL` for one worker.
+The flag wins over the saved effort. maf warns when the harness does not list a level.
+
 ### 5. Install
 
 Remove `--check` from step 4 and run again.

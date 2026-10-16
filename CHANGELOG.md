@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Effort levels per role (#44): `maf add --effort ROLE=LEVEL`, `maf start` and `maf prepare
+  --effort LEVEL`, and `dispatcher --effort LEVEL`. maf passes the level to the harness in its
+  own form: `--effort` (Claude Code), `model_reasoning_effort` (Codex), `--reasoning` (Hermes),
+  `--variant` (opencode), and `MODEL[effort=LEVEL]` (Cursor). Without an effort, the commands
+  do not change.
 - Fix: Codex 0.163 ran the commands of a worker in its shared background server. The commands
   got the environment of the shell that started the server, not of the worker: no `.maf/bin` on
   PATH, no `COORD_ROLE` and `COORD_WORKER`. maf now starts Codex with `--no-daemon`.
