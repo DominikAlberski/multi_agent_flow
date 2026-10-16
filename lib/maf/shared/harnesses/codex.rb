@@ -83,8 +83,16 @@ module Maf
           abort "setup_agent: #{role_path(role)} missing." unless File.exist?(role_path(role))
 
           warn_untrusted
-          ["codex", "--add-dir", File.join(Project.root, ".maf", "coordination"), *model_flag(model),
+          ["codex", *no_daemon, "--add-dir", File.join(Project.root, ".maf", "coordination"), *model_flag(model),
            File.read(role_path(role))]
+        end
+
+        def no_daemon = codex_help.include?("--no-daemon") ? ["--no-daemon"] : []
+
+        def codex_help
+          IO.popen(%w[codex --help], err: File::NULL, &:read)
+        rescue SystemCallError
+          ""
         end
 
         UNTRUSTED = "maf: Codex does not trust the hooks in %<file>s yet. Without the hooks, the session " \
