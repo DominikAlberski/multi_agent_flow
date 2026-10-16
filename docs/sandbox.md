@@ -569,8 +569,8 @@ to the allowed paths. The login files of most harnesses stay writable, so the ag
 - Do not use the board on the host while the VM uses it. The host and the VM cannot lock the
   Taskwarrior database for each other. In a test, writes from both sides at the same time
   damaged the database: tasks were lost, and Taskwarrior reported `database disk image is malformed`.
-- A process ID in the VM is not a process ID on the host, so `coord who`, `maf worker stop`,
-  and `maf retire` on the host do not see the agents in the VM.
+- A process ID in the VM is not a process ID on the host, so `coord who`, `maf worker list`,
+  `maf worker stop`, and `maf retire` on the host do not see the agents in the VM.
 - On the host, use git to read and review the work.
 - A local model on the host (Ollama) is not in the VM. In the VM, use the host address `host.lima.internal`.
 - The macOS notification hook (`osascript`) does not work in the VM.

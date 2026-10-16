@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- `maf worker list` shows each running worker: its role, harness, mode (session or dispatch),
+  pid, and start time. A worker that runs twice, for example as a session and as a
+  dispatcher, gets a warning. The last line names the registered workers that do not run.
+
 - Fix: Codex 0.163 ran the commands of a worker in its shared background server. The commands
   got the environment of the shell that started the server, not of the worker: no `.maf/bin` on
   PATH, no `COORD_ROLE` and `COORD_WORKER`. maf now starts Codex with `--no-daemon`.
