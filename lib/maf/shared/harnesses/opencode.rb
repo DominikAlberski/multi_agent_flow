@@ -37,6 +37,9 @@ module Maf
           <% if model -%>
           model: <%= model %>
           <% end -%>
+          <% if effort -%>
+          variant: <%= effort %>
+          <% end -%>
           temperature: 0.1
           permission:
             edit: <%= can_edit ? "allow" : "deny" %>
@@ -92,15 +95,18 @@ module Maf
         def run_env(config) = config_env(run_file(config, "mcp", "opencode.json"))
         def config_env(file) = File.exist?(file) ? { "OPENCODE_CONFIG" => file } : {}
 
-        def launch(role, model)
+        # The TUI has no variant flag. It reads the variant from the agent file.
+        def launch(role, model, _effort = nil)
           ["opencode", ".", "--agent", role, "--prompt", "Start your work loop now.", *model_flag(model)]
         end
+
+        def effort_flag(effort) = super(effort, "--variant")
 
         # `opencode run --format json`. The result event shape is not verified,
         # so the log shows no result text.
         def build_command(config, prompt, session_id)
           %w[opencode run --format json --agent] + [config.role] + model_flag(config.model, "-m") +
-            resume(session_id, "--session") + [prompt]
+            effort_flag(config.effort) + resume(session_id, "--session") + [prompt]
         end
 
         # DeepSeek costs twice as much at peak hours.

@@ -124,3 +124,38 @@ class CodexHarnessTest < Minitest::Test
     end
   end
 end
+
+class CodexEffortTest < Minitest::Test
+  include HarnessTestHelpers
+
+  HARNESS = "codex"
+
+  def test_the_effort_is_a_config_override
+    run = harness.build_command(config(effort: "high"), "go", nil)
+    assert_includes pairs(run), ["-c", 'model_reasoning_effort="high"']
+    refute_includes harness.build_command(config, "go", nil), "-c"
+  end
+
+  def test_launch_passes_the_effort_before_the_prompt
+    in_tmpdir do |dir|
+      write(".maf/agents/codex/tester.md", "prompt")
+      command = with_codex_help("") { with_env("CODEX_HOME" => dir) { harness.launch("tester", nil, "low") } }
+      assert_equal ["-c", 'model_reasoning_effort="low"', "prompt"], command.last(3)
+    end
+  end
+
+  def test_reads_the_effort_levels_of_a_model_from_its_cache
+    with_cache([{ slug: "gpt-a", supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }] }]) do
+      assert_equal %w[low high], harness.efforts("gpt-a")
+      assert_nil harness.efforts("gpt-b")
+      refute harness.known_effort?("max", "gpt-a")
+    end
+  end
+
+  def with_cache(models, &block)
+    Dir.mktmpdir do |home|
+      write(File.join(home, ".codex", "models_cache.json"), JSON.generate(models: models))
+      with_env("HOME" => home, &block)
+    end
+  end
+end

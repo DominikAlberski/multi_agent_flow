@@ -44,6 +44,8 @@ module Maf
         def models = MODELS
         def known_model?(model, _list = nil) = model.match?(MODEL_NAME)
         def default_model = "claude-opus-5-5"
+        EFFORTS = %w[low medium high xhigh max].freeze
+        def efforts(_model = nil) = EFFORTS
 
         def wait = :watch
         def vm_install = "curl -fsSL https://claude.ai/install.sh | bash"
@@ -91,10 +93,11 @@ module Maf
 
         # --settings adds the hooks of the flow, --mcp-config adds the graph server.
         # --mcp-config takes many values, so `--` ends the options before the prompt.
-        def launch(role, model)
+        def launch(role, model, effort = nil)
           prompt = "Read #{role_path(role)} and follow it exactly. Start your work loop now."
           ["claude", *flag_if("--settings", flow_file("claude", "settings.json")),
-           *flag_if("--mcp-config", flow_file("mcp", "claude.json")), *model_flag(model), "--", prompt]
+           *flag_if("--mcp-config", flow_file("mcp", "claude.json")), *model_flag(model), *effort_flag(effort),
+           "--", prompt]
         end
 
         # `claude -p` prints one JSON object with session_id and result.
@@ -104,7 +107,7 @@ module Maf
 
         def build_command(config, prompt, session_id)
           cmd = %w[claude -p --output-format json --permission-mode bypassPermissions --agent] + [config.role]
-          cmd += model_flag(config.model)
+          cmd += model_flag(config.model) + effort_flag(config.effort)
           cmd += LEAN if config.lean
           cmd + flag_if("--mcp-config", run_file(config, "mcp", "claude.json")) +
             resume(session_id, "--resume") + ["--", prompt]

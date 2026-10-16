@@ -45,15 +45,26 @@ module Maf
           <%= prompt %>
         ERB
 
-        def launch(role, model)
-          ["agent", *model_flag(model), "Read #{role_path(role)} and follow it exactly. Start your work loop now."]
+        def launch(role, model, effort = nil)
+          ["agent", *model_flag(with_effort(model, effort)),
+           "Read #{role_path(role)} and follow it exactly. Start your work loop now."]
         end
 
         # `agent -p --output-format json` prints one result object with session_id and result.
         def build_command(config, prompt, session_id)
-          %w[agent -p --output-format json --force --trust --approve-mcps] + model_flag(config.model) +
+          %w[agent -p --output-format json --force --trust --approve-mcps] +
+            model_flag(with_effort(config.model, config.effort)) +
             resume(session_id, "--resume") + [first_prompt(config.role, prompt, session_id)]
         end
+
+        # Cursor takes the effort as a parameter of the model: MODEL[effort=L].
+        def with_effort(model, effort)
+          return model unless model && effort
+
+          model.end_with?("]") ? model.sub(/\]\z/, ",effort=#{effort}]") : "#{model}[effort=#{effort}]"
+        end
+
+        def effort_hint(effort, model) = model ? nil : "agent --model 'MODEL[effort=#{effort}]'"
 
         # A failed run prints no JSON, only an error on stderr. So a resume
         # without a result event and with "not found" is stale. Cursor reports no token usage.

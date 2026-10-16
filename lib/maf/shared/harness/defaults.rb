@@ -24,9 +24,9 @@ module Maf
         # files outside the project reads its folder there.
         def role_destination(project, role, _settings = {}) = role_path(role) && File.join(project, role_path(role))
 
-        # An ERB template. It gets role, title, description, can_edit, project, prompt, and model.
+        # An ERB template. It gets role, title, description, can_edit, project, prompt, model, and effort.
         def role_template = raise(NotImplementedError, "#{name}: role_template")
-        def render_role(values) = ERB.new(role_template, trim_mode: "-").result_with_hash(**values)
+        def render_role(values) = ERB.new(role_template, trim_mode: "-").result_with_hash(effort: nil, **values)
 
         # nil: the harness lists no models, so every name counts as known.
         def models = nil
@@ -36,6 +36,12 @@ module Maf
 
         # The command that sets the model, for a harness whose role file cannot set it.
         def model_hint(_model) = nil
+
+        # nil: the harness lists no effort levels, so every level counts as known.
+        def efforts(_model = nil) = nil
+        def known_effort?(effort, model = nil) = efforts(model).nil? || efforts(model).include?(effort)
+        # How to set the effort, for a harness that cannot take it with this model.
+        def effort_hint(_effort, _model) = nil
 
         # How an idle agent waits for work. :watch - a watcher wakes the idle
         # session. :await - the stop hook waits after `coord await`.
@@ -96,7 +102,7 @@ module Maf
       # Run: maf start (an interactive session) and the dispatcher (one run per task).
       module Run
         # The command of an interactive session.
-        def launch(_role, _model) = raise(NotImplementedError, "#{name}: launch")
+        def launch(_role, _model, _effort = nil) = raise(NotImplementedError, "#{name}: launch")
         def launch_env = {}
 
         def sandbox_dirs = []
@@ -133,6 +139,7 @@ module Maf
 
         def present(value) = value.to_s.empty? ? nil : value
         def model_flag(model, flag = "--model") = model ? [flag, model] : []
+        def effort_flag(effort, flag = "--effort") = effort ? [flag, effort] : []
         def resume(session_id, *flag) = session_id ? [*flag, session_id] : []
       end
     end

@@ -67,4 +67,16 @@ class OpencodeHarnessTest < Minitest::Test
       assert_equal "deepseek/x", harness.configured_model(config)
     end
   end
+
+  def test_the_effort_is_the_variant
+    assert_includes pairs(harness.build_command(config(effort: "high"), "go", nil)), ["--variant", "high"]
+    refute_includes harness.build_command(config, "go", nil), "--variant"
+  end
+
+  # The TUI has no variant flag, so the agent file carries it.
+  def test_the_agent_file_names_the_variant
+    values = { role: "r", description: "d", can_edit: true, project: "/p", prompt: "P", model: nil }
+    assert_includes harness.render_role(**values, effort: "max"), "variant: max\n"
+    refute_includes harness.render_role(**values), "variant:"
+  end
 end
