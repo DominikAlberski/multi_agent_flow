@@ -187,6 +187,7 @@ multi_agent_flow/
     team_command.rb           # maf team: shows the team, or sets its budget
     retire.rb                 # maf retire: removes one worker and archives its state
     worker_control.rb         # maf worker: stops, starts, or restarts one worker
+    worker_list.rb            # maf worker list: shows the sessions and dispatchers that run
     flow/role_catalog.rb      # merges .maf/roles.yml over the built-in roles
     flow/workflow.rb          # reads .maf/workflow.md for the architect prompt
     flow/mcp_config.rb        # writes the graphify MCP server into .maf/mcp/
@@ -231,6 +232,7 @@ multi_agent_flow/
     hook_session_test.rb      # tests for session isolation
     hook_config_test.rb       # tests for project hooks
     worker_control_test.rb    # tests for maf worker
+    worker_list_test.rb       # tests for maf worker list
     untrack_test.rb           # tests for maf untrack
     analyst_test.rb           # tests for the analyst
     shared_test.rb            # tests for lib/maf/shared/
@@ -353,6 +355,7 @@ ruby test/dispatcher_test.rb         # covers the dispatcher
 ruby test/board_watch_test.rb        # covers the board watcher
 ruby test/context_watch_test.rb      # covers the context-watch hook
 ruby test/worker_control_test.rb     # covers maf worker
+ruby test/worker_list_test.rb        # covers maf worker list
 ruby test/untrack_test.rb            # covers maf untrack
 ruby test/analyst_test.rb            # covers the analyst
 ruby test/shared_test.rb             # covers lib/maf/shared/

@@ -21,7 +21,7 @@ This file lists the code and CLI name of each term in [flow-glossary.md](flow-gl
 | scope | task field `scope`, `--scope` |
 | message | `Messages`, `coord msg` |
 | claim | `coord claim` |
-| presence | `.maf/coordination/presence/<worker>.json`, `coord who` |
+| presence | `.maf/coordination/presence/<worker>.json`, `coord who`, `maf worker list` |
 | commit guard | `assets/git-hooks/pre-commit` |
 | lock | `coord lock`, lock field `worker` |
 | message hook | `coord hooks` |
