@@ -24,7 +24,7 @@ module Maf
       end
 
       def self.hint_line(result)
-        hint = harness(result).effort_hint(result[:effort], result[:model])
+        hint = harness(result).effort_hint(result[:effort])
         hint && "  #{name(result)} -> #{hint}"
       end
 

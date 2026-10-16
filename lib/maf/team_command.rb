@@ -32,9 +32,11 @@ module Maf
 
     def line(id, entry)
       mode = entry["dispatch"] ? "dispatch" : "interactive"
-      [id.ljust(28), entry["role"].to_s.ljust(20), entry["harness"], entry["model"] || "-", mode, state(id, entry)]
+      [id.ljust(28), entry["role"].to_s.ljust(20), entry["harness"], model(entry), mode, state(id, entry)]
         .join("  ")
     end
+
+    def model(entry) = [entry["model"] || "-", entry["effort"]].compact.join("/")
 
     def state(id, entry)
       pid = entry["pid"]

@@ -45,15 +45,11 @@ class CursorHarnessTest < Minitest::Test
     assert_equal "agent", harness.command
   end
 
-  def test_the_effort_is_a_parameter_of_the_model
-    assert_equal %w[agent --model gpt-5[effort=high]], harness.launch("tester", "gpt-5", "high").first(3)
-    run = harness.build_command(config(model: "m[context=1m]", effort: "low"), "go", nil)
-    assert_includes pairs(run), ["--model", "m[context=1m,effort=low]"]
-  end
-
-  def test_an_effort_without_a_model_needs_a_hint
-    assert_includes harness.effort_hint("high", nil), "[effort=high]"
-    assert_nil harness.effort_hint("high", "gpt-5")
-    refute_includes harness.build_command(config(effort: "high"), "go", nil), "--model"
+  # Cursor rejects MODEL[effort=L] and has no effort flag. The model name carries the level.
+  def test_the_effort_needs_a_model_with_the_level_in_its_name
+    assert_equal harness.launch("tester", "gpt-5"), harness.launch("tester", "gpt-5", "high")
+    assert_equal harness.build_command(config(model: "m"), "go", nil),
+                 harness.build_command(config(model: "m", effort: "low"), "go", nil)
+    assert_includes harness.effort_hint("high"), "claude-opus-5-5-high"
   end
 end

@@ -40,8 +40,8 @@ module Maf
         # nil: the harness lists no effort levels, so every level counts as known.
         def efforts(_model = nil) = nil
         def known_effort?(effort, model = nil) = efforts(model).nil? || efforts(model).include?(effort)
-        # How to set the effort, for a harness that cannot take it with this model.
-        def effort_hint(_effort, _model) = nil
+        # How to set the effort, for a harness that cannot take it.
+        def effort_hint(_effort) = nil
 
         # How an idle agent waits for work. :watch - a watcher wakes the idle
         # session. :await - the stop hook waits after `coord await`.

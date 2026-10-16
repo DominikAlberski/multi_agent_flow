@@ -430,6 +430,7 @@ class MafTeamTest < Minitest::Test
     assert_equal 0, status, out
     assert_equal "high", workers.dig("tester-2", "effort")
     assert_includes Maf::SetupAgent.start_args(workers.fetch("tester-2")).each_cons(2), %w[--effort high]
+    assert_includes maf("team").first, "opencode  -/high  interactive"
   end
 
   def test_start_without_arguments_starts_the_prepared_worker

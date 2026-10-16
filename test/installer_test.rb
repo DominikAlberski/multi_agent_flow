@@ -368,6 +368,11 @@ class FlowTest < InstallerTestCase
     assert_equal "max", manifest["agents"].first["effort"]
   end
 
+  def test_names_the_manual_step_for_a_harness_without_an_effort_flag
+    out, = flow("--agent", "cursor:backend-developer", "--effort", "backend-developer=high")
+    assert_includes out, "cursor:backend-developer -> pick a model with the level in its name"
+  end
+
   def test_warns_about_an_unknown_effort
     out, = flow("--agent", "claude:backend-developer", "--effort", "backend-developer=turbo")
     assert_includes out, "does not list these effort levels"

@@ -204,7 +204,7 @@ Use the level that the harness CLI accepts. maf passes it as it is:
 | `codex` | `-c model_reasoning_effort="LEVEL"` | the levels of the model in `~/.codex/models_cache.json` |
 | `hermes` | `--reasoning LEVEL` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
 | `opencode` | `--variant LEVEL` (dispatched), `variant:` in the role file (interactive) | the variants of the provider |
-| `cursor` | the model `MODEL[effort=LEVEL]` | the levels of the model. Pin a model too |
+| `cursor` | nothing: pick a model with the level in its name (`claude-opus-5-5-high`) | see `agent --list-models` |
 
 If you do not set an effort, maf passes nothing, and the default of the harness applies.
 maf saves the effort in `.maf/config.json`. A re-run of `maf add` keeps it.

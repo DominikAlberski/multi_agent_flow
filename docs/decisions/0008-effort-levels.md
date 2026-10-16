@@ -26,8 +26,10 @@ See the table in USER_MANUAL.md.
 - maf has no default effort per role. A default needs data from real runs first.
 - opencode: the TUI has no variant flag, so the role file carries `variant:`.
   A dispatched run also passes `--variant`.
-- Cursor: the effort is a parameter of the model (`MODEL[effort=LEVEL]`).
-  Without a model, maf cannot pass it, and the report names the manual step.
+- Cursor: the CLI has no effort flag, and it rejects `MODEL[effort=LEVEL]` (checked 2026-10-17).
+  The level is a part of the model name (`claude-opus-5-5-high`, `gpt-5.5-extra-high`).
+  The names do not follow one rule, so maf does not build them. maf passes no effort,
+  and the report tells the user to pick a model with the level in its name.
 
 ## Consequences
 
