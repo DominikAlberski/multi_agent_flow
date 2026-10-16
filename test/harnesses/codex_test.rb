@@ -72,8 +72,16 @@ class CodexHarnessTest < Minitest::Test
   def test_launch_makes_the_board_writable
     in_tmpdir do |dir|
       write(".maf/agents/codex/tester.md", "prompt")
-      command = with_env("CODEX_HOME" => dir) { harness.launch("tester", nil) }
+      command = with_codex_help("") { with_env("CODEX_HOME" => dir) { harness.launch("tester", nil) } }
       assert_equal ["--add-dir", File.join(dir, ".maf", "coordination"), "prompt"], command[1..]
+    end
+  end
+
+  def test_launch_runs_without_the_shared_server
+    in_tmpdir do |dir|
+      write(".maf/agents/codex/tester.md", "prompt")
+      command = with_codex_help("--no-daemon") { with_env("CODEX_HOME" => dir) { harness.launch("tester", nil) } }
+      assert_equal %w[codex --no-daemon --add-dir], command.first(3)
     end
   end
 
