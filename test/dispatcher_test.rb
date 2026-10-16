@@ -691,16 +691,17 @@ class MainTest < Minitest::Test
     def coord_dir = "/nonexistent/coordination"
   end
 
-  # A message run already tells the agent to work through `coord next`, so a
-  # cycle with both a message and a task starts one run, and the next cycle
-  # backs off on the unchanged task set.
-  def test_one_run_per_cycle_with_messages_and_tasks
+  # Regression: a message run must not claim, so a task waited up to 4 minutes after two message runs.
+  def test_a_task_runs_in_the_cycle_after_a_message_run
     write_message("backend-developer", "1.md", "architect", "first")
     calls = File.join(@dir, "calls")
-    main = Dispatcher::Main.new(config(command: "echo run >> #{calls}", timeout: 5))
+    main = Dispatcher::Main.new(config(command: "echo %{prompt} >> #{calls}", timeout: 5))
     main.instance_variable_set(:@poller, FakePoller.new(["t1"]))
-    capture_io { 2.times { main.cycle } }
-    assert_equal 1, File.readlines(calls).size
+    capture_io { main.cycle }
+    refute_includes File.read(calls), "claimed task t1"
+
+    capture_io { main.cycle }
+    assert_includes File.read(calls), "The dispatcher claimed task t1 for you."
   end
 
   # Regression: a dead run kept its claim for an hour, and no run resumed the task.

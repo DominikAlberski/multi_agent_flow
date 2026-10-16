@@ -1337,11 +1337,8 @@ module Dispatcher
     # unknown model returns them without an attempt.
     SETTLE = { failed: :release, limited: :restore, broken: :restore }.freeze
 
-    # Tasks still unclaimed after a message run count as dispatched, so the
-    # next cycle backs off instead of starting another run for them.
     def settle(messages, outcome)
       @mailbox.public_send(SETTLE.fetch(outcome, :ack), messages)
-      @watch.dispatched(@poller.unclaimed_task_ids) if @config.poll_tasks
       true
     end
 

@@ -5,6 +5,9 @@
 - Fix: Codex 0.163 ran the commands of a worker in its shared background server. The commands
   got the environment of the shell that started the server, not of the worker: no `.maf/bin` on
   PATH, no `COORD_ROLE` and `COORD_WORKER`. maf now starts Codex with `--no-daemon`.
+- Fix: after a message run, the dispatcher counted the unclaimed tasks as dispatched and backed
+  off: 2 minutes, then 4, then more. A message run must not claim a task, so the task waited
+  without a reason. The task now runs in the next cycle.
 
 ## [0.2.0] - 2026-10-14
 
