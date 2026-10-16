@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Fix: Codex 0.163 ran the commands of a worker in its shared background server. The commands
+  got the environment of the shell that started the server, not of the worker: no `.maf/bin` on
+  PATH, no `COORD_ROLE` and `COORD_WORKER`. maf now starts Codex with `--no-daemon`.
+
 ## [0.2.0] - 2026-10-14
 
 - The sandbox also protects the flow config in `.maf/claude/` and `.maf/mcp/`, and each script
