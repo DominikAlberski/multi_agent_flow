@@ -5,7 +5,7 @@ module Maf
     # Options parses the command line and holds the settings of one run.
     class Options
       attr_accessor :project, :agents
-      attr_reader :removed, :models, :hermes_dir, :list_roles
+      attr_reader :removed, :models, :efforts, :hermes_dir, :list_roles
 
       # Each flag: the OptionParser arguments, and a block that runs in the
       # Options instance with the flag value.
@@ -14,6 +14,7 @@ module Maf
         [["--agent SPEC", "HARNESS:ROLE[:MODEL]"], ->(v) { @agents << parse_agent(v) }],
         [["--remove SPEC", "HARNESS:ROLE"], ->(v) { @removed << parse_agent(v) }],
         [["--model PAIR", "ROLE=MODEL"], ->(v) { @models.store(*v.split("=", 2)) }],
+        [["--effort PAIR", "ROLE=LEVEL"], ->(v) { @efforts.store(*v.split("=", 2)) }],
         [["--hermes-dir DIR"], ->(v) { @hermes_dir = File.expand_path(v) }],
         [["--check"], ->(_) { @check = true }],
         [["--force"], ->(_) { @force = true }],
@@ -22,7 +23,7 @@ module Maf
       ].freeze
 
       def initialize(argv)
-        @argv, @agents, @removed, @models = argv, [], [], {}
+        @argv, @agents, @removed, @models, @efforts = argv, [], [], {}, {}
         @check = @force = @list_roles = false
         @bootstrap = true
       end
@@ -47,6 +48,8 @@ module Maf
       def model_for(agent)
         agent[:model] || @models[agent[:role]] || agent[:saved_model] || Harness[agent[:harness]]&.default_model
       end
+
+      def effort_for(agent) = @efforts[agent[:role]] || agent[:saved_effort]
 
       private
 

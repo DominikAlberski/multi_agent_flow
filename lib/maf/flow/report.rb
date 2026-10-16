@@ -12,8 +12,9 @@ module Maf
 
       def print(results)
         puts "", "Generated role files:", results.map { |result| generated_line(result) }
-        %i[print_missing_models print_unknown_models print_unembeddable print_sessions]
-          .each { |name| send(name, results) }
+        %i[print_missing_models print_unknown_models print_unembeddable].each { |name| send(name, results) }
+        EffortReport.print(results)
+        print_sessions(results)
         print_hermes_reminder
       end
 

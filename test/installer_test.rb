@@ -357,6 +357,23 @@ class FlowTest < InstallerTestCase
     assert_equal "m2", manifest["agents"].first["model"]
   end
 
+  def test_rerun_keeps_a_saved_effort_unless_effort_overrides_it
+    flow("--agent", "opencode:backend-developer", "--effort", "backend-developer=high")
+    assert_includes File.read(stored_agent_file), "variant: high\n"
+
+    flow("--agent", "opencode:architect")
+    assert_equal ["high", nil], manifest["agents"].map { |agent| agent["effort"] }
+
+    flow("--effort", "backend-developer=max")
+    assert_equal "max", manifest["agents"].first["effort"]
+  end
+
+  def test_warns_about_an_unknown_effort
+    out, = flow("--agent", "claude:backend-developer", "--effort", "backend-developer=turbo")
+    assert_includes out, "does not list these effort levels"
+    assert_includes out, "claude:backend-developer -> turbo"
+  end
+
   def test_is_idempotent
     flow("--agent", "opencode:backend-developer")
     first = File.read(agent_file)

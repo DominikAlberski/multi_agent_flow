@@ -72,7 +72,7 @@ module Maf
     end
 
     def prepare
-      Maf.flow("--agent", spec) unless Maf.agent_specs.include?("#{@args.harness}:#{@args.role}")
+      Maf.flow("--agent", spec, *effort_flag) unless Maf.agent_specs.include?("#{@args.harness}:#{@args.role}")
       worktree = SetupAgent::Worktree.ensure(@args.role, @args.worker_id, @args.harness)
       SetupAgent::RoleFile.copy(@root, worktree.dir, @args.harness, @args.role)
       archive_on_harness_change
@@ -87,6 +87,7 @@ module Maf
     end
 
     def spec = [@args.harness, @args.role, @args.model].compact.join(":")
+    def effort_flag = @args.effort ? ["--effort", "#{@args.role}=#{@args.effort}"] : []
 
     def workers_after
       all = Workers.at(@root).all
