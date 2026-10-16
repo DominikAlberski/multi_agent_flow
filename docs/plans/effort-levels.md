@@ -1,7 +1,8 @@
 # Plan: effort levels per agent
 
 Source: issue #44 "Add effort levels".
-Status: draft, open questions at the end. Date: 2026-10-17.
+Status: implemented on branch feat/effort-levels (ADR 0008). Date: 2026-10-17.
+Change from the draft: Cursor rejects `MODEL[effort=L]`, so maf passes no effort to Cursor (see ADR 0008).
 
 ## Problem
 
