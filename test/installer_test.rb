@@ -750,7 +750,7 @@ class SetupAgentTest < Minitest::Test
   end
 
   def test_dispatch_runs_the_main_dispatcher_with_harness_model_and_flags
-    parsed = Maf::SetupAgent::Args.parse(%w[claude reviewer --dispatch --interval 30])
+    parsed = Maf::SetupAgent::Args.parse(%w[claude reviewer --dispatch --effort high --model sonnet --interval 30])
     ran = nil
     root = nil
     Dir.mktmpdir do |dir|
@@ -758,11 +758,11 @@ class SetupAgentTest < Minitest::Test
         root = Dir.pwd
         FileUtils.mkdir_p(".maf/bin")
         FileUtils.touch(".maf/bin/dispatcher")
-        with_exec_stub(->(cmd) { ran = cmd }) { Maf::SetupAgent::Dispatch.launch(parsed, "sonnet") }
+        with_exec_stub(->(cmd) { ran = cmd }) { Maf::SetupAgent::Dispatch.launch(parsed) }
       end
     end
     assert_equal [RbConfig.ruby, File.join(root, ".maf/bin/dispatcher"), "reviewer", "--harness", "claude",
-                  "--model", "sonnet", "--interval", "30"], ran
+                  "--model", "sonnet", "--effort", "high", "--interval", "30"], ran
   end
 
   def wait_for_log(log, limit: 10)
@@ -785,7 +785,7 @@ class SetupAgentTest < Minitest::Test
   def test_dispatch_aborts_without_a_committed_dispatcher
     parsed = Maf::SetupAgent::Args.parse(%w[claude reviewer --dispatch])
     Dir.mktmpdir do |dir|
-      Dir.chdir(dir) { assert_raises(SystemExit) { capture_io { Maf::SetupAgent::Dispatch.launch(parsed, nil) } } }
+      Dir.chdir(dir) { assert_raises(SystemExit) { capture_io { Maf::SetupAgent::Dispatch.launch(parsed) } } }
     end
   end
 
@@ -804,13 +804,21 @@ class SetupAgentTest < Minitest::Test
                  Maf::SetupAgent::Worktree.dir_for("/tmp/myproject", "tester-1")
   end
 
-  def test_manifest_verifies_a_known_agent_and_its_model
+  def test_manifest_verifies_a_known_agent_and_fills_its_model_and_effort
     manifest = Maf::SetupAgent::Manifest.new(
-      [{ "harness" => "opencode", "role" => "backend-developer", "model" => "m" }]
+      [{ "harness" => "opencode", "role" => "backend-developer", "model" => "m", "effort" => "high" }]
     )
 
     manifest.verify!("opencode", "backend-developer")
-    assert_equal "m", manifest.model_for("opencode", "backend-developer")
+    args = manifest.fill(Maf::SetupAgent::Args.parse(%w[opencode backend-developer]))
+    assert_equal %w[m high], [args.model, args.effort]
+  end
+
+  def test_the_flags_win_over_the_saved_model_and_effort
+    manifest = Maf::SetupAgent::Manifest.new([{ "harness" => "claude", "role" => "tester", "model" => "m",
+                                                "effort" => "high" }])
+    args = manifest.fill(Maf::SetupAgent::Args.parse(%w[claude tester --model n --effort low]))
+    assert_equal %w[n low], [args.model, args.effort]
   end
 
   def test_manifest_rejects_an_unknown_agent
@@ -832,8 +840,8 @@ class SetupAgentTest < Minitest::Test
   def test_the_launcher_runs_the_command_of_the_harness
     harness = Maf::Shared::Harness.fetch("cursor")
     calls = []
-    with_exec_stub(->(cmd) { calls << cmd }) { Maf::SetupAgent::Launcher.launch(harness, "tester", "m") }
-    assert_equal harness.launch("tester", "m"), calls.first
+    with_exec_stub(->(cmd) { calls << cmd }) { Maf::SetupAgent::Launcher.launch(harness, "tester", "m", "high") }
+    assert_equal harness.launch("tester", "m", "high"), calls.first
   end
 end
 

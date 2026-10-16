@@ -3,18 +3,23 @@
 module Maf
   module SetupAgent
     # Args reads the positional arguments (HARNESS ROLE[_WORKER] [model:M]),
-    # then the flags. --dispatch and --model M are setup_agent's own flags; all
-    # other flags go to the dispatcher and need --dispatch.
+    # then the flags. --dispatch, --model M, and --effort L are setup_agent's own
+    # flags; all other flags go to the dispatcher and need --dispatch.
     class Args
-      Parsed = Struct.new(:harness, :role, :worker_id, :worker, :model, :dispatch, :detach, :dispatcher_args,
-                          keyword_init: true)
+      Parsed = Struct.new(:harness, :role, :worker_id, :worker, :model, :effort, :dispatch, :detach,
+                          :dispatcher_args, keyword_init: true)
 
       def self.parse(argv)
         dispatch, detach, positional, flags = split(argv)
-        model = take_model(flags)
+        model, effort = %w[--model --effort].map { |flag| take_value(flags, flag) }
+        check_flags(flags, dispatch, detach)
+        Parsed.new(**identity(positional, model, dispatch), effort: effort, dispatch: dispatch, detach: detach,
+                                                            dispatcher_args: flags)
+      end
+
+      def self.check_flags(flags, dispatch, detach)
         reject_stray(flags, dispatch)
         abort "setup_agent: --detach works only with --dispatch" if detach && !dispatch
-        Parsed.new(**identity(positional, model, dispatch), dispatch: dispatch, detach: detach, dispatcher_args: flags)
       end
 
       def self.split(argv)
@@ -31,10 +36,10 @@ module Maf
           model: model || model_arg&.sub(/\Amodel:/, "") }
       end
 
-      def self.take_model(flags)
-        index = flags.index("--model")
+      def self.take_value(flags, flag)
+        index = flags.index(flag)
         value = index && flags.slice!(index, 2)[1]
-        abort "setup_agent: --model needs a value" if index && (value.nil? || value.start_with?("--"))
+        abort "setup_agent: #{flag} needs a value" if index && (value.nil? || value.start_with?("--"))
         value
       end
 
@@ -50,7 +55,8 @@ module Maf
       end
 
       def self.abort_usage
-        abort "usage: maf start HARNESS ROLE[_WORKER] [model:MODEL] [--model MODEL] [--dispatch [FLAGS...]]"
+        abort "usage: maf start HARNESS ROLE[_WORKER] [model:MODEL] [--model MODEL] [--effort LEVEL] " \
+              "[--dispatch [FLAGS...]]"
       end
     end
   end

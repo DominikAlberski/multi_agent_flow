@@ -2,7 +2,7 @@
 
 # team.rb - add, replace, and retire workers in one command.
 #
-#   maf prepare HARNESS ROLE[_WORKER] [--model M] [--dispatch | --interactive] [--replace WORKER]
+#   maf prepare HARNESS ROLE[_WORKER] [--model M] [--effort L] [--dispatch | --interactive] [--replace WORKER]
 #   maf retire WORKER
 #
 # The project manager runs these commands. `maf prepare` adds the role file,
@@ -98,12 +98,12 @@ module Maf
     def start_dispatcher
       Dir.chdir(@root)
       args = [@args.harness, "#{@args.role}_#{@args.worker_id}", "--dispatch", "--detach"]
-      SetupAgent.run(@args.model ? args + ["--model", @args.model] : args)
+      SetupAgent.run(args + { "--model" => @args.model, "--effort" => @args.effort }.compact.flatten)
     end
 
     def entry(dir)
       { "role" => @args.role, "worker_id" => @args.worker_id, "harness" => @args.harness,
-        "model" => @args.model, "dispatch" => @args.dispatch, "dir" => dir }.compact
+        "model" => @args.model, "effort" => @args.effort, "dispatch" => @args.dispatch, "dir" => dir }.compact
     end
 
     def print_next_steps

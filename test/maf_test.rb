@@ -424,6 +424,14 @@ class MafTeamTest < Minitest::Test
     assert_equal "mine\n", File.read(File.join(dir, ".claude", "agents", "mine.md"))
   end
 
+  def test_prepare_saves_the_effort_and_start_replays_it
+    out, status = maf("prepare", "opencode", "tester_2", "--effort", "high")
+
+    assert_equal 0, status, out
+    assert_equal "high", workers.dig("tester-2", "effort")
+    assert_includes Maf::SetupAgent.start_args(workers.fetch("tester-2")).each_cons(2), %w[--effort high]
+  end
+
   def test_start_without_arguments_starts_the_prepared_worker
     maf("prepare", "opencode", "architect_2", "--interactive")
     out, status = maf("start", dir: worktree("architect-2"))

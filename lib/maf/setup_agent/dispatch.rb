@@ -9,11 +9,11 @@ module Maf
     module Dispatch
       DISPATCHER = ".maf/bin/dispatcher"
 
-      def self.launch(args, model)
+      def self.launch(args)
         dispatcher = File.join(Project.root, DISPATCHER)
         require_dispatcher!(dispatcher)
         cmd = [RbConfig.ruby, dispatcher, args.role, "--harness", args.harness]
-        cmd += ["--model", model] if model
+        cmd += { "--model" => args.model, "--effort" => args.effort }.compact.flatten
         cmd += args.dispatcher_args
         args.detach ? detach(cmd, args.worker) : Launcher.exec_or_die(cmd)
       end
