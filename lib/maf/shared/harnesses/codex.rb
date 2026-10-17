@@ -53,7 +53,8 @@ module Maf
 
         # Codex keeps the model list of the account in a cache file. Hidden models are internal.
         def models = CodexModels.listed
-        def efforts(model = nil) = CodexModels.efforts(model)
+        # Without a pinned model, Codex runs the model of its config file.
+        def efforts(model = nil) = CodexModels.efforts(model || CodexModels.configured(home))
         def effort_flag(effort) = effort ? ["-c", "model_reasoning_effort=#{effort.to_s.dump}"] : []
 
         # Codex keeps MCP servers in a global user file. maf does not edit it.
@@ -146,6 +147,12 @@ module Maf
         def self.efforts(model)
           entry = model && cache&.find { |m| m["slug"] == model }
           entry&.fetch("supported_reasoning_levels", nil)&.map { |level| level["effort"] }
+        end
+
+        def self.configured(home)
+          path = File.join(home, "config.toml")
+          top = File.exist?(path) ? File.read(path).split(/^\[/, 2).first.to_s : ""
+          top[/^model\s*=\s*"([^"]+)"/, 1]
         end
 
         def self.cache

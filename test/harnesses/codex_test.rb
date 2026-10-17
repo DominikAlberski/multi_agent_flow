@@ -152,6 +152,22 @@ class CodexEffortTest < Minitest::Test
     end
   end
 
+  def test_without_a_model_reads_the_levels_of_the_configured_model
+    assert_equal %w[low], configured_efforts("model = \"gpt-a\"\n[tui]\nmodel = \"x\"\n")
+  end
+
+  # A model key in a table belongs to that table, not to the default.
+  def test_a_model_in_a_table_is_not_the_default
+    assert_nil configured_efforts("[profiles.x]\nmodel = \"gpt-a\"\n")
+  end
+
+  def configured_efforts(toml)
+    with_cache([{ slug: "gpt-a", supported_reasoning_levels: [{ effort: "low" }] }]) do
+      write(File.join(Dir.home, ".codex", "config.toml"), toml)
+      with_env("CODEX_HOME" => File.join(Dir.home, ".codex")) { harness.efforts }
+    end
+  end
+
   def with_cache(models, &block)
     Dir.mktmpdir do |home|
       write(File.join(home, ".codex", "models_cache.json"), JSON.generate(models: models))
