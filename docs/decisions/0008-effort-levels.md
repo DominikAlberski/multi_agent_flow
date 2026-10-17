@@ -38,5 +38,7 @@ See the table in USER_MANUAL.md.
 ## Consequences
 
 - A new harness overrides `effort_flag`, and `efforts` if it can list its levels.
-- A change of the effort in `maf start --effort` does not change the role file.
-  For opencode in an interactive session, use `maf add --effort` to update the role file.
+- A change of the effort in `maf start --effort` does not change the role file: the role files
+  are shared, and a one-time flag must not change the other sessions.
+  For opencode in an interactive session, maf prints a hint: `ctrl+t` in the TUI, or `maf add --effort`.
+- maf does not write `effort:` into the Claude agent file. maf passes `--effort` on each `claude` command.

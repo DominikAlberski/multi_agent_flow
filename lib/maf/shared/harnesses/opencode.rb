@@ -96,7 +96,8 @@ module Maf
         def config_env(file) = File.exist?(file) ? { "OPENCODE_CONFIG" => file } : {}
 
         # The TUI has no variant flag. It reads the variant from the agent file.
-        def launch(role, model, _effort = nil)
+        def launch(role, model, effort = nil)
+          OpencodeVariant.warn_unused(File.join(role_dir, "#{role}.md"), role, effort)
           ["opencode", ".", "--agent", role, "--prompt", "Start your work loop now.", *model_flag(model)]
         end
 
@@ -168,6 +169,22 @@ module Maf
           "select json_extract(data,'$.tool') tool, json_extract(data,'$.state.input.command') command, " \
             "length(json_extract(data,'$.state.output')) size from part where session_id = '#{id}' " \
             "and json_extract(data,'$.type') = 'tool'"
+        end
+      end
+
+      # OpencodeVariant tells the user how to change the level of an interactive session.
+      module OpencodeVariant
+        PATTERN = /\A---\n(?:(?!^---$).)*?^variant:\s*(\S+)/m
+        HINT = "maf: the opencode TUI cannot take --effort %<effort>s. The session starts with %<current>s. " \
+               "In the session, press ctrl+t to pick the variant %<effort>s. If the agent is in its work " \
+               "loop, stop it (Esc) and restart the loop: \"Start your work loop now.\" " \
+               "To keep the level for each session: maf add opencode:%<role>s --effort %<role>s=%<effort>s"
+
+        def self.warn_unused(path, role, effort)
+          current = File.exist?(path) ? File.read(path)[PATTERN, 1] : nil
+          return if effort.nil? || effort == current
+
+          warn format(HINT, effort: effort, role: role, current: current ? "variant #{current}" : "the default variant")
         end
       end
     end

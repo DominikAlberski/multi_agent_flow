@@ -222,6 +222,10 @@ for the level after the model. Enter keeps the default of the role.
 maf saves the effort in `.maf/config.json`. A re-run of `maf add` keeps it.
 `maf start` and `maf prepare` take `--effort LEVEL` for one worker.
 The flag wins over the saved effort. maf warns when the harness does not list a level.
+The opencode TUI has no flag for the level. `maf start opencode ROLE --effort LEVEL` (interactive)
+starts with the `variant:` of the role file and prints how to change it: press `ctrl+t` in the
+session to pick the variant. If the agent is in its work loop, stop it (Esc) and type
+"Start your work loop now." again.
 
 ### 5. Install
 
