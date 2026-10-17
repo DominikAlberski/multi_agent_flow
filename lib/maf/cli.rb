@@ -21,6 +21,7 @@ module Maf
 
   def self.flow(*args) = Flow::Generator.new(["--project", Dir.pwd, *args]).run
   def self.role_names = Flow::RoleCatalog.new(Dir.pwd).roles.keys
+  def self.role_effort(role) = Flow::RoleCatalog.new(Dir.pwd).roles.dig(role, "effort")
 
   def self.agents = File.exist?(MANIFEST) ? JSON.parse(File.read(MANIFEST)).fetch("agents") : []
   def self.agent_specs = agents.map { |a| "#{a["harness"]}:#{a["role"]}" }
@@ -38,15 +39,16 @@ module Maf
 
   class CLI
     COMMANDS = {
-      "add" => "[HARNESS:ROLE[:MODEL] ...] [--model ROLE=MODEL]  add agents and install the flow; " \
-               "without arguments it asks",
+      "add" => "[HARNESS:ROLE[:MODEL] ...] [--model ROLE=MODEL] [--effort ROLE=LEVEL]  add agents and install " \
+               "the flow; without arguments it asks",
       "remove" => "HARNESS:ROLE ...                        remove agents",
       "update" => "                                        regenerate the files of the current agents",
       "agents" => "                                        list the current agents",
       "roles" => "                                        list the built-in roles and the project roles",
       "role" => "add NAME                                add a stub role to .maf/roles.yml",
-      "start" => "[HARNESS ROLE[_WORKER]] [--dispatch [--detach]]  start one agent in its worktree",
-      "prepare" => "HARNESS ROLE[_WORKER] [--dispatch|--interactive] [--replace W]  prepare a worker; " \
+      "start" => "[HARNESS ROLE[_WORKER]] [--effort LEVEL] [--dispatch [--detach]]  start one agent in its worktree",
+      "prepare" => "HARNESS ROLE[_WORKER] [--effort LEVEL] [--dispatch|--interactive] [--replace W]  " \
+                   "prepare a worker; " \
                    "--dispatch starts it (default for the architect)",
       "retire" => "ROLE[_WORKER]                           remove a worker; its tasks return to the pool",
       "worker" => "status|stop|start|restart ROLE[_WORKER] [--force] [--max-context N] [--max-session-runs N] " \
@@ -132,7 +134,8 @@ module Maf
     end
 
     def agent_line(agent)
-      "#{agent["harness"]}:#{agent["role"]}".ljust(32) + agent["model"].to_s
+      effort = agent["effort"] && "effort=#{agent["effort"]}"
+      "#{agent["harness"]}:#{agent["role"]}".ljust(32) + [agent["model"], effort].compact.join(" ")
     end
   end
 end

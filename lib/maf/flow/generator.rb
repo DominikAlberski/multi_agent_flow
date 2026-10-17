@@ -26,6 +26,7 @@ module Maf
         Validator.project!(@options)
         @catalog = RoleCatalog.new(@options.project)
         @roles = @catalog.roles
+        @options.role_efforts = @roles.transform_values { |data| data["effort"] }
       end
 
       def generate_all
@@ -51,7 +52,7 @@ module Maf
 
       def print_role(key, data)
         puts "", "  #{key} (#{@catalog.source(key)})", "    #{data.fetch("description")}",
-             "    model hint: #{data.fetch("model_hint")}"
+             "    model hint: #{data.fetch("model_hint")}", *("    effort: #{data["effort"]}" if data["effort"])
       end
 
       def finish_without_agents

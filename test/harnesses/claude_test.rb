@@ -74,4 +74,15 @@ class ClaudeHarnessTest < Minitest::Test
     assert_includes harness.architect_rule, "ScheduleWakeup"
     assert_nil harness("codex").architect_rule
   end
+
+  def test_the_effort_goes_to_the_run_and_the_launch
+    assert_includes pairs(harness.build_command(config(effort: "high"), "go", nil)), ["--effort", "high"]
+    assert_includes pairs(in_tmpdir { harness.launch("tester", nil, "max") }), ["--effort", "max"]
+    refute_includes harness.build_command(config, "go", nil), "--effort"
+  end
+
+  def test_the_effort_levels
+    assert harness.known_effort?("xhigh")
+    refute harness.known_effort?("ultra")
+  end
 end

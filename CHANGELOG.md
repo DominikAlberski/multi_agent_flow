@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Effort levels per role (#44): `maf add --effort ROLE=LEVEL`, `maf start` and `maf prepare
+  --effort LEVEL`, and `dispatcher --effort LEVEL`. maf passes the level to the harness in its
+  own form: `--effort` (Claude Code), `model_reasoning_effort` (Codex), `--reasoning` (Hermes),
+  `--variant` (opencode), and the model name for Cursor (`gpt-5.3-codex` + `high` =
+  `gpt-5.3-codex-high`). Each role has a default level in `roles.yml` (`effort:`), used when the
+  harness lists it. After `maf update`, the claude, codex, hermes, and cursor agents get the
+  default of their role. The interactive mode shows the levels of each model and asks for one.
 - Fix: Codex 0.163 ran the commands of a worker in its shared background server. The commands
   got the environment of the shell that started the server, not of the worker: no `.maf/bin` on
   PATH, no `COORD_ROLE` and `COORD_WORKER`. maf now starts Codex with `--no-daemon`.

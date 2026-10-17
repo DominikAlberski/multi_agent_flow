@@ -37,6 +37,9 @@ module Maf
           <% if model -%>
           model: <%= model %>
           <% end -%>
+          <% if effort -%>
+          variant: <%= effort %>
+          <% end -%>
           temperature: 0.1
           permission:
             edit: <%= can_edit ? "allow" : "deny" %>
@@ -92,15 +95,19 @@ module Maf
         def run_env(config) = config_env(run_file(config, "mcp", "opencode.json"))
         def config_env(file) = File.exist?(file) ? { "OPENCODE_CONFIG" => file } : {}
 
-        def launch(role, model)
+        # The TUI has no variant flag. It reads the variant from the agent file.
+        def launch(role, model, effort = nil)
+          OpencodeVariant.warn_unused(File.join(role_dir, "#{role}.md"), role, effort)
           ["opencode", ".", "--agent", role, "--prompt", "Start your work loop now.", *model_flag(model)]
         end
+
+        def effort_flag(effort) = super(effort, "--variant")
 
         # `opencode run --format json`. The result event shape is not verified,
         # so the log shows no result text.
         def build_command(config, prompt, session_id)
           %w[opencode run --format json --agent] + [config.role] + model_flag(config.model, "-m") +
-            resume(session_id, "--session") + [prompt]
+            effort_flag(config.effort) + resume(session_id, "--session") + [prompt]
         end
 
         # DeepSeek costs twice as much at peak hours.
@@ -162,6 +169,22 @@ module Maf
           "select json_extract(data,'$.tool') tool, json_extract(data,'$.state.input.command') command, " \
             "length(json_extract(data,'$.state.output')) size from part where session_id = '#{id}' " \
             "and json_extract(data,'$.type') = 'tool'"
+        end
+      end
+
+      # OpencodeVariant tells the user how to change the level of an interactive session.
+      module OpencodeVariant
+        PATTERN = /\A---\n(?:(?!^---$).)*?^variant:\s*(\S+)/m
+        HINT = "maf: the opencode TUI cannot take --effort %<effort>s. The session starts with %<current>s. " \
+               "In the session, press ctrl+t to pick the variant %<effort>s. If the agent is in its work " \
+               "loop, stop it (Esc) and restart the loop: \"Start your work loop now.\" " \
+               "To keep the level for each session: maf add opencode:%<role>s --effort %<role>s=%<effort>s"
+
+        def self.warn_unused(path, role, effort)
+          current = File.exist?(path) ? File.read(path)[PATTERN, 1] : nil
+          return if effort.nil? || effort == current
+
+          warn format(HINT, effort: effort, role: role, current: current ? "variant #{current}" : "the default variant")
         end
       end
     end

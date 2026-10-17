@@ -52,12 +52,10 @@ module Maf
         end
 
         # Codex keeps the model list of the account in a cache file. Hidden models are internal.
-        def models
-          models = JSON.parse(File.read(File.join(Dir.home, ".codex", "models_cache.json"))).fetch("models")
-          models.select { |m| m["visibility"] == "list" }.map { |m| m["slug"] }
-        rescue SystemCallError, JSON::ParserError, KeyError, NoMethodError
-          nil
-        end
+        def models = CodexModels.listed(home)
+        # Without a pinned model, Codex runs the model of its config file.
+        def efforts(model = nil) = CodexModels.efforts(model || CodexModels.configured(home), home)
+        def effort_flag(effort) = effort ? ["-c", "model_reasoning_effort=#{effort.to_s.dump}"] : []
 
         # Codex keeps MCP servers in a global user file. maf does not edit it.
         def mcp_command(server, vault) = "codex mcp add #{server} -- ruby #{vault} mcp"
@@ -79,12 +77,12 @@ module Maf
           tracked.call(role_dir) + hooks
         end
 
-        def launch(role, model)
+        def launch(role, model, effort = nil)
           abort "setup_agent: #{role_path(role)} missing." unless File.exist?(role_path(role))
 
           warn_untrusted
           ["codex", *no_daemon, "--add-dir", File.join(Project.root, ".maf", "coordination"), *model_flag(model),
-           File.read(role_path(role))]
+           *effort_flag(effort), File.read(role_path(role))]
         end
 
         def no_daemon = codex_help.include?("--no-daemon") ? ["--no-daemon"] : []
@@ -113,7 +111,7 @@ module Maf
         def build_command(config, prompt, session_id)
           cmd = %w[codex exec] + (session_id ? ["resume"] : [])
           cmd += %w[--json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox]
-          cmd += model_flag(config.model, "-m")
+          cmd += model_flag(config.model, "-m") + effort_flag(config.effort)
           cmd += lean_flags if config.lean
           cmd + resume(session_id) + [first_prompt(config.role, prompt, session_id)]
         end
@@ -138,6 +136,29 @@ module Maf
         def transcript_calls(id)
           path = Dir.glob(File.join(Dir.home, ".codex", "sessions", "**", "rollout-*#{id}.jsonl")).first
           CodexTranscript.calls(jsonl(path).map { |event| event["payload"] || {} })
+        end
+      end
+
+      # CodexModels reads the model list of the account from the cache file of Codex.
+      module CodexModels
+        def self.listed(home) = cache(home)&.select { |m| m["visibility"] == "list" }&.map { |m| m["slug"] }
+
+        # nil: no model, or a model outside the cache.
+        def self.efforts(model, home)
+          entry = model && cache(home)&.find { |m| m["slug"] == model }
+          entry&.fetch("supported_reasoning_levels", nil)&.map { |level| level["effort"] }
+        end
+
+        def self.configured(home)
+          path = File.join(home, "config.toml")
+          top = File.exist?(path) ? File.read(path).split(/^\[/, 2).first.to_s : ""
+          top[/^model\s*=\s*"([^"]+)"/, 1]
+        end
+
+        def self.cache(home)
+          JSON.parse(File.read(File.join(home, "models_cache.json"))).fetch("models")
+        rescue SystemCallError, JSON::ParserError, KeyError, NoMethodError
+          nil
         end
       end
 
