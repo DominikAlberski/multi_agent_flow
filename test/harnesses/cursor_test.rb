@@ -46,10 +46,50 @@ class CursorHarnessTest < Minitest::Test
   end
 
   # Cursor rejects MODEL[effort=L] and has no effort flag. The model name carries the level.
-  def test_the_effort_needs_a_model_with_the_level_in_its_name
-    assert_equal harness.launch("tester", "gpt-5"), harness.launch("tester", "gpt-5", "high")
-    assert_equal harness.build_command(config(model: "m"), "go", nil),
-                 harness.build_command(config(model: "m", effort: "low"), "go", nil)
-    assert_includes harness.effort_hint("high"), "claude-opus-5-5-high"
+  def test_the_effort_goes_into_the_model_name
+    assert_equal %w[agent --model gpt-5-high], harness.launch("tester", "gpt-5", "high").first(3)
+    assert_equal %w[agent --model gpt-5], harness.launch("tester", "gpt-5").first(3)
+    assert_includes pairs(harness.build_command(config(model: "m-fast", effort: "low"), "go", nil)),
+                    %w[--model m-low-fast]
+  end
+
+  LIST = "Available models\n\nauto - Auto (current, default)\ngpt-c-low - C Low\ngpt-c - C\n" \
+         "gpt-c-high-fast - C High Fast\nopus-thinking-high - Opus\nopus-thinking-xhigh - Opus XH\n"
+
+  def test_lists_each_model_without_its_level
+    with_models do
+      assert_equal %w[auto gpt-c gpt-c-fast opus-thinking], harness.models
+      assert_equal([%w[low], %w[high], %w[high xhigh], []],
+                   %w[gpt-c gpt-c-fast opus-thinking auto].map { |m| harness.efforts(m) })
+    end
+  end
+
+  # opus-thinking is not a model name by itself. Only opus-thinking-high is.
+  def test_a_model_without_its_own_name_needs_a_level
+    with_models do
+      assert harness.known_model?("opus-thinking-high")
+      assert harness.effort_required?("opus-thinking")
+      refute harness.effort_required?("gpt-c")
+    end
+  end
+
+  def with_models(&block)
+    Dir.mktmpdir do |bin|
+      fake_agent(bin)
+      with_env("PATH" => "#{bin}#{File::PATH_SEPARATOR}#{ENV.fetch("PATH")}", &block)
+    end
+  end
+
+  def teardown = forget_models
+
+  def fake_agent(bin)
+    forget_models
+    File.write(File.join(bin, "agent"), "#!/bin/sh\nprintf '#{LIST}'\n")
+    File.chmod(0o755, File.join(bin, "agent"))
+  end
+
+  def forget_models
+    models = Maf::Shared::Harnesses::CursorModels
+    models.remove_instance_variable(:@listed) if models.instance_variable_defined?(:@listed)
   end
 end
