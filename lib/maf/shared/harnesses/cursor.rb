@@ -38,7 +38,7 @@ module Maf
           name: <%= role %>
           description: <%= description %>
           <% if model -%>
-          model: <%= model %>
+          model: <%= Maf::Shared::Harnesses::CursorModels.name(model, effort) %>
           <% end -%>
           readonly: <%= !can_edit %>
           ---
@@ -47,6 +47,7 @@ module Maf
         ERB
 
         def launch(role, model, effort = nil)
+          warn "maf: Cursor takes the level in the model name. Without a model, maf drops --effort." if effort && !model
           ["agent", *model_flag(CursorModels.name(model, effort)),
            "Read #{role_path(role)} and follow it exactly. Start your work loop now."]
         end
@@ -95,10 +96,10 @@ module Maf
 
         def self.bases = listed&.map { |model| model.sub(LEVEL, "") }&.uniq
 
-        # nil: maf cannot read the list.
+        # nil: maf cannot read the list. A name with a level takes no other level.
         def self.efforts(model)
           return nil unless listed
-          return [] unless model
+          return [] if model.nil? || (model.match?(LEVEL) && listed.include?(model))
 
           LEVELS.select { |level| listed.include?(name(model, level)) }
         end
@@ -106,9 +107,11 @@ module Maf
         # A base that Cursor does not list by itself runs only with a level.
         def self.effort_required?(model) = !listed.nil? && !listed.include?(model) && !efforts(model).to_a.empty?
 
+        # A name with a level gets the new level instead.
         def self.name(model, effort)
           return model unless model && effort
 
+          model = model.sub(LEVEL, "")
           model.end_with?("-fast") ? model.sub(/-fast\z/, "-#{effort}-fast") : "#{model}-#{effort}"
         end
       end

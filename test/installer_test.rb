@@ -368,6 +368,26 @@ class FlowTest < InstallerTestCase
     assert_equal "max", manifest["agents"].first["effort"]
   end
 
+  # --effort ROLE=LEVEL with an --agent of the role does not change the saved agents of the role.
+  def test_the_effort_flag_applies_to_the_agents_of_this_run
+    flow("--agent", "claude:reviewer", "--effort", "reviewer=max")
+    flow("--agent", "hermes:reviewer", "--effort", "reviewer=ultra")
+    assert_equal %w[max ultra], manifest["agents"].map { |agent| agent["effort"] }
+  end
+
+  def test_an_empty_effort_clears_the_level
+    flow("--agent", "claude:tester", "--effort", "tester=max")
+    flow("--effort", "tester=")
+    assert_nil manifest["agents"].first["effort"]
+  end
+
+  # A saved level belongs to the saved model.
+  def test_a_new_model_gets_the_role_default
+    flow("--agent", "claude:tester:sonnet", "--effort", "tester=max")
+    flow("--agent", "claude:tester:haiku")
+    assert_equal "low", manifest["agents"].first["effort"]
+  end
+
   # A role gets its default level only from a harness that lists the level.
   def test_a_role_gets_its_default_effort
     flow("--agent", "claude:tester", "--agent", "claude:architect", "--agent", "opencode:backend-developer")

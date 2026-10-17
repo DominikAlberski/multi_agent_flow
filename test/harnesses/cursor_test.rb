@@ -59,8 +59,8 @@ class CursorHarnessTest < Minitest::Test
   def test_lists_each_model_without_its_level
     with_models do
       assert_equal %w[auto gpt-c gpt-c-fast opus-thinking], harness.models
-      assert_equal([%w[low], %w[high], %w[high xhigh], []],
-                   %w[gpt-c gpt-c-fast opus-thinking auto].map { |m| harness.efforts(m) })
+      assert_equal([%w[low], %w[high], %w[high xhigh], [], []],
+                   %w[gpt-c gpt-c-fast opus-thinking auto opus-thinking-high].map { |m| harness.efforts(m) })
     end
   end
 
@@ -71,6 +71,18 @@ class CursorHarnessTest < Minitest::Test
       assert harness.effort_required?("opus-thinking")
       refute harness.effort_required?("gpt-c")
     end
+  end
+
+  # A name with a level gets the new level, not a second one. Without a model, the level is lost.
+  def test_a_new_level_replaces_the_level_in_the_name
+    assert_equal %w[agent --model m-low-fast], harness.launch("tester", "m-high-fast", "low").first(3)
+    _, err = capture_io { harness.launch("tester", nil, "high") }
+    assert_includes err, "maf drops --effort"
+  end
+
+  def test_the_role_file_names_the_model_with_its_level
+    values = { role: "r", description: "d", can_edit: true, project: "/p", prompt: "P" }
+    assert_includes harness.render_role(**values, model: "gpt-c", effort: "high"), "model: gpt-c-high\n"
   end
 
   def with_models(&block)

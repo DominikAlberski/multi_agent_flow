@@ -220,6 +220,9 @@ In the interactive mode (`maf`), the model list shows the levels of each model, 
 for the level after the model. Enter keeps the default of the role.
 
 maf saves the effort in `.maf/config.json`. A re-run of `maf add` keeps it.
+With an `--agent` of the role, `--effort ROLE=LEVEL` applies only to the agents of that run.
+Without one, it changes the saved agents of the role. `--effort ROLE=` clears the level.
+A new model for a role drops its saved level, and the default of the role applies.
 `maf start` and `maf prepare` take `--effort LEVEL` for one worker.
 The flag wins over the saved effort. maf warns when the harness does not list a level.
 The opencode TUI has no flag for the level. `maf start opencode ROLE --effort LEVEL` (interactive)

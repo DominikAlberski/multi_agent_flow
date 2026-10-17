@@ -120,7 +120,7 @@ class CodexHarnessTest < Minitest::Test
     models = [{ slug: "gpt-a", visibility: "list" }, { slug: "gpt-x", visibility: "hide" }]
     Dir.mktmpdir do |home|
       write(File.join(home, ".codex", "models_cache.json"), JSON.generate(models: models))
-      assert_equal ["gpt-a"], with_env("HOME" => home) { harness.models }
+      assert_equal ["gpt-a"], with_env("HOME" => home, "CODEX_HOME" => nil) { harness.models }
     end
   end
 end
@@ -161,6 +161,14 @@ class CodexEffortTest < Minitest::Test
     assert_nil configured_efforts("[profiles.x]\nmodel = \"gpt-a\"\n")
   end
 
+  # CODEX_HOME moves the cache file too.
+  def test_reads_the_cache_of_codex_home
+    Dir.mktmpdir do |home|
+      write(File.join(home, "models_cache.json"), JSON.generate(models: [{ slug: "gpt-a", visibility: "list" }]))
+      assert_equal ["gpt-a"], with_env("CODEX_HOME" => home) { harness.models }
+    end
+  end
+
   def configured_efforts(toml)
     with_cache([{ slug: "gpt-a", supported_reasoning_levels: [{ effort: "low" }] }]) do
       write(File.join(Dir.home, ".codex", "config.toml"), toml)
@@ -171,7 +179,7 @@ class CodexEffortTest < Minitest::Test
   def with_cache(models, &block)
     Dir.mktmpdir do |home|
       write(File.join(home, ".codex", "models_cache.json"), JSON.generate(models: models))
-      with_env("HOME" => home, &block)
+      with_env("HOME" => home, "CODEX_HOME" => nil, &block)
     end
   end
 end

@@ -52,9 +52,9 @@ module Maf
         end
 
         # Codex keeps the model list of the account in a cache file. Hidden models are internal.
-        def models = CodexModels.listed
+        def models = CodexModels.listed(home)
         # Without a pinned model, Codex runs the model of its config file.
-        def efforts(model = nil) = CodexModels.efforts(model || CodexModels.configured(home))
+        def efforts(model = nil) = CodexModels.efforts(model || CodexModels.configured(home), home)
         def effort_flag(effort) = effort ? ["-c", "model_reasoning_effort=#{effort.to_s.dump}"] : []
 
         # Codex keeps MCP servers in a global user file. maf does not edit it.
@@ -141,11 +141,11 @@ module Maf
 
       # CodexModels reads the model list of the account from the cache file of Codex.
       module CodexModels
-        def self.listed = cache&.select { |m| m["visibility"] == "list" }&.map { |m| m["slug"] }
+        def self.listed(home) = cache(home)&.select { |m| m["visibility"] == "list" }&.map { |m| m["slug"] }
 
         # nil: no model, or a model outside the cache.
-        def self.efforts(model)
-          entry = model && cache&.find { |m| m["slug"] == model }
+        def self.efforts(model, home)
+          entry = model && cache(home)&.find { |m| m["slug"] == model }
           entry&.fetch("supported_reasoning_levels", nil)&.map { |level| level["effort"] }
         end
 
@@ -155,8 +155,8 @@ module Maf
           top[/^model\s*=\s*"([^"]+)"/, 1]
         end
 
-        def self.cache
-          JSON.parse(File.read(File.join(Dir.home, ".codex", "models_cache.json"))).fetch("models")
+        def self.cache(home)
+          JSON.parse(File.read(File.join(home, "models_cache.json"))).fetch("models")
         rescue SystemCallError, JSON::ParserError, KeyError, NoMethodError
           nil
         end

@@ -50,12 +50,31 @@ module Maf
         agent[:model] || @models[agent[:role]] || agent[:saved_model] || Harness[agent[:harness]]&.default_model
       end
 
+      # An empty --effort ROLE= clears the level: the harness default applies.
+      # A saved level belongs to the saved model, so a new model gets the role default.
       def effort_for(agent)
-        @efforts[agent[:role]] || agent[:saved_effort] ||
+        flag = effort_flag(agent)
+        return (flag unless flag.empty?) if flag
+
+        (agent[:saved_effort] unless model_changed?(agent)) ||
           Models.default_effort(agent[:harness], @role_efforts[agent[:role]], model_for(agent))
       end
 
       private
+
+      # --effort ROLE=LEVEL applies to the agents of this run. Without one of
+      # the role, it applies to the saved agents of the role.
+      def effort_flag(agent)
+        role = agent[:role]
+        @efforts[role] if run_agent?(agent) || @agents.none? { |a| a[:role] == role && run_agent?(a) }
+      end
+
+      def run_agent?(agent) = agent.key?(:model)
+
+      def model_changed?(agent)
+        chosen = agent[:model] || @models[agent[:role]]
+        chosen && chosen != agent[:saved_model]
+      end
 
       def parser
         OptionParser.new do |o|
