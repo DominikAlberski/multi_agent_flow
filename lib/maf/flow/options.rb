@@ -4,7 +4,7 @@ module Maf
   module Flow
     # Options parses the command line and holds the settings of one run.
     class Options
-      attr_accessor :project, :agents
+      attr_accessor :project, :agents, :role_efforts
       attr_reader :removed, :models, :efforts, :hermes_dir, :list_roles
 
       # Each flag: the OptionParser arguments, and a block that runs in the
@@ -24,6 +24,7 @@ module Maf
 
       def initialize(argv)
         @argv, @agents, @removed, @models, @efforts = argv, [], [], {}, {}
+        @role_efforts = {}
         @check = @force = @list_roles = false
         @bootstrap = true
       end
@@ -49,7 +50,10 @@ module Maf
         agent[:model] || @models[agent[:role]] || agent[:saved_model] || Harness[agent[:harness]]&.default_model
       end
 
-      def effort_for(agent) = @efforts[agent[:role]] || agent[:saved_effort]
+      def effort_for(agent)
+        @efforts[agent[:role]] || agent[:saved_effort] ||
+          Models.default_effort(agent[:harness], @role_efforts[agent[:role]], model_for(agent))
+      end
 
       private
 

@@ -4,6 +4,9 @@
 # the model with --model ROLE=MODEL. If the user does not choose a model,
 # claude roles get lib/maf/flow.rb's DEFAULT_MODELS entry (claude-opus-5-5).
 #
+# `effort` is the default effort level. A role gets it when the harness lists
+# the level. --effort ROLE=LEVEL overrides it. A lower level uses fewer tokens.
+#
 # `description` is also the routing line in the architect's "Available roles"
 # list. Keep it short and specific to the role.
 #
@@ -53,6 +56,7 @@ roles:
       - Process detail in reports. The user needs outcomes and decisions.
       - Optimistic status. Report blockers and failed checks as they are.
     model_hint: "Strongest reasoning and long context, conversational. Cloud: Claude Opus 5.5 (default for the claude harness), GPT-5.x."
+    effort: medium
     can_edit: false
 
   architect:
@@ -96,6 +100,7 @@ roles:
       - Code in task specs. Describe behavior and constraints instead.
       - Trust in a worker report without a diff check.
     model_hint: "Strongest reasoning and long context. Cloud: Claude Opus 5.5 (default for the claude harness), GPT-5.x, deepseek-v4."
+    effort: high
     can_edit: false
 
   backend-developer:
@@ -123,6 +128,7 @@ roles:
       - Edits to a test that looks wrong. Report the test to the architect.
       - Claims about code that you did not read.
     model_hint: "A strong code model. A local Qwen3.8-27B is enough for well-scoped tasks; use a cloud coder for hard or large changes."
+    effort: medium
     can_edit: true
 
   frontend-developer:
@@ -149,6 +155,7 @@ roles:
       - Values that are hard-coded to make a test pass.
       - Visual changes outside the task scope.
     model_hint: "Same as backend-developer: local coder for scoped work, cloud coder for hard UI work."
+    effort: medium
     can_edit: true
 
   tester:
@@ -174,6 +181,7 @@ roles:
       - Assertions that only repeat the implementation.
       - Deleted or weakened tests. A test removal needs architect approval.
     model_hint: "Mechanical test work usually fits a local coder model; use cloud for subtle failure analysis."
+    effort: low
     can_edit: true
 
   reviewer:
@@ -216,6 +224,7 @@ roles:
       - Style comments that the project's linter already covers.
       - A warning or minor finding labeled critical to force another round.
     model_hint: "Judgment-heavy. Prefer a cloud model with strong review ability."
+    effort: high
     can_edit: false
 
   skeptic:
@@ -252,6 +261,7 @@ roles:
       - A warning or minor finding labeled critical to force another round.
       - Style comments. The reviewer and the linter cover style.
     model_hint: "Judgment-heavy. Use a different model family from reviewer and auditor, for example GPT-5.x if reviewer runs Claude. Different models miss different defects."
+    effort: high
     can_edit: false
 
   auditor:
@@ -286,4 +296,5 @@ roles:
       - A warning or minor finding labeled critical to force another round.
       - Style comments. The reviewer and the linter cover style.
     model_hint: "Judgment-heavy. Use a different model family from reviewer and skeptic, for example Gemini, Grok, or a strong local model. Different models miss different defects."
+    effort: high
     can_edit: false

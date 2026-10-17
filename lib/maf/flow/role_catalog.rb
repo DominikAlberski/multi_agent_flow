@@ -6,7 +6,7 @@ module Maf
     # role in .maf/roles.yml adds a role or replaces a built-in role.
     class RoleCatalog
       FILE = ".maf/roles.yml"
-      DEFAULTS = { "model_hint" => "", "can_edit" => true }.freeze
+      DEFAULTS = { "model_hint" => "", "can_edit" => true, "effort" => nil }.freeze
 
       def initialize(project)
         @project = project

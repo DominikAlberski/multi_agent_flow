@@ -19,12 +19,21 @@ class ModelsTest < Minitest::Test
 end
 
 class MenuAddTest < Minitest::Test
+  LEVELS = { "codex" => { "gpt-a" => %w[low high] },
+             "claude" => { nil => %w[low high], "claude-sonnet-5-5" => %w[low high] } }.freeze
+
   def setup
     flows = @flows = []
     stub(Maf, :flow) { |*args| flows << args }
     stub(Maf, :role_names) { %w[architect tester] }
+    stub(Maf, :role_effort) { |role| role == "tester" ? "low" : nil }
+    stub_models
+  end
+
+  def stub_models
     stub(Maf::Flow::Models, :installed) { %w[claude codex] }
     stub(Maf::Flow::Models, :for) { |harness| harness == "codex" ? %w[gpt-a gpt-b] : nil }
+    stub(Maf::Flow::Models, :efforts) { |harness, model| LEVELS.fetch(harness, {}).fetch(model, []) }
   end
 
   def teardown
@@ -43,23 +52,32 @@ class MenuAddTest < Minitest::Test
   end
 
   def test_it_offers_the_installed_harnesses_and_their_models
-    out = add("2\n1,2\n2\n\n")
+    out = add("2\n1,2\n2\n1\n2\n")
 
     assert_includes out, "1) claude"
-    assert_includes out, "2) gpt-b"
-    assert_equal [["--agent", "codex:architect:gpt-b", "--agent", "codex:tester"]], @flows
+    assert_includes out, "1) gpt-a  (effort: low, high)"
+    assert_equal [["--agent", "codex:architect:gpt-b", "--agent", "codex:tester:gpt-a", "--effort", "tester=high"]],
+                 @flows
   end
 
   def test_an_unlisted_name_needs_a_confirmation
-    add("2\n2\ngpt-typo\nn\ngpt-a\n")
+    add("2\n2\ngpt-typo\nn\ngpt-a\nultra\nn\n\n")
 
     assert_equal [["--agent", "codex:tester:gpt-a"]], @flows
   end
 
   def test_a_harness_without_a_list_takes_a_typed_name
-    out = add("1\n2\nclaude-sonnet-5-5\n")
+    out = add("1\n2\nclaude-sonnet-5-5\nhigh\n")
 
     assert_includes out, "Enter = claude-opus-5-5"
-    assert_equal [["--agent", "claude:tester:claude-sonnet-5-5"]], @flows
+    assert_equal [["--agent", "claude:tester:claude-sonnet-5-5", "--effort", "tester=high"]], @flows
+  end
+
+  # Enter keeps the effort of the role. maf add applies it.
+  def test_enter_keeps_the_role_effort
+    out = add("2\n2\n1\n\n")
+
+    assert_includes out, "Enter = low"
+    assert_equal [["--agent", "codex:tester:gpt-a"]], @flows
   end
 end

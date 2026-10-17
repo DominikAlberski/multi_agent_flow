@@ -21,6 +21,7 @@ module Maf
 
   def self.flow(*args) = Flow::Generator.new(["--project", Dir.pwd, *args]).run
   def self.role_names = Flow::RoleCatalog.new(Dir.pwd).roles.keys
+  def self.role_effort(role) = Flow::RoleCatalog.new(Dir.pwd).roles.dig(role, "effort")
 
   def self.agents = File.exist?(MANIFEST) ? JSON.parse(File.read(MANIFEST)).fetch("agents") : []
   def self.agent_specs = agents.map { |a| "#{a["harness"]}:#{a["role"]}" }

@@ -368,9 +368,10 @@ class FlowTest < InstallerTestCase
     assert_equal "max", manifest["agents"].first["effort"]
   end
 
-  def test_names_the_manual_step_for_a_harness_without_an_effort_flag
-    out, = flow("--agent", "cursor:backend-developer", "--effort", "backend-developer=high")
-    assert_includes out, "cursor:backend-developer -> pick a model with the level in its name"
+  # A role gets its default level only from a harness that lists the level.
+  def test_a_role_gets_its_default_effort
+    flow("--agent", "claude:tester", "--agent", "claude:architect", "--agent", "opencode:backend-developer")
+    assert_equal ["low", "high", nil], manifest["agents"].map { |agent| agent["effort"] }
   end
 
   def test_warns_about_an_unknown_effort
