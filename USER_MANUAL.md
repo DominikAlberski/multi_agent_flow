@@ -705,6 +705,8 @@ Expected sequence:
 6. Each worker reports with `coord annotate` and `coord done`.
 7. The reviewer checks the diff. The architect lands each task with `coord land <id>`:
    one squash commit on the goal branch. The task branch is then deleted.
+   A task that merged the base branch lands with the base head as a second parent,
+   so `coord goal sync` does not merge the base branch again.
 8. The architect runs `coord goal sync <id>` to merge the base branch into the goal,
    runs the full suite one time in the goal worktree, and closes the goal.
    The pull request goes from the goal branch into the base branch, with a merge commit.
@@ -771,6 +773,10 @@ for each goal and read your review:
 - `repo` is optional. Without it, coord reads the repository from the `origin` URL.
 - Without a `git_identity` key, `bot_user` and `bot_email` are the git persona of the agents
   (see "Git persona of the agents").
+- Keep the base branch on GitHub. A release pull request from the base branch into `main`
+  deletes the base branch if "Automatically delete head branches" is on.
+  Turn that setting off, or protect the base branch. If origin lacks the base branch,
+  `coord goal add` warns and `coord goal pr` pushes the local base branch again.
 
 The flow:
 
