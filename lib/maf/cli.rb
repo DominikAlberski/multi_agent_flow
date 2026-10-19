@@ -12,6 +12,7 @@ require_relative "menu"
 require_relative "team"
 require_relative "team_command"
 require_relative "worker_control"
+require_relative "worker_list"
 require_relative "untrack"
 require_relative "vm"
 require_relative "version"
@@ -49,8 +50,9 @@ module Maf
       "prepare" => "HARNESS ROLE[_WORKER] [--dispatch|--interactive] [--replace W]  prepare a worker; " \
                    "--dispatch starts it (default for the architect)",
       "retire" => "ROLE[_WORKER]                           remove a worker; its tasks return to the pool",
-      "worker" => "status|stop|start|restart ROLE[_WORKER] [--force] [--max-context N] [--max-session-runs N] " \
-                  "[--cache-window S]  control one worker; start and restart save the session limits of the role",
+      "worker" => "list | status|stop|start|restart ROLE[_WORKER] [--force] [--max-context N] " \
+                  "[--max-session-runs N] [--cache-window S]  list the running workers, or control one worker; " \
+                  "start and restart save the session limits of the role",
       "team" => "[set --max N --allow HARNESS[:MODEL]]   show the team, or set its budget",
       "uninstall" => "[--check] [--yes] [--force]             remove the flow from the project",
       "migrate" => "[--check] [--yes]                       move an old-layout install into .maf/",
@@ -108,13 +110,15 @@ module Maf
     def run_prepare = Prepare.new(@args).run
     def run_team = TeamCommand.new(@args, SetupAgent::Project.root).run
     def run_worker
+      return WorkerList.new(SetupAgent::Project.root).run if @args.first == "list"
+
       spec = @args[1] || abort(worker_usage)
       limits = RoleLimits.parse(@args)
       WorkerControl.new(SetupAgent::Project.root, spec, force: @args.include?("--force"), limits: limits)
         .run(@args[0].to_s)
     end
 
-    def worker_usage = "usage: maf worker #{WorkerControl::ACTIONS.join("|")} ROLE[_WORKER] [--force] " \
+    def worker_usage = "usage: maf worker list | #{WorkerControl::ACTIONS.join("|")} ROLE[_WORKER] [--force] " \
                        "[--max-context N] [--max-session-runs N] [--cache-window S]"
     def run_retire = Retire.new(SetupAgent::Project.root, @args.first || abort("usage: maf retire ROLE[_WORKER]")).run
     def run_uninstall = Uninstall::Runner.new(["--project", Dir.pwd, *@args]).run
