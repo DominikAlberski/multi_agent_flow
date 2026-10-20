@@ -54,6 +54,7 @@ module Coord
   # A claim older than this is presumed abandoned (crashed worker) and can be
   # taken over by `next`/`claim` without --force. Override with COORD_LEASE_TTL.
   DEFAULT_LEASE_TTL = 4 * 3600
+  BLOCKED_TAG = "blocked"
   DEFAULT_POLL_INTERVAL = 60
 
   # Lead roles plan and talk to the user. They never own a task, so they wait
@@ -86,6 +87,8 @@ module Coord
         coord conflicts                      list pending tasks with overlapping scopes
         coord claim ID [--force]             claim for COORD_WORKER (atomic; refused for lead roles)
         coord unclaim ID                     release a claim without finishing it
+        coord block ID TEXT...               release the claim and hold the task out of coord next
+        coord unblock ID                     return a blocked task to the backlog
         coord done ID [--force]              complete (refused while the task branch lacks the goal head,
                                              or while the verify command fails)
         coord annotate ID TEXT...
@@ -120,7 +123,7 @@ module Coord
   COMMANDS = {
       "init" => :cmd_init, "add" => :cmd_add, "next" => :cmd_next,
       "conflicts" => :cmd_conflicts,
-      "claim" => :cmd_claim, "unclaim" => :cmd_unclaim,
+      "claim" => :cmd_claim, "unclaim" => :cmd_unclaim, "block" => :cmd_block, "unblock" => :cmd_unblock,
       "done" => :cmd_done, "annotate" => :cmd_annotate, "lesson" => :cmd_lesson,
     "msg" => :cmd_msg, "inbox" => :cmd_inbox, "await" => :cmd_await, "broadcast" => :cmd_broadcast,
     "log" => :cmd_log, "hooks" => :cmd_hooks,
@@ -346,6 +349,9 @@ module Coord
     rescue ArgumentError
       false
     end
+
+    def self.blocked?(task) = Array(task["tags"]).include?(BLOCKED_TAG)
+    def self.held?(task) = waiting?(task) || blocked?(task)
   end
 
   # TaskCli runs Taskwarrior and parses its output. No domain logic here.
@@ -517,7 +523,7 @@ module Coord
     end
 
     def mine(role, worker)
-      pending.select { |task| task["role"] == role && task["worker"] == worker && task["start"] }
+      pending.select { |task| task["role"] == role && task["worker"] == worker && task["start"] && actionable?(task) }
     end
 
     # Returns the prior holder (nil if there was none) so the caller can warn
@@ -537,6 +543,13 @@ module Coord
       @cli.modify(id, "worker:")
     end
 
+    def block(id)
+      unclaim(id) if @cli.task(id)["start"]
+      @cli.modify(id, "+#{BLOCKED_TAG}")
+    end
+
+    def unblock(id) = @cli.modify(id, "-#{BLOCKED_TAG}")
+
     def find(id) = @cli.task(id)
     # A short id of digits only would read as a task number. The filter avoids that.
     def find_short(short) = @cli.task("uuid.startswith:#{short}")
@@ -548,7 +561,7 @@ module Coord
 
     private
 
-    def actionable?(task) = !Schedule.waiting?(task)
+    def actionable?(task) = !Schedule.held?(task)
 
     def held_by?(task, worker) = !worker.to_s.empty? && task["worker"] == worker
 
@@ -1097,9 +1110,10 @@ end
 # Board renders status summaries and the Obsidian kanban file.
   class Board
     SECTIONS = {
-      "Backlog" => ->(task) { !Schedule.waiting?(task) && !task["start"] },
-      "In progress" => ->(task) { !Schedule.waiting?(task) && task["start"] },
-      "Waiting" => ->(task) { Schedule.waiting?(task) }
+      "Backlog" => ->(task) { !Schedule.held?(task) && !task["start"] },
+      "In progress" => ->(task) { !Schedule.held?(task) && task["start"] },
+      "Waiting" => ->(task) { Schedule.waiting?(task) && !Schedule.blocked?(task) },
+      "Blocked" => ->(task) { Schedule.blocked?(task) }
     }.freeze
 
     def initialize(tasks, paths)
@@ -1149,6 +1163,7 @@ end
     end
 
     def bucket(task)
+      return "blocked" if Schedule.blocked?(task)
       return "waiting" if Schedule.waiting?(task)
 
       task["start"] ? "in-progress" : "backlog"
@@ -2244,6 +2259,28 @@ end
     end
   end
 
+  # Block commands hold a task out of coord next and return it.
+  module BlockCommands
+    def cmd_block
+      id = @args.require_arg("block", "ID")
+      block(id, @args.require_text("block"))
+      puts "blocked #{id}"
+    end
+
+    def block(id, text)
+      tasks.annotate(id, "BLOCKED: #{text}")
+      tasks.block(id)
+      event_log.append("block", @worker, "#{id} #{text}")
+    end
+
+    def cmd_unblock
+      id = @args.require_arg("unblock", "ID")
+      tasks.unblock(id)
+      event_log.append("unblock", @worker, id)
+      puts "unblocked #{id}"
+    end
+  end
+
   # Claim commands take, release, note, and finish a task.
   module ClaimCommands
     def cmd_claim
@@ -2900,6 +2937,7 @@ end
   class CLI
     include TaskCommands
     include ClaimCommands
+    include BlockCommands
     include MessageCommands
     include InboxCommands
     include GoalCommands

@@ -640,6 +640,13 @@ The dispatcher does not retry the same unclaimed tasks every minute.
 The wait between runs doubles after each run, up to 1 hour. A new or changed
 task starts a run immediately. A message run never claims a task.
 
+**Failing tasks.** A run that ends with the task still claimed and not done is an
+unfinished run. After 3 unfinished runs in a row, the dispatcher blocks the task
+(`coord block`) and escalates it to the project manager. A blocked task stays out of
+`coord next` until someone runs `coord unblock ID`. A usage limit or an unknown model
+counts no run. The count is in `.maf/coordination/failures/<id>`, so it stays correct
+after a restart.
+
 **Prompt cache.** LLM providers cache a conversation for a limited time after the
 last request. Claude Code uses a 1-hour cache. The OpenAI cache of Codex is best
 effort and lasts a few minutes.
@@ -1453,6 +1460,8 @@ This section holds the board details for the operator.
 | `coord claim ID` | Atomically claim a task for `$COORD_WORKER`. Refuses to steal an active claim. Refused for lead roles. |
 | `coord start-task ID` | In a worker worktree: check out `task/<short-id>` from the goal branch. |
 | `coord unclaim ID` | Release a claim without finishing it. |
+| `coord block ID TEXT` | Release the claim, note the reason, and hold the task out of `coord next`. |
+| `coord unblock ID` | Return a blocked task to the backlog. |
 | `coord done ID [--force]` | Complete a task. Refused while the task branch has own commits and lacks the goal branch head. |
 | `coord annotate ID TEXT` | Add a note to a task (permanent). |
 | `coord lesson ID dead_end\|corrected TEXT` | Save a lesson of a task to the graph memory (see "Work memory"). |

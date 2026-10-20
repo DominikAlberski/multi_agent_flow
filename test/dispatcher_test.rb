@@ -204,6 +204,54 @@ class TaskWatchTest < Minitest::Test
   end
 end
 
+class FailureLimitTest < Minitest::Test
+  include DispatcherTestHelpers
+
+  Poller = Struct.new(:claimed_task_ids)
+
+  def setup
+    @dir = Dir.mktmpdir("dispatcher-failure-test")
+    @calls = []
+  end
+
+  def teardown
+    FileUtils.remove_entry(@dir)
+  end
+
+  def track(outcome, claimed: ["t1"])
+    calls = @calls
+    limit = Dispatcher::FailureLimit.new(config, Poller.new(claimed), ->(*args) { calls << args })
+    capture_io { limit.track(["t1"], outcome) }
+    limit
+  end
+
+  # Regression: a task that failed each run got a resume run each hour without end.
+  def test_the_third_unfinished_run_blocks_and_escalates_the_task
+    2.times { track(:failed) }
+    assert_empty @calls
+    assert_equal 0, track(:done).runs("t1")
+    assert_equal %w[block escalate], @calls.map(&:first)
+    assert_equal "t1", @calls.first[1]
+    assert_includes @calls.last.last, "3 runs of backend-developer-bot in a row ended without coord done"
+  end
+
+  def test_a_finished_task_clears_the_count
+    track(:failed)
+    assert_equal 0, track(:done, claimed: []).runs("t1")
+  end
+
+  def test_a_waiting_run_clears_the_count
+    track(:failed)
+    assert_equal 0, track(:waiting).runs("t1")
+  end
+
+  def test_a_usage_limit_counts_no_run
+    track(:failed)
+    assert_equal 1, track(:limited).runs("t1")
+    assert_equal 1, track(:broken).runs("t1")
+  end
+end
+
 class SpawnTest < Minitest::Test
   def test_captures_output_and_status
     result = Dispatcher::Spawn.run(["sh", "-c", "echo out; echo err >&2"], env: {}, timeout: 5)

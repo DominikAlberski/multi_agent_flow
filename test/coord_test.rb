@@ -197,6 +197,32 @@ class TaskwarriorTest < Minitest::Test
     assert_nil Coord::Tasks.new.claim(id, "backend-2")
   end
 
+  def test_block_releases_the_claim_and_hides_the_task_from_next
+    id = add("flaky")
+    tasks.claim(id, "backend-1")
+    assert_equal "blocked #{id}\n", run_cli("block", id, "three failed runs")
+    task = find(id)
+    assert_empty task["worker"].to_s
+    assert_includes task["tags"], "blocked"
+    assert_equal "BLOCKED: three failed runs", task["annotations"].last["description"]
+    assert_empty Coord::Tasks.new.next_for("backend-developer")
+  end
+
+  def test_unblock_returns_the_task_to_next
+    id = add("flaky")
+    run_cli("block", id, "needs input")
+    run_cli("unblock", id)
+    assert_equal([id], Coord::Tasks.new.next_for("backend-developer").map { |task| task["uuid"] })
+  end
+
+  def test_status_and_board_show_a_blocked_task
+    run_cli("block", add("flaky"), "needs input")
+    assert_includes run_cli("status"), "backend-developer: blocked=1"
+    run_cli("board")
+    board = File.read(File.join(@env["COORD_DIR"], "exports", "board.md"))
+    assert_match(/## Blocked\n\n- \[ \] .*flaky/, board)
+  end
+
   def test_expired_lease_is_reclaimable_without_force
     id = add("task four")
     tasks.claim(id, "backend-1")
