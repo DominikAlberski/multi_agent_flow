@@ -44,7 +44,7 @@ jobs:
           - { os: ubuntu-24.04, ruby: "4.0" }
           - { os: macos-15, ruby: "4.0" }
     env:
-      BUNDLE_WITHOUT: lint
+      BUNDLE_WITHOUT: lint:mutant
     steps:
       - uses: actions/checkout@v5
 

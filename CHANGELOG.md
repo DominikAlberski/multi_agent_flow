@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- `maf worker list` shows each running worker: its role, harness, mode (session or dispatch),
+  pid, and start time. A worker that runs twice, for example as a session and as a
+  dispatcher, gets a warning. The last line names the registered workers that do not run.
 - Effort levels per role (#44): `maf add --effort ROLE=LEVEL`, `maf start` and `maf prepare
   --effort LEVEL`, and `dispatcher --effort LEVEL`. maf passes the level to the harness in its
   own form: `--effort` (Claude Code), `model_reasoning_effort` (Codex), `--reasoning` (Hermes),
