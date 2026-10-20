@@ -5,6 +5,7 @@ require "tmpdir"
 require "fileutils"
 require_relative "../lib/maf/flow"
 require_relative "../lib/maf/uninstall"
+require_relative "mutant_cover"
 
 class HookConfigCase < Minitest::Test
   def setup = @dir = Dir.mktmpdir("maf-hook-config")
@@ -21,6 +22,9 @@ class HookConfigCase < Minitest::Test
 end
 
 class CodexProjectHooksTest < HookConfigCase
+  cover "Maf::Flow::CodexHooks*"
+  cover "Maf::Uninstall::CodexHooks*"
+
   def test_installs_project_hooks_without_global_files
     Maf::Flow::CodexHooks.new(@dir).install
     assert_equal %w[SessionStart Stop], read.fetch("hooks").keys
@@ -64,6 +68,8 @@ class CodexProjectHooksTest < HookConfigCase
 end
 
 class LegacyCodexHookTest < HookConfigCase
+  cover "Maf::Flow::LegacyCodexHook*"
+
   def script = File.join(@dir, ".codex/hooks/next-task.rb")
   def legacy_hook = { "type" => "command", "command" => "ruby #{script}" }
 

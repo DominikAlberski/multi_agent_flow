@@ -164,7 +164,7 @@ multi_agent_flow/
   GETTING_STARTED.md          # first-time walkthrough (concepts + manual setup)
   USER_MANUAL.md              # full team setup reference
   maf.gemspec                 # the gem: files, version, the webrick dependency
-  Gemfile                     # development gems: rake, minitest, rubocop
+  Gemfile                     # development gems: rake, minitest, rubocop, mutant
   CHANGELOG.md                # changes per version
   exe/
     maf                       # the maf command line tool (gem install maf puts it on PATH)
@@ -337,6 +337,20 @@ them when you run a test file directly, so a test never writes to that board:
 ```sh
 env -u TASKRC -u COORD_DIR -u COORD_ROLE -u COORD_WORKER ruby test/coord_test.rb
 ```
+
+`rake mutant` runs the mutation tests with [mutant](https://github.com/mbj/mutant).
+Mutant changes the code in `lib/` and runs the tests again. A change that no test
+finds is an alive mutation: add a test for it. Mutant needs Ruby 3.3 or later.
+It is free for open source projects (`usage: opensource` in `.mutant.yml`).
+
+```sh
+bundle exec rake mutant                          # the subjects in .mutant.yml
+bundle exec rake mutant SUBJECT='Maf::Budget*'   # other subjects
+```
+
+Mutant runs only the test classes that name their code with `cover`. To add a
+subject, require `test/mutant_cover.rb` in the test file, add `cover "Maf::X*"` to
+the test class, and add `Maf::X*` to `matcher.subjects` in `.mutant.yml`.
 
 ```sh
 ruby test/coord_test.rb      # covers the coord CLI

@@ -15,6 +15,7 @@ require_relative "../lib/maf/shared/project"
 require_relative "../lib/maf/shared/git_exclude"
 require_relative "../lib/maf/shared/peak_rate"
 require_relative "../lib/maf/shared/git_identity"
+require_relative "mutant_cover"
 
 SHARED_FILES = Dir[File.expand_path("../lib/maf/shared/**/*.rb", __dir__)]
 
@@ -34,6 +35,8 @@ class SharedLoadTest < Minitest::Test
 end
 
 class ProcessesTest < Minitest::Test
+  cover "Maf::Shared::Processes*"
+
   Processes = Maf::Shared::Processes
 
   def test_the_current_process_is_alive
@@ -97,6 +100,8 @@ class ProcessesTest < Minitest::Test
 end
 
 class PeakRateTest < Minitest::Test
+  cover "Maf::Shared::PeakRate*"
+
   PeakRate = Maf::Shared::PeakRate
 
   # 2026-10-07 is a Wednesday, 2026-10-10 a Saturday.
@@ -120,6 +125,8 @@ class PeakRateTest < Minitest::Test
 end
 
 class ProjectTest < Minitest::Test
+  cover "Maf::Shared::Project*"
+
   Project = Maf::Shared::Project
 
   def test_worktree_dir
@@ -143,6 +150,8 @@ class ProjectTest < Minitest::Test
 end
 
 class GitExcludeTest < Minitest::Test
+  cover "Maf::Shared::GitExclude*"
+
   # A relative path would break a caller that runs in another directory.
   def test_the_path_is_absolute
     Dir.mktmpdir do |dir|
@@ -208,6 +217,8 @@ class GitExcludeTest < Minitest::Test
 end
 
 class GitIdentityTest < Minitest::Test
+  cover "Maf::Shared::GitIdentity*"
+
   BOT = { "github" => { "bot_user" => "maf-bot", "bot_email" => "bot@example.com" } }.freeze
 
   def identity(config) = Maf::Shared::GitIdentity.env(config)
