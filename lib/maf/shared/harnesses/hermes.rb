@@ -13,7 +13,8 @@ module Maf
       # outside the project. `--skills <project>-<role>` loads one. Hermes has
       # no agent flag and cannot be woken, so an idle agent blocks in
       # `coord next --wait`. A role with can_edit false starts without the
-      # file-writing toolsets. Hermes keeps hooks and MCP servers in global
+      # file-writing toolsets. No role gets the kanban or delegation
+      # toolset. Hermes keeps hooks and MCP servers in global
       # files, so maf prints the commands that add them.
       class Hermes < Harness::Base
         include Harness::ResultEvent
@@ -77,7 +78,11 @@ module Maf
           Project.manifest.fetch("agents", []).any? { |agent| agent["role"] == role && agent["can_edit"] == false }
         end
 
-        def tools(role) = read_only?(role) ? ["-t", Roles::READ_ONLY_TOOLSETS] : []
+        # With -t, Hermes loads an MCP server only when the list names its toolset.
+        def tools(role)
+          toolsets = read_only?(role) ? Roles::READ_ONLY_TOOLSETS : Roles::EDIT_TOOLSETS
+          ["-t", "#{toolsets},mcp-graphify-#{File.basename(Project.root)}"]
+        end
 
         PROMPT = "Follow the coordination rules of your role skill as role %<role>s. " \
                  "Run coord inbox, then coord next --wait. Claim a task, do the work, finish it. Repeat."
