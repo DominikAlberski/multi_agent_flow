@@ -194,6 +194,42 @@ CLI accepts:
 If you do not pin a model, every `claude` role gets `claude-opus-5-5`.
 The other harnesses have no default. Their CLI picks the model.
 
+Add `--effort ROLE=LEVEL` to set the effort level (reasoning effort) per role.
+A high effort gives deeper work and uses more tokens. A low effort is faster and cheaper.
+Use the level that the harness CLI accepts. maf passes it as it is:
+
+| Harness | maf passes | Levels |
+|---|---|---|
+| `claude` | `--effort LEVEL` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `codex` | `-c model_reasoning_effort="LEVEL"` | the levels of the model in `~/.codex/models_cache.json` (without `-m`: the `model` of `~/.codex/config.toml`) |
+| `hermes` | `--reasoning LEVEL` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
+| `opencode` | `--variant LEVEL` (dispatched), `variant:` in the role file (interactive) | the variants of the provider |
+| `cursor` | the level in the model name: `gpt-5.3-codex` + `high` = `--model gpt-5.3-codex-high` | the levels of the model in `agent --list-models` |
+
+For Cursor, give the model without its level (`--model ROLE=gpt-5.3-codex`) and the level with `--effort`.
+A full name such as `gpt-5.3-codex-high` also works without `--effort`.
+
+Each role has a default level in `roles.yml` (`effort:`): `high` for architect, reviewer, skeptic,
+and auditor, `medium` for project-manager and the developers, and `low` for tester.
+A lower level uses much fewer tokens. A role gets its default only if the harness lists that level
+for the model. Otherwise maf passes nothing, and the default of the harness applies.
+A Cursor model that has no name without a level gets the lowest listed level.
+Change a default in `.maf/roles.yml`, or override it with `--effort ROLE=LEVEL`.
+
+In the interactive mode (`maf`), the model list shows the levels of each model, and maf asks
+for the level after the model. Enter keeps the default of the role.
+
+maf saves the effort in `.maf/config.json`. A re-run of `maf add` keeps it.
+With an `--agent` of the role, `--effort ROLE=LEVEL` applies only to the agents of that run.
+Without one, it changes the saved agents of the role. `--effort ROLE=` clears the level.
+A new model for a role drops its saved level, and the default of the role applies.
+`maf start` and `maf prepare` take `--effort LEVEL` for one worker.
+The flag wins over the saved effort. maf warns when the harness does not list a level.
+The opencode TUI has no flag for the level. `maf start opencode ROLE --effort LEVEL` (interactive)
+starts with the `variant:` of the role file and prints how to change it: press `ctrl+t` in the
+session to pick the variant. If the agent is in its work loop, stop it (Esc) and type
+"Start your work loop now." again.
+
 ### 5. Install
 
 Remove `--check` from step 4 and run again.

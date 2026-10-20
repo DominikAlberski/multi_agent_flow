@@ -164,7 +164,7 @@ multi_agent_flow/
   GETTING_STARTED.md          # first-time walkthrough (concepts + manual setup)
   USER_MANUAL.md              # full team setup reference
   maf.gemspec                 # the gem: files, version, the webrick dependency
-  Gemfile                     # development gems: rake, minitest, rubocop
+  Gemfile                     # development gems: rake, minitest, rubocop, mutant
   CHANGELOG.md                # changes per version
   exe/
     maf                       # the maf command line tool (gem install maf puts it on PATH)
@@ -187,6 +187,7 @@ multi_agent_flow/
     team_command.rb           # maf team: shows the team, or sets its budget
     retire.rb                 # maf retire: removes one worker and archives its state
     worker_control.rb         # maf worker: stops, starts, or restarts one worker
+    worker_list.rb            # maf worker list: shows the sessions and dispatchers that run
     flow/role_catalog.rb      # merges .maf/roles.yml over the built-in roles
     flow/workflow.rb          # reads .maf/workflow.md for the architect prompt
     flow/mcp_config.rb        # writes the graphify MCP server into .maf/mcp/
@@ -231,6 +232,7 @@ multi_agent_flow/
     hook_session_test.rb      # tests for session isolation
     hook_config_test.rb       # tests for project hooks
     worker_control_test.rb    # tests for maf worker
+    worker_list_test.rb       # tests for maf worker list
     untrack_test.rb           # tests for maf untrack
     analyst_test.rb           # tests for the analyst
     shared_test.rb            # tests for lib/maf/shared/
@@ -336,6 +338,20 @@ them when you run a test file directly, so a test never writes to that board:
 env -u TASKRC -u COORD_DIR -u COORD_ROLE -u COORD_WORKER ruby test/coord_test.rb
 ```
 
+`rake mutant` runs the mutation tests with [mutant](https://github.com/mbj/mutant).
+Mutant changes the code in `lib/` and runs the tests again. A change that no test
+finds is an alive mutation: add a test for it. Mutant needs Ruby 3.3 or later.
+It is free for open source projects (`usage: opensource` in `.mutant.yml`).
+
+```sh
+bundle exec rake mutant                          # the subjects in .mutant.yml
+bundle exec rake mutant SUBJECT='Maf::Budget*'   # other subjects
+```
+
+Mutant runs only the test classes that name their code with `cover`. To add a
+subject, require `test/mutant_cover.rb` in the test file, add `cover "Maf::X*"` to
+the test class, and add `Maf::X*` to `matcher.subjects` in `.mutant.yml`.
+
 ```sh
 ruby test/coord_test.rb      # covers the coord CLI
 ruby test/installer_test.rb  # covers bootstrap.rb, flow.rb, setup_agent.rb
@@ -353,6 +369,7 @@ ruby test/dispatcher_test.rb         # covers the dispatcher
 ruby test/board_watch_test.rb        # covers the board watcher
 ruby test/context_watch_test.rb      # covers the context-watch hook
 ruby test/worker_control_test.rb     # covers maf worker
+ruby test/worker_list_test.rb        # covers maf worker list
 ruby test/untrack_test.rb            # covers maf untrack
 ruby test/analyst_test.rb            # covers the analyst
 ruby test/shared_test.rb             # covers lib/maf/shared/

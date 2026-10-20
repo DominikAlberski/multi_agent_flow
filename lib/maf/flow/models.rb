@@ -21,6 +21,17 @@ module Maf
 
       def self.known?(harness, model) = Harness[harness]&.known_model?(model, self.for(harness)) != false
       def self.default(harness) = Harness[harness]&.default_model
+      # Without a model, the levels of the default model of the harness.
+      def self.efforts(harness, model) = Harness[harness]&.efforts(model || default(harness))
+
+      # The level of the role if the harness lists it. A model that runs only
+      # with a level gets the lowest level instead.
+      def self.default_effort(harness, level, model)
+        levels = efforts(harness, model).to_a
+        return level if levels.include?(level)
+
+        levels.first if Harness[harness]&.effort_required?(model)
+      end
     end
   end
 end

@@ -2,10 +2,11 @@
 
 # setup_agent.rb - create a worktree for one agent and launch its harness session.
 #
-# Usage: maf start HARNESS ROLE[_WORKER] [model:MODEL] [--model MODEL]
+# Usage: maf start HARNESS ROLE[_WORKER] [model:MODEL] [--model MODEL] [--effort LEVEL]
 #                  [--dispatch [DISPATCHER FLAGS...]]
 #   maf start claude backend-developer_1
 #   maf start opencode reviewer --model openrouter/deepseek-v3
+#   maf start claude architect --effort high
 #   maf start hermes tester --dispatch --model openrouter/deepseek-v3
 #   maf start claude reviewer --dispatch --cache-window 1500
 #
@@ -36,11 +37,10 @@ module Maf
     MANIFEST = ".maf/config.json"
 
     def self.run(argv)
-      args = Args.parse(argv)
-      manifest = Manifest.load(MANIFEST).tap { |m| m.verify!(args.harness, args.role) }
+      args = Manifest.load(MANIFEST).fill(Args.parse(argv))
       worktree = enter_worktree(args)
-      register(args, manifest.model_for(args.harness, args.role))
-      launch(args, manifest, worktree)
+      register(args)
+      launch(args, worktree)
     end
 
     # `maf start` without arguments, inside a worktree that `maf prepare` made.
@@ -56,12 +56,13 @@ module Maf
     def self.start_args(entry)
       args = [entry["harness"], "#{entry["role"]}_#{entry["worker_id"]}"]
       args += ["--model", entry["model"]] if entry["model"]
+      args += ["--effort", entry["effort"]] if entry["effort"]
       entry["dispatch"] ? args + ["--dispatch"] : args
     end
 
-    def self.register(args, saved_model)
+    def self.register(args)
       entry = { "role" => args.role, "worker_id" => args.worker_id, "harness" => args.harness,
-                "model" => args.model || saved_model, "dispatch" => args.dispatch, "dir" => Dir.pwd }
+                "model" => args.model, "effort" => args.effort, "dispatch" => args.dispatch, "dir" => Dir.pwd }
       Maf::Workers.at(Project.root).add(args.worker, entry.compact)
     end
 
@@ -79,13 +80,12 @@ module Maf
       worktree
     end
 
-    def self.launch(args, manifest, _worktree)
+    def self.launch(args, _worktree)
       identify(args)
-      model = args.model || manifest.model_for(args.harness, args.role)
-      return Dispatch.launch(args, model) if args.dispatch
+      return Dispatch.launch(args) if args.dispatch
 
       MafSession.register(Project.root, args.harness)
-      Launcher.launch(Maf::Shared::Harness.fetch(args.harness), args.role, model)
+      Launcher.launch(Maf::Shared::Harness.fetch(args.harness), args.role, args.model, args.effort)
     end
 
     # The session and the dispatcher pass the environment to each child, so

@@ -20,14 +20,14 @@ module Maf
 
       def generate_agent(agent)
         harness = Harness.fetch(agent[:harness])
-        model = @options.model_for(agent)
+        choice = { model: @options.model_for(agent), effort: @options.effort_for(agent) }
         dest = harness.role_destination(@options.project, agent[:role], @options.settings)
-        content = render(harness, agent[:role], @roles.fetch(agent[:role]), model)
-        { agent: agent, dest: dest, status: write(dest, content), model: model }
+        content = render(harness, agent[:role], @roles.fetch(agent[:role]), choice)
+        { agent: agent, dest: dest, status: write(dest, content), **choice }
       end
 
-      def render(harness, role, data, model)
-        harness.render_role(**template_values(role, data), prompt: @prompts.build(harness, role, data), model: model)
+      def render(harness, role, data, choice)
+        harness.render_role(**template_values(role, data), prompt: @prompts.build(harness, role, data), **choice)
       end
 
       def template_values(role, data)

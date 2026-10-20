@@ -26,10 +26,16 @@ module Maf
       # maf add keeps the current agents, so the hint names only the missing agent.
       def add_hint(missing) = "  Fix: maf add #{missing}"
 
-      def model_for(harness, role)
-        entry = @agents.find { |a| a["harness"] == harness && a["role"] == role }
-        entry && entry["model"]
+      # The saved model and effort of the agent, unless args already name them.
+      def fill(args)
+        verify!(args.harness, args.role)
+        saved = entry(args.harness, args.role)
+        args.model ||= saved["model"]
+        args.effort ||= saved["effort"]
+        args
       end
+
+      def entry(harness, role) = @agents.find { |a| a["harness"] == harness && a["role"] == role }
     end
   end
 end

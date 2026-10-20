@@ -67,4 +67,36 @@ class OpencodeHarnessTest < Minitest::Test
       assert_equal "deepseek/x", harness.configured_model(config)
     end
   end
+
+  def test_the_effort_is_the_variant
+    assert_includes pairs(harness.build_command(config(effort: "high"), "go", nil)), ["--variant", "high"]
+    refute_includes harness.build_command(config, "go", nil), "--variant"
+  end
+
+  # The TUI has no variant flag, so the agent file carries it.
+  def test_the_agent_file_names_the_variant
+    values = { role: "r", description: "d", can_edit: true, project: "/p", prompt: "P", model: nil }
+    assert_includes harness.render_role(**values, effort: "max"), "variant: max\n"
+    refute_includes harness.render_role(**values), "variant:"
+  end
+
+  # The TUI cannot take the level, so maf names the key that changes it in the session.
+  def test_launch_with_another_effort_names_the_tui_key
+    err = launch_err("high", "max")
+    assert_includes err, "starts with variant high"
+    assert_includes err, "ctrl+t"
+    assert_includes err, "maf add opencode:r --effort r=max"
+  end
+
+  def test_launch_with_the_saved_effort_or_none_is_silent
+    assert_empty launch_err("high", "high")
+    assert_empty launch_err("high", nil)
+  end
+
+  def launch_err(saved, effort)
+    in_tmpdir do
+      write(".opencode/agents/r.md", "---\nmode: primary\nvariant: #{saved}\n---\n\nP")
+      capture_io { harness.launch("r", nil, effort) }.last
+    end
+  end
 end

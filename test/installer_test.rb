@@ -357,6 +357,49 @@ class FlowTest < InstallerTestCase
     assert_equal "m2", manifest["agents"].first["model"]
   end
 
+  def test_rerun_keeps_a_saved_effort_unless_effort_overrides_it
+    flow("--agent", "opencode:backend-developer", "--effort", "backend-developer=high")
+    assert_includes File.read(stored_agent_file), "variant: high\n"
+
+    flow("--agent", "opencode:architect")
+    assert_equal ["high", nil], manifest["agents"].map { |agent| agent["effort"] }
+
+    flow("--effort", "backend-developer=max")
+    assert_equal "max", manifest["agents"].first["effort"]
+  end
+
+  # --effort ROLE=LEVEL with an --agent of the role does not change the saved agents of the role.
+  def test_the_effort_flag_applies_to_the_agents_of_this_run
+    flow("--agent", "claude:reviewer", "--effort", "reviewer=max")
+    flow("--agent", "hermes:reviewer", "--effort", "reviewer=ultra")
+    assert_equal %w[max ultra], manifest["agents"].map { |agent| agent["effort"] }
+  end
+
+  def test_an_empty_effort_clears_the_level
+    flow("--agent", "claude:tester", "--effort", "tester=max")
+    flow("--effort", "tester=")
+    assert_nil manifest["agents"].first["effort"]
+  end
+
+  # A saved level belongs to the saved model.
+  def test_a_new_model_gets_the_role_default
+    flow("--agent", "claude:tester:sonnet", "--effort", "tester=max")
+    flow("--agent", "claude:tester:haiku")
+    assert_equal "low", manifest["agents"].first["effort"]
+  end
+
+  # A role gets its default level only from a harness that lists the level.
+  def test_a_role_gets_its_default_effort
+    flow("--agent", "claude:tester", "--agent", "claude:architect", "--agent", "opencode:backend-developer")
+    assert_equal ["low", "high", nil], manifest["agents"].map { |agent| agent["effort"] }
+  end
+
+  def test_warns_about_an_unknown_effort
+    out, = flow("--agent", "claude:backend-developer", "--effort", "backend-developer=turbo")
+    assert_includes out, "does not list these effort levels"
+    assert_includes out, "claude:backend-developer -> turbo"
+  end
+
   def test_is_idempotent
     flow("--agent", "opencode:backend-developer")
     first = File.read(agent_file)
@@ -750,7 +793,7 @@ class SetupAgentTest < Minitest::Test
   end
 
   def test_dispatch_runs_the_main_dispatcher_with_harness_model_and_flags
-    parsed = Maf::SetupAgent::Args.parse(%w[claude reviewer --dispatch --interval 30])
+    parsed = Maf::SetupAgent::Args.parse(%w[claude reviewer --dispatch --effort high --model sonnet --interval 30])
     ran = nil
     root = nil
     Dir.mktmpdir do |dir|
@@ -758,11 +801,11 @@ class SetupAgentTest < Minitest::Test
         root = Dir.pwd
         FileUtils.mkdir_p(".maf/bin")
         FileUtils.touch(".maf/bin/dispatcher")
-        with_exec_stub(->(cmd) { ran = cmd }) { Maf::SetupAgent::Dispatch.launch(parsed, "sonnet") }
+        with_exec_stub(->(cmd) { ran = cmd }) { Maf::SetupAgent::Dispatch.launch(parsed) }
       end
     end
     assert_equal [RbConfig.ruby, File.join(root, ".maf/bin/dispatcher"), "reviewer", "--harness", "claude",
-                  "--model", "sonnet", "--interval", "30"], ran
+                  "--model", "sonnet", "--effort", "high", "--interval", "30"], ran
   end
 
   def wait_for_log(log, limit: 10)
@@ -785,7 +828,7 @@ class SetupAgentTest < Minitest::Test
   def test_dispatch_aborts_without_a_committed_dispatcher
     parsed = Maf::SetupAgent::Args.parse(%w[claude reviewer --dispatch])
     Dir.mktmpdir do |dir|
-      Dir.chdir(dir) { assert_raises(SystemExit) { capture_io { Maf::SetupAgent::Dispatch.launch(parsed, nil) } } }
+      Dir.chdir(dir) { assert_raises(SystemExit) { capture_io { Maf::SetupAgent::Dispatch.launch(parsed) } } }
     end
   end
 
@@ -804,13 +847,21 @@ class SetupAgentTest < Minitest::Test
                  Maf::SetupAgent::Worktree.dir_for("/tmp/myproject", "tester-1")
   end
 
-  def test_manifest_verifies_a_known_agent_and_its_model
+  def test_manifest_verifies_a_known_agent_and_fills_its_model_and_effort
     manifest = Maf::SetupAgent::Manifest.new(
-      [{ "harness" => "opencode", "role" => "backend-developer", "model" => "m" }]
+      [{ "harness" => "opencode", "role" => "backend-developer", "model" => "m", "effort" => "high" }]
     )
 
     manifest.verify!("opencode", "backend-developer")
-    assert_equal "m", manifest.model_for("opencode", "backend-developer")
+    args = manifest.fill(Maf::SetupAgent::Args.parse(%w[opencode backend-developer]))
+    assert_equal %w[m high], [args.model, args.effort]
+  end
+
+  def test_the_flags_win_over_the_saved_model_and_effort
+    manifest = Maf::SetupAgent::Manifest.new([{ "harness" => "claude", "role" => "tester", "model" => "m",
+                                                "effort" => "high" }])
+    args = manifest.fill(Maf::SetupAgent::Args.parse(%w[claude tester --model n --effort low]))
+    assert_equal %w[n low], [args.model, args.effort]
   end
 
   def test_manifest_rejects_an_unknown_agent
@@ -832,8 +883,8 @@ class SetupAgentTest < Minitest::Test
   def test_the_launcher_runs_the_command_of_the_harness
     harness = Maf::Shared::Harness.fetch("cursor")
     calls = []
-    with_exec_stub(->(cmd) { calls << cmd }) { Maf::SetupAgent::Launcher.launch(harness, "tester", "m") }
-    assert_equal harness.launch("tester", "m"), calls.first
+    with_exec_stub(->(cmd) { calls << cmd }) { Maf::SetupAgent::Launcher.launch(harness, "tester", "m", "high") }
+    assert_equal harness.launch("tester", "m", "high"), calls.first
   end
 end
 

@@ -132,3 +132,16 @@ class HermesHarnessTest < Minitest::Test
            exception: true)
   end
 end
+
+class HermesEffortTest < Minitest::Test
+  include HarnessTestHelpers
+
+  HARNESS = "hermes"
+
+  def test_the_effort_is_the_reasoning_level
+    run = harness.build_command(harness.prepare(config(effort: "ultra")), "go", nil)
+    assert_includes pairs(run), ["--reasoning", "ultra"]
+    assert_includes pairs(in_tmpdir { harness.launch("tester", nil, "low") }), ["--reasoning", "low"]
+    assert harness.known_effort?("none")
+  end
+end

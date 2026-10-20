@@ -2,3 +2,6 @@
 /Gemfile.lock
 /pkg/
 *.gem
+/.mutant/
+/docs/decisions/
+/docs/plans/

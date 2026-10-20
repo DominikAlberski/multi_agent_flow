@@ -303,6 +303,10 @@ class GenericHarnessTest < Minitest::Test
     Dispatcher::Harness::Generic.build_command(config(command: template, **overrides), "fix it; rm -rf /", nil)
   end
 
+  def test_substitutes_the_model_and_the_effort
+    assert_equal "agent m-1 high", build("agent %{model} %{effort}", model: "m-1", effort: "high").last
+  end
+
   def test_substitutes_and_escapes_placeholders
     cmd = build("agent %{role} %{skill} %{prompt}", skill: "p-backend-developer")
     assert_equal "sh", cmd.first
@@ -606,6 +610,12 @@ class RunnerTest < Minitest::Test
     assert_includes status.dig("last_run", "detail"), "agent finished"
   end
 
+  def test_the_worker_status_names_the_effort
+    status = Dispatcher::WorkerStatus.new(config(effort: "high"))
+    status.started(nil, 0)
+    assert_equal "high", worker_status["effort"]
+  end
+
   def test_a_failed_run_shows_the_failure_in_the_status
     capture_io { runner("echo boom; exit 1").dispatch("go") }
     assert_equal false, worker_status.dig("last_run", "success")
@@ -891,6 +901,11 @@ class OptionsTest < Minitest::Test
     assert_equal "/tmp/c", config.coord_dir
     assert config.poll_tasks
     assert_nil config.skill
+  end
+
+  def test_the_effort_flag
+    assert_equal "xhigh", parse("reviewer", "--effort", "xhigh").effort
+    assert_nil parse("reviewer").effort
   end
 
   def test_flags

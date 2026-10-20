@@ -11,7 +11,7 @@
 #    dispatcher polls the inbox and the task board on a fixed interval.
 #
 # Usage:
-#   dispatcher ROLE (--harness NAME | --command TEMPLATE) [--model M]
+#   dispatcher ROLE (--harness NAME | --command TEMPLATE) [--model M] [--effort L]
 #                     [--skill NAME | --no-skill] [--interval S] [--max-turns N]
 #                     [--timeout S] [--idle-timeout S] [--grace S]
 #                     [--completion-signal TEXT] [--abort-signal TEXT]
@@ -31,10 +31,12 @@
 #                      (claude, codex, cursor, hermes, opencode). Each one
 #                      resumes sessions. --harness or --command is required.
 #   --command TEMPLATE Any other harness. A shell command with %{prompt},
-#                      %{role}, %{skill}, and %{model} placeholders, each
+#                      %{role}, %{skill}, %{model}, and %{effort} placeholders, each
 #                      shell-escaped. The command must exit when done.
 #                      Sessions are not resumed for custom commands.
 #   --model M          Model for the agent, in the harness CLI's own format.
+#   --effort L         Effort level of the model, in the harness CLI's own
+#                      format (for example high). Default: the harness default.
 #   --skill NAME       Hermes skill to preload. Default: <project>-<role> when
 #                      flow.rb generated it.
 #   --no-skill         Do not preload a skill.
@@ -151,7 +153,7 @@ module Dispatcher
   MAX_BACKOFF = 3600
   REPORT_RETRIES = 1
 
-  Config = Struct.new(:role, :harness, :command, :model, :skill, :no_skill, :interval, :max_turns,
+  Config = Struct.new(:role, :harness, :command, :model, :effort, :skill, :no_skill, :interval, :max_turns,
                       :timeout, :idle_timeout, :grace, :completion_signal, :abort_signal,
                       :cache_window, :max_session_runs, :max_context, :once, :poll_tasks, :worker, :coord_dir,
                       :verbose, :lean,
@@ -764,10 +766,11 @@ module Dispatcher
     module Generic
       extend Maf::Shared::Harness::Run
 
-      PLACEHOLDERS = %i[prompt role skill model].freeze
+      PLACEHOLDERS = %i[prompt role skill model effort].freeze
 
       def self.build_command(config, prompt, _session_id)
-        values = { prompt: prompt, role: config.role, skill: config.skill, model: config.model }
+        values = { prompt: prompt, role: config.role, skill: config.skill, model: config.model,
+                   effort: config.effort }
         line = PLACEHOLDERS.reduce(config.command) { |cmd, key| cmd.gsub("%{#{key}}") { values[key].to_s.shellescape } }
         ["sh", "-c", line]
       end
@@ -906,7 +909,7 @@ module Dispatcher
     def started(session_id, runs)
       save("mode" => "dispatch", "role" => @config.role, "harness" => @config.command ? "command" : @config.harness,
            "pid" => Process.pid, "running" => true, "run_started_at" => now, "session_id" => session_id,
-           "session_runs" => runs, "model" => @config.model || read["model"])
+           "session_runs" => runs, "model" => @config.model || read["model"], "effort" => @config.effort)
     end
 
     def finished(outcome, detail, model)
@@ -1371,7 +1374,7 @@ module Dispatcher
   # Options parses the command line into a Config.
   module Options
     VALUES = { "--harness NAME" => [:harness, String], "--command TEMPLATE" => [:command, String],
-               "--model M" => [:model, String], "--skill NAME" => [:skill, String],
+               "--model M" => [:model, String], "--effort L" => [:effort, String], "--skill NAME" => [:skill, String],
                "--interval S" => [:interval, Integer], "--max-turns N" => [:max_turns, Integer],
                "--timeout S" => [:timeout, Integer], "--cache-window S" => [:cache_window, Integer],
                "--max-session-runs N" => [:max_session_runs, Integer], "--max-context N" => [:max_context, Integer],

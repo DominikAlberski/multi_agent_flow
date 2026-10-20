@@ -34,7 +34,7 @@ module Maf
       # a role without the role definitions.
       def entry(agent)
         { harness: agent[:harness], role: agent[:role], model: @options.model_for(agent),
-          can_edit: @roles.fetch(agent[:role]).fetch("can_edit") }
+          can_edit: @roles.fetch(agent[:role]).fetch("can_edit") }.merge({ effort: @options.effort_for(agent) }.compact)
       end
 
       # Other tools own other keys (maf team: "team"; users: "base_branch").

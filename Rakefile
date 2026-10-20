@@ -7,6 +7,8 @@
 #   rake lint                          RuboCop (CI pins the version)
 #   rake test                          all test files
 #   rake test TEST=test/coord_test.rb  one test file
+#   rake mutant                        mutation tests of the subjects in .mutant.yml
+#   rake mutant SUBJECT=Maf::Budget*   mutation tests of other subjects
 #   rake build / install / release    gem tasks of Bundler (pkg/maf-VERSION.gem)
 #
 # Each test file runs in its own Ruby process, as `ruby test/x_test.rb` does.
@@ -44,6 +46,11 @@ task :test do
   failed = Array.new(Etc.nprocessors) { Thread.new { run_tests(queue) } }.flat_map(&:value)
   failed.each { |file, out| puts "== #{file}", out }
   abort "rake: #{failed.size} test file(s) failed: #{failed.map(&:first).join(", ")}" unless failed.empty?
+end
+
+desc "Run the mutation tests (SUBJECT=expression limits them)"
+task :mutant do
+  sh TEST_ENV, "mutant", "run", *ENV.fetch("SUBJECT", "").split
 end
 
 def test_files = ENV["TEST"] ? [ENV["TEST"]] : Dir["test/**/*_test.rb"]
