@@ -56,6 +56,9 @@ module Maf
         ERB
 
         def model_hint(_model) = "hermes model"
+        EFFORTS = %w[none minimal low medium high xhigh max ultra].freeze
+        def efforts(_model = nil) = EFFORTS
+        def effort_flag(effort) = super(effort, "--reasoning")
         def mcp_command(server, vault) = "hermes mcp add #{server} --command ruby --args #{vault} mcp"
         def install_hooks(_project) = Flow::HermesHookSetup.new.install
         def global_files = [File.join(Dir.home, ".hermes", "agent-hooks", "next-task.sh")]
@@ -82,10 +85,10 @@ module Maf
                       "You are a lead role. Never claim a task. Run coord inbox --wait and handle each message."
 
         # `-q` on a TTY seeds an interactive session with the prompt.
-        def launch(role, model)
+        def launch(role, model, effort = nil)
           prompt = format(Roles::LEADS.include?(role) ? LEAD_PROMPT : PROMPT, role: role)
-          ["hermes", "chat", *skill(role)&.then { |name| ["--skills", name] }, *model_flag(model), *tools(role),
-           "-q", prompt]
+          ["hermes", "chat", *skill(role)&.then { |name| ["--skills", name] }, *model_flag(model), *effort_flag(effort),
+           *tools(role), "-q", prompt]
         end
 
         # --no-skill drops the skill. Without --skill, the generated skill of the role loads.
@@ -99,9 +102,14 @@ module Maf
         # `hermes chat --oneshot` with JSONL output and the skill preloaded.
         def build_command(config, prompt, session_id)
           cmd = %w[hermes chat --oneshot --yolo --format stream-json -Q]
-          cmd += [*(["--skills", config.skill] if config.skill), *model_flag(config.model), *tools(config.role)]
+          cmd += run_flags(config)
           cmd += ["--max-turns", config.max_turns.to_s, "--run-budget", [config.timeout - KILL_GRACE, 1].max.to_s]
           cmd + resume(session_id, "--resume") + ["-q", prompt]
+        end
+
+        def run_flags(config)
+          [*(["--skills", config.skill] if config.skill), *model_flag(config.model), *effort_flag(config.effort),
+           *tools(config.role)]
         end
 
         def stale_session?(output) = output.include?("Session not found")

@@ -44,4 +44,64 @@ class CursorHarnessTest < Minitest::Test
   def test_the_command_is_agent
     assert_equal "agent", harness.command
   end
+
+  # Cursor rejects MODEL[effort=L] and has no effort flag. The model name carries the level.
+  def test_the_effort_goes_into_the_model_name
+    assert_equal %w[agent --model gpt-5-high], harness.launch("tester", "gpt-5", "high").first(3)
+    assert_equal %w[agent --model gpt-5], harness.launch("tester", "gpt-5").first(3)
+    assert_includes pairs(harness.build_command(config(model: "m-fast", effort: "low"), "go", nil)),
+                    %w[--model m-low-fast]
+  end
+
+  LIST = "Available models\n\nauto - Auto (current, default)\ngpt-c-low - C Low\ngpt-c - C\n" \
+         "gpt-c-high-fast - C High Fast\nopus-thinking-high - Opus\nopus-thinking-xhigh - Opus XH\n"
+
+  def test_lists_each_model_without_its_level
+    with_models do
+      assert_equal %w[auto gpt-c gpt-c-fast opus-thinking], harness.models
+      assert_equal([%w[low], %w[high], %w[high xhigh], [], []],
+                   %w[gpt-c gpt-c-fast opus-thinking auto opus-thinking-high].map { |m| harness.efforts(m) })
+    end
+  end
+
+  # opus-thinking is not a model name by itself. Only opus-thinking-high is.
+  def test_a_model_without_its_own_name_needs_a_level
+    with_models do
+      assert harness.known_model?("opus-thinking-high")
+      assert harness.effort_required?("opus-thinking")
+      refute harness.effort_required?("gpt-c")
+    end
+  end
+
+  # A name with a level gets the new level, not a second one. Without a model, the level is lost.
+  def test_a_new_level_replaces_the_level_in_the_name
+    assert_equal %w[agent --model m-low-fast], harness.launch("tester", "m-high-fast", "low").first(3)
+    _, err = capture_io { harness.launch("tester", nil, "high") }
+    assert_includes err, "maf drops --effort"
+  end
+
+  def test_the_role_file_names_the_model_with_its_level
+    values = { role: "r", description: "d", can_edit: true, project: "/p", prompt: "P" }
+    assert_includes harness.render_role(**values, model: "gpt-c", effort: "high"), "model: gpt-c-high\n"
+  end
+
+  def with_models(&block)
+    Dir.mktmpdir do |bin|
+      fake_agent(bin)
+      with_env("PATH" => "#{bin}#{File::PATH_SEPARATOR}#{ENV.fetch("PATH")}", &block)
+    end
+  end
+
+  def teardown = forget_models
+
+  def fake_agent(bin)
+    forget_models
+    File.write(File.join(bin, "agent"), "#!/bin/sh\nprintf '#{LIST}'\n")
+    File.chmod(0o755, File.join(bin, "agent"))
+  end
+
+  def forget_models
+    models = Maf::Shared::Harnesses::CursorModels
+    models.remove_instance_variable(:@listed) if models.instance_variable_defined?(:@listed)
+  end
 end

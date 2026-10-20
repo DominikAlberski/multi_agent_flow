@@ -10,7 +10,8 @@ require_relative "../../lib/maf/cli"
 
 module HarnessTestHelpers
   # The dispatcher options that a harness reads.
-  Config = Struct.new(:role, :model, :lean, :coord_dir, :skill, :no_skill, :timeout, :max_turns, keyword_init: true)
+  Config = Struct.new(:role, :model, :effort, :lean, :coord_dir, :skill, :no_skill, :timeout, :max_turns,
+                      keyword_init: true)
 
   def harness(name = self.class::HARNESS) = Maf::Shared::Harness.fetch(name)
   def config(**values) = Config.new(role: "backend-developer", timeout: 300, coord_dir: "/tmp/c/coordination", **values)

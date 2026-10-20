@@ -4,7 +4,7 @@
 #
 # maf add, maf remove, maf update, and maf roles run Flow::Generator.
 # Options: --project DIR [--agent HARNESS:ROLE ...] [--remove HARNESS:ROLE ...]
-#          [--model ROLE=MODEL] [--hermes-dir DIR] [--check] [--force] [--no-bootstrap]
+#          [--model ROLE=MODEL] [--effort ROLE=LEVEL] [--hermes-dir DIR] [--check] [--force] [--no-bootstrap]
 #          [--list-roles]
 #
 # HARNESS is a harness of the registry: one file in lib/maf/shared/harnesses/.
@@ -61,6 +61,7 @@ require_relative "flow/mcp_installer"
 require_relative "flow/role_files"
 require_relative "flow/manifest"
 require_relative "flow/models"
+require_relative "flow/effort_report"
 require_relative "flow/report"
 require_relative "flow/validator"
 require_relative "flow/harness_linker"
