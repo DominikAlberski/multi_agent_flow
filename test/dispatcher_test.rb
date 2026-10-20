@@ -230,8 +230,7 @@ class FailureLimitTest < Minitest::Test
     2.times { track(:failed) }
     assert_empty @calls
     assert_equal 0, track(:done).runs("t1")
-    assert_equal %w[block escalate], @calls.map(&:first)
-    assert_equal "t1", @calls.first[1]
+    assert_equal [%w[block --kind failing t1]], @calls.map { |call| call.first(4) }
     assert_includes @calls.last.last, "3 runs of backend-developer-bot in a row ended without coord done"
   end
 
