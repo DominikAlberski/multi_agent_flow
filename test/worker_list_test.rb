@@ -78,7 +78,7 @@ class WorkerListTest < Minitest::Test
     path = session("reviewer-1", spawn_process)
     File.utime(Time.now - 3600, Time.now - 3600, path)
 
-    assert_equal "No worker runs.\n", list
+    assert_equal "No worker runs.\nstopped: reviewer-1, tester-1\n", list
   end
 
   def test_a_dead_dispatcher_is_not_listed
@@ -87,6 +87,6 @@ class WorkerListTest < Minitest::Test
     Process.kill("KILL", pid)
     sleep 0.2
 
-    assert_equal "No worker runs.\n", list
+    assert_equal "No worker runs.\nstopped: reviewer-1, tester-1\n", list
   end
 end

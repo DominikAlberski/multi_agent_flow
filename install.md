@@ -198,7 +198,12 @@ list with the existing entries plus the new entry.
 The second command approves the hook one time. Hermes stores the consent for this
 version of the script. A new script version needs a new approval.
 
-Confirm that every check from `hermes hooks doctor` passes. Then continue.
+Confirm that every check from `hermes hooks doctor` passes.
+
+Hermes gives the commands of an agent only the variables in
+`terminal.client_env_passthrough`. If `maf add` prints a `hermes config set
+terminal.client_env_passthrough` command, run it. It keeps the names that the
+list has now. Then continue.
 
 ## Step 5c - Set the Gemini key for the doc-graph refresh
 

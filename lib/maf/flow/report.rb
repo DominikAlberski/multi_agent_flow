@@ -20,13 +20,13 @@ module Maf
 
       private
 
-      # The hook steps print at install time, far above the last lines the user
+      # The Hermes steps print at install time, far above the last lines the user
       # reads. Repeat the state here so the flow is not started with a dead hook.
       def print_hermes_reminder
         return unless @hermes_pending
 
-        puts "The Hermes hook is not active yet. Finish the steps above.",
-             "Then run `maf update` to confirm the hook is ready."
+        puts "The Hermes setup is not done yet. Finish the steps above.",
+             "Then run `maf update` to confirm that Hermes is ready."
       end
 
       def generated_line(result)

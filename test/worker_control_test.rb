@@ -52,6 +52,21 @@ class WorkerControlTest < Minitest::Test
 
   def refused(action) = assert_raises(SystemExit) { control(action) }.message
 
+  def test_a_role_with_one_worker_names_that_worker
+    register(dispatch: true)
+    out, = capture_io { Maf::WorkerControl.new(@root, "architect").run("status") }
+
+    assert_equal "architect-1: stopped\n", out
+  end
+
+  def test_a_role_with_two_workers_needs_the_worker
+    register(dispatch: true)
+    Maf::Workers.at(@root).add("architect-2", "role" => "architect", "dispatch" => true)
+    err = assert_raises(SystemExit) { capture_io { Maf::WorkerControl.new(@root, "architect") } }
+
+    assert_includes err.message, "more than one worker: architect-1, architect-2"
+  end
+
   def test_stop_of_a_stopped_worker_does_nothing
     register(dispatch: true)
     out, = control("stop")

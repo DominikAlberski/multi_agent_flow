@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- Fix: each dispatched Hermes run failed. Hermes 0.22 refuses `--run-budget` with `--format
+  stream-json`. maf no longer passes `--run-budget`. The `--timeout` of the dispatcher still
+  stops a run.
+- Fix: in a Hermes run, `coord` did not get `COORD_WORKER` and the other flow variables, so
+  `coord done` refused to close the task. Hermes runs each session in a shared gateway and
+  passes only the names in `terminal.client_env_passthrough`. `maf add` and `maf update` print
+  the `hermes config set` command that adds the flow names to that list.
+- `maf worker stop|start|restart|status ROLE` finds the worker when the role has one worker,
+  for example `tester-bot`.
+- `maf worker list` names the stopped workers also when no worker runs.
 - A worker does not start a team of its own. `.maf/claude/settings.json` sets
   `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=0`, so a subagent that Claude names in a `maf start`
   session does not start as a teammate. `maf update` adds the setting.

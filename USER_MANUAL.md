@@ -487,6 +487,20 @@ missing, or `hook ready` when the hook is active.
 The hook does nothing outside this flow. It exits at once unless `COORD_ROLE` is
 set, and `maf start` sets that variable.
 
+### Give the flow variables to Hermes
+
+Hermes runs each session in a shared gateway process. The commands of an agent get
+only `PATH` and the names in `terminal.client_env_passthrough`. Without
+`COORD_WORKER` and the other flow names, `coord done` refuses to close the task.
+Add the names one time:
+
+```sh
+hermes config set terminal.client_env_passthrough '["COORD_DIR","COORD_ROLE","COORD_WORKER","COORD_DISPATCHED","COORD_SLOT","COORD_SESSION_PID","TASKRC","MAF_BIN"]'
+```
+
+The command replaces the list. `maf add` and `maf update` print the command with
+the names that the list has now, or `hermes env ready` when no name is missing.
+
 ---
 
 ## Harnesses
@@ -990,6 +1004,7 @@ dashboard --maf PATH  # the maf command for actions (default: maf on PATH)
 ```
 
 From a terminal, use the same command: `maf worker status|stop|start|restart ROLE[_WORKER] [--force]`.
+A role name alone works when the role has one worker. `maf worker list` shows the names of the workers.
 `start` and `restart` take `--max-context N`, `--max-session-runs N`, and `--cache-window S`. maf saves
 them for the role in `.maf/config.json`.
 

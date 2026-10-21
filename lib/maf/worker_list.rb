@@ -21,9 +21,7 @@ module Maf
 
     def run
       rows = running
-      return puts("No worker runs.") if rows.empty?
-
-      puts table([HEADER] + rows.map { |row| row.to_a.map(&:to_s) }), warnings(rows)
+      puts rows.empty? ? "No worker runs." : table([HEADER] + rows.map { |row| row.to_a.map(&:to_s) }), warnings(rows)
     end
 
     private
