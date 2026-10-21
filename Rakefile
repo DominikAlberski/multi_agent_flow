@@ -57,7 +57,7 @@ def test_files = ENV["TEST"] ? [ENV["TEST"]] : Dir["test/**/*_test.rb"]
 
 # Returns [file, output] for each failed file.
 def run_tests(queue)
-  Enumerator.produce { queue.pop }.take_while(&:itself).filter_map { |path| run_test(path) }
+  Enumerator.produce { queue.pop }.lazy.take_while(&:itself).filter_map { |path| run_test(path) }.to_a
 end
 
 # Returns nil when the file passes.
