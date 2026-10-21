@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-21
+
 - Fix: each dispatched Hermes run failed. Hermes 0.22 refuses `--run-budget` with `--format
   stream-json`. maf no longer passes `--run-budget`. The `--timeout` of the dispatcher still
   stops a run.
