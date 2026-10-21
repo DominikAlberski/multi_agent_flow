@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- After `maf untrack`, maf moves the old branches. `maf start` fast-forwards a worker branch
+  also when the only changes are in flow files that the base branch no longer tracks: maf
+  discards them first. `maf update` runs the new `coord goal migrate`, which merges the base
+  branch into each goal branch that still tracks the flow files. Before, the user did these
+  steps by hand, because the sandbox blocks an agent from deleting the flow files.
+
 ## [0.4.0] - 2026-10-21
 
 - Fix: in the macOS sandbox, a worker that the project manager started failed on each run with
