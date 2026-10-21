@@ -18,6 +18,11 @@ module Maf
       @yes = argv.include?("--yes")
     end
 
+    TRACKED = "maf: git tracks files of the flow. Each maf update changes them in every worktree, " \
+              "and coord start-task refuses a dirty worktree. Run maf untrack --check, then maf untrack, then commit."
+
+    def self.warn_tracked(root) = (warn TRACKED unless new(root, []).tracked.empty?)
+
     def run
       steps = plan
       return puts("maf: git tracks no file of the flow in #{@root}.") if steps.empty?
@@ -57,6 +62,8 @@ module Maf
       print "Untrack the items above? [y/N] "
       $stdin.gets.to_s.strip.match?(/\Ay(es)?\z/i)
     end
+
+    public
 
     # The tracked files of .maf/, and the tracked paths of each harness (Harness#untrack_paths).
     def tracked

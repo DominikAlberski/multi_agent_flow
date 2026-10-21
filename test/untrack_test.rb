@@ -96,6 +96,21 @@ class UntrackTest < Minitest::Test
     assert_includes tracked, ".maf/config.json"
   end
 
+  def test_update_names_untrack_for_a_tracked_install
+    out, = maf("update", "--no-bootstrap")
+
+    assert_includes out, "Run maf untrack --check"
+  end
+
+  def test_update_is_quiet_after_untrack
+    maf("untrack", "--yes")
+    git("commit", "-q", "-m", "untrack")
+
+    out, = maf("update", "--no-bootstrap")
+
+    refute_includes out, "maf untrack"
+  end
+
   def test_a_second_run_finds_nothing
     maf("untrack", "--yes")
     git("commit", "-q", "-m", "untrack")

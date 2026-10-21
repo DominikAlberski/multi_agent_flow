@@ -101,7 +101,9 @@
 # atomic, so a run never starts for a task that another worker took. If the
 # same task set is still unclaimed afterwards, it waits with a doubling
 # backoff (capped at MAX_BACKOFF) before it tries again. A changed task set
-# dispatches at once.
+# dispatches at once. After MAX_ATTEMPTS runs in a row that leave a task
+# claimed and not done, the dispatcher blocks the task (`coord block`) and
+# escalates it. A usage limit or an unknown model counts no run.
 #
 # Sessions and the prompt cache: the session ID is saved to
 # .maf/coordination/sessions/<worker>.session and resumed on the next run, so the
@@ -318,6 +320,49 @@ module Dispatcher
       @ids = ids.sort
       @next_at = now + [@interval * (2**(@attempts + 1)), MAX_BACKOFF].min
     end
+  end
+
+  # FailureLimit counts the runs in a row that left a task claimed and not
+  # done. At MAX_ATTEMPTS it blocks the task and escalates it. The count is in
+  # .maf/coordination/failures/<id>, so a restart keeps it.
+  class FailureLimit
+    NOTICE = "Task %<id>s is blocked: %<runs>d runs of %<worker>s in a row ended without coord done. " \
+             "Last result: %<last>s Fix the cause, then run `coord unblock %<id>s`."
+    UNCOUNTED = %i[limited broken].freeze
+
+    def initialize(config, poller, coord = ->(*args) { CoordCall.run(Main.run_env(config), *args) })
+      @config = config
+      @poller = poller
+      @coord = coord
+      @dir = File.join(config.coord_dir, "failures")
+    end
+
+    def track(ids, outcome)
+      return if UNCOUNTED.include?(outcome)
+
+      open = outcome == :waiting ? [] : @poller.claimed_task_ids
+      ids.each { |id| open.include?(id) ? count(id) : clear(id) }
+    end
+
+    def runs(id) = File.exist?(path(id)) ? File.read(path(id)).to_i : 0
+
+    private
+
+    def count(id)
+      runs = runs(id) + 1
+      runs >= MAX_ATTEMPTS ? block(id, runs) : save(id, runs)
+    end
+
+    def block(id, runs)
+      text = format(NOTICE, id: id, runs: runs, worker: @config.worker, last: Log.last.to_s[0, 200])
+      Log.line("task #{id}: #{runs} unfinished runs in a row; blocking it")
+      @coord.call("block", id, text) && @coord.call("escalate", text)
+      clear(id)
+    end
+
+    def save(id, runs) = FileUtils.mkdir_p(@dir) && File.write(path(id), runs.to_s)
+    def clear(id) = FileUtils.rm_f(path(id))
+    def path(id) = File.join(@dir, id)
   end
 
   # Lessons reads the dead ends and corrections of graphify-out/reflections/
@@ -1312,6 +1357,7 @@ module Dispatcher
       Log.line("usage limit: no new run until #{@pause.until.utc}")
     end
     def chores = @chores ||= LeadChores.new(@poller, @config.role)
+    def failure_limit = @failure_limit ||= FailureLimit.new(@config, @poller)
 
     def start
       Log.line("started: role=#{@config.role} #{harness_label} #{timing_label}")
@@ -1350,7 +1396,7 @@ module Dispatcher
       ids = @poller.claimed_task_ids
       return false unless @resume.due?(ids)
 
-      dispatch(Prompt.resume(@config.role, ids) + context(ids.first))
+      failure_limit.track(ids, dispatch(Prompt.resume(@config.role, ids) + context(ids.first)))
       @resume.dispatched(ids)
       true
     end
@@ -1366,7 +1412,7 @@ module Dispatcher
     end
 
     def run_task(id)
-      dispatch(Prompt.task(@config.role, id) + context(id))
+      failure_limit.track([id], dispatch(Prompt.task(@config.role, id) + context(id)))
       true
     end
   end

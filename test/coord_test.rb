@@ -69,6 +69,12 @@ class ArgsTest < Minitest::Test
   def test_take_command_returns_nil_without_a_separator
     assert_nil Coord::Args.new(["echo", "hi"]).take_command
   end
+
+  def test_require_arg_refuses_an_option
+    _out, err = capture_io { assert_raises(SystemExit) { Coord::Args.new(["--help"]).require_arg("worktree", "ROLE") } }
+
+    assert_includes err, "usage: coord worktree ROLE"
+  end
 end
 
 class LeaseTest < Minitest::Test
@@ -195,6 +201,32 @@ class TaskwarriorTest < Minitest::Test
     assert_empty find(id)["worker"].to_s
     assert_nil find(id)["start"]
     assert_nil Coord::Tasks.new.claim(id, "backend-2")
+  end
+
+  def test_block_releases_the_claim_and_hides_the_task_from_next
+    id = add("flaky")
+    tasks.claim(id, "backend-1")
+    assert_equal "blocked #{id}\n", run_cli("block", id, "three failed runs")
+    task = find(id)
+    assert_empty task["worker"].to_s
+    assert_includes task["tags"], "blocked"
+    assert_equal "BLOCKED: three failed runs", task["annotations"].last["description"]
+    assert_empty Coord::Tasks.new.next_for("backend-developer")
+  end
+
+  def test_unblock_returns_the_task_to_next
+    id = add("flaky")
+    run_cli("block", id, "needs input")
+    run_cli("unblock", id)
+    assert_equal([id], Coord::Tasks.new.next_for("backend-developer").map { |task| task["uuid"] })
+  end
+
+  def test_status_and_board_show_a_blocked_task
+    run_cli("block", add("flaky"), "needs input")
+    assert_includes run_cli("status"), "backend-developer: blocked=1"
+    run_cli("board")
+    board = File.read(File.join(@env["COORD_DIR"], "exports", "board.md"))
+    assert_match(/## Blocked\n\n- \[ \] .*flaky/, board)
   end
 
   def test_expired_lease_is_reclaimable_without_force
@@ -1394,6 +1426,15 @@ class GoalTest < Minitest::Test
     assert_includes coord("goal", "list"), "Show prices"
   end
 
+  def test_goal_add_warns_when_origin_lacks_the_base_branch
+    with_origin do |origin|
+      git(origin, "branch", "-D", "main")
+      _out, err = capture_io { Dir.chdir(@root) { Coord::CLI.new(%w[goal add --title x], env: @env).run } }
+
+      assert_includes err, "origin has no branch main"
+    end
+  end
+
   def test_goal_add_refuses_a_missing_base_branch
     assert_raises(SystemExit) { coord("goal", "add", "--title", "x", "--base", "nope") }
   end
@@ -1413,6 +1454,28 @@ class GoalTest < Minitest::Test
     coord("add", "--role", "tester", "--scope", "test/**", "--goal", uuid, "--title", "price test")
 
     assert_includes coord("goal", "show", uuid), "price test"
+  end
+
+  def write_plan(uuid)
+    dir = File.join(@root, ".maf/coordination/artifacts", uuid)
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, "plan.md"), "# plan\n")
+  end
+
+  def test_goal_show_names_a_plan_without_tasks
+    uuid = add_goal
+    write_plan(uuid)
+
+    assert_includes coord("goal", "show", uuid), "plan ready, no tasks"
+  end
+
+  def test_goal_show_has_no_plan_line_after_the_first_task
+    uuid = add_goal
+    write_plan(uuid)
+    task = coord("add", "--role", "tester", "--scope", "test/**", "--goal", uuid, "--title", "t").strip
+    coord("done", task)
+
+    refute_includes coord("goal", "show", uuid), "plan ready"
   end
 
   def test_goal_done_is_refused_while_a_task_is_open
@@ -1445,9 +1508,29 @@ class GoalTest < Minitest::Test
     assert_raises(SystemExit) { coord("start-task", task, dir: worker_dir) }
   end
 
+  def test_start_task_names_maf_untrack_for_changed_flow_files
+    FileUtils.mkdir_p(File.join(@root, ".maf/agents"))
+    File.write(File.join(@root, ".maf/agents/tester.md"), "old\n")
+    commit(@root, "old install")
+    task = coord("add", "--role", "tester", "--scope", "test/**", "--title", "t").strip
+    worker_dir = worker_worktree
+    File.write(File.join(worker_dir, ".maf/agents/tester.md"), "new\n")
+
+    error = assert_raises(SystemExit) { coord("start-task", task, dir: worker_dir) }
+    assert_includes error.message, ".maf/agents/tester.md"
+    assert_includes error.message, "run maf untrack"
+  end
+
   def worker_worktree
     coord("worktree", "tester", "1")
     File.join(@root, ".maf/worktrees", "tester-1")
+  end
+
+  def test_worktree_refuses_an_option_as_the_worker_name
+    capture_io { assert_raises(SystemExit) { coord("worktree", "tester", "--help") } }
+
+    refute branch?("worker/tester---help")
+    refute Dir.exist?(File.join(@root, ".maf/worktrees", "tester---help"))
   end
 
   # A task with own commits and a goal branch that moved on after the start.
@@ -1568,6 +1651,41 @@ class GoalTest < Minitest::Test
 
     error = assert_raises(SystemExit) { coord("land", task) }
     assert_includes error.message, "lacks the head"
+  end
+
+  def parents(ref) = `git -C #{@root} rev-list --parents -n 1 #{ref}`.split.drop(1)
+
+  # The goal and the base change one line, so the sync conflicts. A fix task merges the base.
+  def landed_base_merge
+    uuid = add_goal
+    File.write(File.join(goal_dir(uuid), "plans.md"), "goal\n")
+    commit(goal_dir(uuid), "goal plan")
+    File.write(File.join(@root, "plans.md"), "base\n")
+    commit(@root, "base plan")
+    task = coord("add", "--role", "tester", "--scope", "plans.md", "--goal", uuid, "--title", "Merge main").strip
+    worker_dir = worker_worktree
+    coord("start-task", task, dir: worker_dir)
+    system("git", "-C", worker_dir, "merge", "-q", "main", out: File::NULL, err: File::NULL)
+    File.write(File.join(worker_dir, "plans.md"), "goal\nbase\n")
+    commit(worker_dir, "merge main")
+    coord("done", task, dir: worker_dir)
+    coord("land", task, "--subject", "chore(merge): merge main")
+    uuid
+  end
+
+  def test_land_of_a_base_merge_keeps_the_base_head_as_a_parent
+    uuid = landed_base_merge
+
+    assert_equal [`git -C #{@root} rev-parse main`.strip], parents("goal/#{short(uuid)}").drop(1)
+    assert_equal "goal\nbase\n", File.read(File.join(goal_dir(uuid), "plans.md"))
+    assert_includes coord("goal", "sync", uuid), "already contains main"
+  end
+
+  def test_land_without_a_base_merge_has_one_parent
+    uuid, task, = done_task_with_work
+    coord("land", task)
+
+    assert_equal 1, parents("goal/#{short(uuid)}").size
   end
 
   def test_goal_done_is_refused_until_the_goal_contains_the_base_head
@@ -1811,6 +1929,18 @@ class GoalPrTest < GoalTest
     git(other, "push", "-q", "origin", "maf/memory")
   ensure
     FileUtils.rm_rf(other)
+  end
+
+  def test_goal_pr_pushes_the_base_branch_that_origin_lacks
+    with_origin do |origin|
+      configure_github
+      uuid, task, = done_task_with_work
+      coord("land", task)
+      git(origin, "branch", "-D", "main")
+
+      assert_includes coord("goal", "pr", uuid), "pushed main"
+      assert system("git", "-C", origin, "show-ref", "--quiet", "refs/heads/main")
+    end
   end
 
   def test_a_second_goal_pr_comments_and_asks_for_a_new_review

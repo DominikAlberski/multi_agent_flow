@@ -99,7 +99,10 @@ module Maf
     # Without arguments on a terminal, maf add asks for the harness, the roles, and the models.
     def run_add = @args.empty? && $stdin.tty? ? Menu.new.add : Maf.flow(*AgentArgs.convert(@args, "--agent"))
     def run_remove = Maf.flow(*AgentArgs.convert(@args, "--remove"))
-    def run_update = Maf.flow(*@args)
+    def run_update
+      Maf.flow(*@args)
+      Untrack.warn_tracked(SetupAgent::Project.root)
+    end
     def run_roles = Maf.flow("--list-roles")
 
     def run_role

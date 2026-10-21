@@ -641,6 +641,13 @@ The dispatcher does not retry the same unclaimed tasks every minute.
 The wait between runs doubles after each run, up to 1 hour. A new or changed
 task starts a run immediately. A message run never claims a task.
 
+**Failing tasks.** A run that ends with the task still claimed and not done is an
+unfinished run. After 3 unfinished runs in a row, the dispatcher blocks the task
+(`coord block`) and escalates it to the project manager. A blocked task stays out of
+`coord next` until someone runs `coord unblock ID`. A usage limit or an unknown model
+counts no run. The count is in `.maf/coordination/failures/<id>`, so it stays correct
+after a restart.
+
 **Prompt cache.** LLM providers cache a conversation for a limited time after the
 last request. Claude Code uses a 1-hour cache. The OpenAI cache of Codex is best
 effort and lasts a few minutes.
@@ -742,6 +749,8 @@ Expected sequence:
 6. Each worker reports with `coord annotate` and `coord done`.
 7. The reviewer checks the diff. The architect lands each task with `coord land <id>`:
    one squash commit on the goal branch. The task branch is then deleted.
+   A task that merged the base branch lands with the base head as a second parent,
+   so `coord goal sync` does not merge the base branch again.
 8. The architect runs `coord goal sync <id>` to merge the base branch into the goal,
    runs the full suite one time in the goal worktree, and closes the goal.
    The pull request goes from the goal branch into the base branch, with a merge commit.
@@ -808,6 +817,10 @@ for each goal and read your review:
 - `repo` is optional. Without it, coord reads the repository from the `origin` URL.
 - Without a `git_identity` key, `bot_user` and `bot_email` are the git persona of the agents
   (see "Git persona of the agents").
+- Keep the base branch on GitHub. A release pull request from the base branch into `main`
+  deletes the base branch if "Automatically delete head branches" is on.
+  Turn that setting off, or protect the base branch. If origin lacks the base branch,
+  `coord goal add` warns and `coord goal pr` pushes the local base branch again.
 
 The flow:
 
@@ -1462,6 +1475,8 @@ This section holds the board details for the operator.
 | `coord claim ID` | Atomically claim a task for `$COORD_WORKER`. Refuses to steal an active claim. Refused for lead roles. |
 | `coord start-task ID` | In a worker worktree: check out `task/<short-id>` from the goal branch. |
 | `coord unclaim ID` | Release a claim without finishing it. |
+| `coord block ID TEXT` | Release the claim, note the reason, and hold the task out of `coord next`. |
+| `coord unblock ID` | Return a blocked task to the backlog. |
 | `coord done ID [--force]` | Complete a task. Refused while the task branch has own commits and lacks the goal branch head. |
 | `coord annotate ID TEXT` | Add a note to a task (permanent). |
 | `coord lesson ID dead_end\|corrected TEXT` | Save a lesson of a task to the graph memory (see "Work memory"). |

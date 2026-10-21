@@ -9,6 +9,10 @@
   `delegation`, `cronjob`, `computer_use`, and the other toolsets outside the list.
 - Fix: a Hermes role with `can_edit: false` did not get the graph MCP server, because its
   toolset list did not name `mcp-graphify-<project>`.
+- The dispatcher blocks a task after 3 runs in a row that leave it claimed and not done, and
+  escalates it to the project manager. Before, it resumed such a task each hour without end.
+  New commands: `coord block ID TEXT` holds a task out of `coord next`, and `coord unblock ID`
+  returns it. `coord status` and `coord board` show blocked tasks.
 - `maf worker list` shows each running worker: its role, harness, mode (session or dispatch),
   pid, and start time. A worker that runs twice, for example as a session and as a
   dispatcher, gets a warning. The last line names the registered workers that do not run.
