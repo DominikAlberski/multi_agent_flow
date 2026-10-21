@@ -23,6 +23,10 @@ module Maf
 
     def self.warn_tracked(root) = (warn TRACKED unless new(root, []).tracked.empty?)
 
+    DONE = ["", "The flow left git. Review the change with `git status`, then commit it.",
+            "A branch that still tracks the flow files can delete them in a checkout or a merge.",
+            "maf keeps a backup of the flow config in .git/maf/backup. Run `maf restore` to put it back."].freeze
+
     def run
       steps = plan
       return puts("maf: git tracks no file of the flow in #{@root}.") if steps.empty?
@@ -55,7 +59,7 @@ module Maf
       abort "maf: cancelled" unless @yes || confirmed?
       steps.each(&:run)
       Dir.chdir(@root) { Maf.flow }
-      puts "", "The flow left git. Review the change with `git status`, then commit it."
+      puts DONE
     end
 
     def confirmed?
