@@ -24,6 +24,7 @@ module Maf
     end
 
     def self.notify(root, text) = coord(root, "msg", "--from", "maf", "architect", text)
+    def self.agent? = !ENV["COORD_ROLE"].to_s.empty?
   end
 
   # Prepare makes a worker ready to start. With --replace, it retires the
@@ -35,6 +36,8 @@ module Maf
     # The architect never talks to the user. A dispatched architect gets fresh
     # sessions with a handoff note, so its context stays small.
     DISPATCH_DEFAULT = %w[architect].freeze
+    NO_BUDGET = "maf: an agent cannot change the team without a budget. Ask the user to set one " \
+                "(maf team set --max N), or to run this command in a terminal."
 
     def self.mode_args(argv)
       return argv - ["--interactive"] if argv.include?("--interactive")
@@ -52,7 +55,7 @@ module Maf
     end
 
     def run
-      @budget.check!(@args.harness, @args.model, @budget.count(workers_after))
+      check_budget
       retire = (Retire.new(@root, @replace).tap(&:check!) if @replace)
       Dir.chdir(@root) { prepare }
       retire.run if retire && Workers.id(@replace) != @args.worker
@@ -61,10 +64,15 @@ module Maf
 
     def announce
       Team.notify(@root, "Team change: worker #{@args.worker} (#{@args.harness}) joined as #{@args.role}.")
-      @args.dispatch ? start_dispatcher : print_next_steps
+      @args.dispatch && !Shared::Sandbox.nested? ? start_dispatcher : print_next_steps
     end
 
     private
+
+    def check_budget
+      abort NO_BUDGET if Team.agent? && !@budget.limited?
+      @budget.check!(@args.harness, @args.model, @budget.count(workers_after))
+    end
 
     def take_replace(argv)
       index = argv.index("--replace") or return nil

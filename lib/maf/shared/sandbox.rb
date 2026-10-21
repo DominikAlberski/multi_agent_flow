@@ -18,6 +18,8 @@ module Maf
       BACKENDS = { "seatbelt" => Seatbelt, "bwrap" => Bwrap }.freeze
       MODES = ["off", "auto", *BACKENDS.keys].freeze
       POLICY = File.join(".maf", "sandbox.json")
+      NESTED = "maf: this process runs in the macOS sandbox, and macOS cannot start a second sandbox in it. " \
+               "Start the worker from your terminal: cd <worktree> && maf start"
 
       def self.policy
         path = File.join(Project.root, POLICY)
@@ -40,8 +42,12 @@ module Maf
       def self.wrap(cmd, harness, coord_dir: ENV.fetch("COORD_DIR", nil))
         policy = self.policy
         mode = mode(policy)
+        refuse_nested!(mode)
         mode == "off" ? cmd : BACKENDS[mode].wrap(harness.sandboxed(cmd), paths(harness, policy, coord_dir))
       end
+
+      def self.nested?(mode = self.mode) = mode == "seatbelt" && Seatbelt.inside?
+      def self.refuse_nested!(mode = self.mode) = nested?(mode) && abort(NESTED)
 
       def self.keeping_links(harness, coord_dir: ENV.fetch("COORD_DIR", nil))
         links = protected_links(harness, coord_dir)

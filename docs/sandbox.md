@@ -326,7 +326,7 @@ Such a worker starts inside the sandbox of the lead:
 
 | Platform | What happens |
 |---|---|
-| macOS | the worker gets its own sandbox inside the sandbox of the lead. The worker can write only where both sandboxes allow it. |
+| macOS | macOS cannot start a sandbox inside a sandbox. `sandbox-exec` fails with `sandbox_apply: Operation not permitted`. `maf prepare --dispatch` sees the sandbox of the lead (`MAF_SEATBELT=1`): it prepares the worker and prints `cd <worktree>` and `maf start`. The user runs them in a terminal. A dispatcher that starts in the sandbox stops at once and writes the reason to its log. |
 | Linux | bubblewrap cannot start inside bubblewrap. maf sees that it already runs in the sandbox, so the worker keeps the sandbox of the lead. |
 
 Because of this, each sandbox opens the folders of each harness of the project,
@@ -335,8 +335,10 @@ starts can then write to `~/.codex`.
 
 ### The team budget
 
-The project manager can run `maf team set` in the sandbox. The budget is in `.maf/config.json`,
-which is not protected. The policy is in `.maf/sandbox.json`, so the project manager cannot change the sandbox.
+Only the user sets the budget. `maf team set` refuses when an agent runs it (`COORD_ROLE` is set).
+Without a budget, `maf prepare` refuses when an agent runs it. So the project manager cannot add
+workers on its own. The budget is in `.maf/config.json`, which is not protected: an agent that edits
+the file directly can still change the budget. The refusal stops a mistake, not an attack. The policy is in `.maf/sandbox.json`, so the project manager cannot change the sandbox.
 The verify command and the analyst command in `.maf/config.json` run in the sandbox, so a change to them
 cannot run a command on the host.
 

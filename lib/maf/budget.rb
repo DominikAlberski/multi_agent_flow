@@ -44,6 +44,8 @@ module Maf
         if @max && count > @max
     end
 
+    def limited? = !@max.nil?
+
     def allowed?(harness, model)
       @allow.empty? || @allow.any? { |spec| [harness, "#{harness}:#{model}"].include?(spec) }
     end

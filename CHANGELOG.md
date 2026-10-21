@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- Fix: in the macOS sandbox, a worker that the project manager started failed on each run with
+  `sandbox_apply: Operation not permitted`. macOS cannot start a sandbox inside a sandbox. The
+  sandbox now sets `MAF_SEATBELT=1`. In the sandbox, `maf prepare --dispatch` prepares the worker
+  and prints the start commands, and a dispatcher stops at once with the reason in its log.
+- The project manager no longer adds workers on its own. Without a team budget, `maf prepare`
+  refuses when an agent runs it. Only the user sets the budget: `maf team set` refuses when an
+  agent runs it.
+
 ## [0.3.0] - 2026-10-21
 
 - Fix: each dispatched Hermes run failed. Hermes 0.22 refuses `--run-budget` with `--format
