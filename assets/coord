@@ -408,6 +408,8 @@ module Coord
       export([id, "export"]).first || {}
     end
 
+    def with_goal(uuid) = export(["goalid:#{uuid}", "export"])
+
     private
 
     def run(*args)
@@ -541,6 +543,7 @@ module Coord
     # A short id of digits only would read as a task number. The filter avoids that.
     def find_short(short) = @cli.task("uuid.startswith:#{short}")
     def for_goal(uuid) = pending.select { |task| task["goalid"] == uuid }
+    def any_for_goal?(uuid) = @cli.with_goal(uuid).any?
     def done(id) = @cli.done(id)
     def annotate(id, text) = @cli.annotate(id, text)
     def pending = @pending ||= @cli.pending
@@ -1185,6 +1188,8 @@ end
     def self.run(dir, *args) = system("git", "-C", dir, *args, out: File::NULL, err: File::NULL)
     def self.branch?(dir, name) = run(dir, "show-ref", "--verify", "--quiet", "refs/heads/#{name}")
     def self.clean?(dir) = `git -C #{Shellwords.escape(dir)} status --porcelain --untracked-files=no`.strip.empty?
+    def self.changed(dir) = out(dir, "diff", "HEAD", "--name-only").lines(chomp: true)
+    def self.remote_branch?(dir, remote, name) = run(dir, "ls-remote", "--exit-code", "--heads", remote, name)
     def self.out(dir, *args) = IO.popen(["git", "-C", dir, *args], err: File::NULL, &:read).strip
     def self.ancestor?(dir, older, newer) = run(dir, "merge-base", "--is-ancestor", older, newer)
     def self.own_commits?(dir, base, branch) = out(dir, "rev-list", "--count", "#{base}..#{branch}").to_i.positive?
@@ -1245,11 +1250,12 @@ end
       goals.each { |goal| puts goal_line(goal) }
     end
 
-    def show(id)
+    def show(id, artifacts_dir)
       goal = find!(id)
       puts goal_line(goal)
       list = @tasks.for_goal(goal["uuid"])
       list.empty? ? puts("  no open tasks") : list.each { |task| puts task_line(task) }
+      plan_hint(goal["uuid"], artifacts_dir)
     end
 
     def done(id)
@@ -1265,6 +1271,13 @@ end
     end
 
     private
+
+    def plan_hint(uuid, artifacts_dir)
+      plan = File.join(artifacts_dir, uuid, "plan.md")
+      return unless File.exist?(plan) && !@tasks.any_for_goal?(uuid)
+
+      puts "  plan ready, no tasks: #{plan}. The plan waits for approval."
+    end
 
     def goal_line(goal)
       open = @tasks.for_goal(goal["uuid"]).size
@@ -1286,7 +1299,7 @@ end
     end
 
     def start(uuid, base)
-      raise Error, "uncommitted changes in #{@dir}. Commit or stash them first." unless Git.clean?(@dir)
+      refuse_dirty!
 
       branch = "task/#{Goals.short(uuid)}"
       raise Error, "git checkout #{branch} failed" unless checkout(branch, base)
@@ -1295,6 +1308,17 @@ end
     end
 
     private
+
+    FLOW_FILES = "These are files of the flow, and git tracks them. In the main checkout, run maf untrack and commit."
+
+    def refuse_dirty!
+      paths = Git.changed(@dir)
+      return if paths.empty?
+
+      flow = paths.all? { |path| path.start_with?(".maf/") || Worktree::RUNTIME_FILES.include?(path) }
+      raise Error, ["uncommitted changes in #{@dir}: #{paths.first(5).join(", ")}#{" ..." if paths.size > 5}.",
+                    flow ? FLOW_FILES : "Commit or stash them first."].join(" ")
+    end
 
     def checkout(branch, base)
       return Git.run(@dir, "checkout", "-q", branch) if Git.branch?(@dir, branch)
@@ -1351,8 +1375,8 @@ end
   # commit. The task branch is then deleted. A worker worktree that still has
   # the task branch checked out moves back to its worker branch first.
   class Land
-    def initialize(root, task)
-      @root, @task = root, task
+    def initialize(root, task, base)
+      @root, @task, @base = root, task, base
     end
 
     def run(subject)
@@ -1381,8 +1405,14 @@ end
       return nil unless Git.own_commits?(@root, goal_branch, branch)
       raise Error, STALE % { branch: branch, goal: goal_branch } unless Git.ancestor?(@root, goal_branch, branch)
 
+      parent = base_parent
       merge_squash
-      commit(SquashMessage.for(@task, subject))
+      commit(SquashMessage.for(@task, subject), parent)
+    end
+
+    def base_parent
+      held = Git.out(@root, "merge-base", Git.base_ref(@root, @base), branch)
+      held unless held.empty? || Git.ancestor?(@root, held, goal_branch)
     end
 
     STALE = "branch %<branch>s lacks the head of %<goal>s. Open a fix task: merge %<goal>s into %<branch>s."
@@ -1395,14 +1425,30 @@ end
     end
 
     # coord makes this commit, not the role, so the commit guard does not apply.
-    def commit(message)
-      return nil if Git.run(goal_dir, "diff", "--cached", "--quiet")
+    def commit(message, parent)
+      return nil if Git.run(goal_dir, "diff", "--cached", "--quiet") && parent.nil?
 
+      parent ? merge_commit(message, parent) : squash_commit(message)
+      Git.out(goal_dir, "rev-parse", "--short", "HEAD")
+    end
+
+    def squash_commit(message)
       args = ["git", "-C", goal_dir, "commit", "-q", "--no-verify", "-F", "-"]
       IO.popen(args, "w") { |io| io.write(message) }
       raise Error, "git commit on #{goal_branch} failed" unless $?.success?
+    end
 
-      Git.out(goal_dir, "rev-parse", "--short", "HEAD")
+    def merge_commit(message, parent)
+      head = Git.out(goal_dir, "rev-parse", "HEAD")
+      sha = commit_tree(message, head, parent)
+      moved = sha && Git.run(goal_dir, "update-ref", "HEAD", sha, head)
+      raise Error, "git commit on #{goal_branch} failed" unless moved
+    end
+
+    def commit_tree(message, *parents)
+      args = ["commit-tree", Git.out(goal_dir, "write-tree"), *parents.flat_map { |sha| ["-p", sha] }, "-F", "-"]
+      sha, status = Open3.capture2("git", "-C", goal_dir, *args, stdin_data: message)
+      sha.strip if status.success?
     end
 
     def release_branch
@@ -1646,6 +1692,18 @@ end
       return if Git.run(@root, "push", "-q", remote, "#{branch}:#{branch}")
 
       raise Error, "git push of #{branch} to #{remote} failed"
+    end
+
+    def push_with_base(branch, base)
+      push_missing(base)
+      push(branch)
+    end
+
+    def push_missing(branch)
+      return if !Git.branch?(@root, branch) || Git.remote_branch?(@root, remote, branch)
+
+      push(branch)
+      puts "pushed #{branch}: #{remote} had no branch #{branch}"
     end
 
     def create_pr(head:, base:, title:, body:)
@@ -2086,7 +2144,10 @@ end
     def timeout = (v = value_of("--timeout")) && v.to_i
 
     def require_arg(command, name)
-      shift || abort("usage: coord #{command} #{name}")
+      value = shift
+      abort("usage: coord #{command} #{name}") if value.nil? || value.start_with?("-")
+
+      value
     end
 
     def require_text(command)
@@ -2567,7 +2628,7 @@ end
     def cmd_land
       subject = @args.value_of("--subject")
       task = find_task!(@args.require_arg("land", "ID"))
-      land = Land.new(main_root, task)
+      land = Land.new(main_root, task, Git.base_branch(main_root, manifest))
       commit = locks.with_mutex("land-#{Goals.short(task["goalid"])}", worker: @worker) { land.run(subject) }
       record_landing(task, commit, land)
     end
@@ -2590,7 +2651,7 @@ end
       setup.ensure_taskrc
       goals.find!(id)["uuid"]
     end
-    def goal_show = goals.show(@args.require_arg("goal show", "ID"))
+    def goal_show = goals.show(@args.require_arg("goal show", "ID"), File.join(paths.coord_dir, "artifacts"))
 
     def goal_sync
       goal = goals.find!(@args.require_arg("goal sync", "ID"))
@@ -2620,9 +2681,16 @@ end
       raise Error, "base branch #{base} does not exist" unless Git.branch?(main_root, base)
 
       uuid = tasks.add(title: opts[:title], role: Goals::ROLE, ref: opts[:ref])
-      Worktree.new(main_root).checkout(Goals.slug(uuid), Goals.branch(uuid), base)
+      open_goal_branch(uuid, base)
       event_log.append("goal", @worker, opts[:title])
       puts uuid
+    end
+
+    def open_goal_branch(uuid, base)
+      Worktree.new(main_root).checkout(Goals.slug(uuid), Goals.branch(uuid), base)
+      return if !Git.run(main_root, "remote", "get-url", "origin") || Git.remote_branch?(main_root, "origin", base)
+
+      warn "coord: origin has no branch #{base}. coord goal pr pushes the local #{base} again."
     end
 
     UNSYNCED = "coord: %<branch>s lacks the head of %<ref>s. Run coord goal sync %<id>s. " \
@@ -2718,7 +2786,7 @@ end
 
     def publish_goal(goal, entry)
       branch = Goals.branch(goal["uuid"])
-      github.push(branch)
+      github.push_with_base(branch, Git.base_branch(main_root, manifest))
       push_memory
       entry = entry ? update_pr(goal, entry, branch) : { "url" => open_pr(goal, branch), "seen" => [] }
       review_state.put(goal["uuid"], entry.merge("head" => Git.out(main_root, "rev-parse", branch)))
@@ -2805,6 +2873,7 @@ end
     def cmd_worktree
       role = @args.require_arg("worktree", "ROLE")
       worker = @args.shift
+      abort "usage: coord worktree ROLE [WORKER]" if worker&.start_with?("-")
       warn_missing_role_files(role)
       Worktree.new(@project_root).create(role, worker)
     end
