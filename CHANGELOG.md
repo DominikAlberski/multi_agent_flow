@@ -9,6 +9,12 @@
 - The project manager no longer adds workers on its own. Without a team budget, `maf prepare`
   refuses when an agent runs it. Only the user sets the budget: `maf team set` refuses when an
   agent runs it.
+- Backup of the flow config. Each maf command copies `.maf/config.json`, `roles.yml`,
+  `workflow.md`, and `sandbox.json` to `.git/maf/backup/` when they changed, and keeps 10
+  copies. New command `maf restore [--list] [BACKUP] [--force]` puts them back and runs
+  `maf update`. When `.maf/` exists without `config.json`, maf names the backup. Before, a
+  merge of the `maf untrack` commit into a branch that still tracked the flow deleted the
+  config, and the agents, `base_branch`, and `github` settings were lost.
 
 ## [0.3.0] - 2026-10-21
 

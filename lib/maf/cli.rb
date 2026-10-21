@@ -14,6 +14,7 @@ require_relative "team_command"
 require_relative "worker_control"
 require_relative "worker_list"
 require_relative "untrack"
+require_relative "restore"
 require_relative "vm"
 require_relative "version"
 
@@ -59,6 +60,7 @@ module Maf
       "uninstall" => "[--check] [--yes] [--force]             remove the flow from the project",
       "migrate" => "[--check] [--yes]                       move an old-layout install into .maf/",
       "untrack" => "[--check] [--yes]                       remove the flow from git; the files stay (then commit)",
+      "restore" => "[--list] [BACKUP] [--force]             put the flow config back from a backup in .git/maf/backup",
       "vm" => "create|login|start|stop|delete|status|shell [ARGS]  run the team in a Lima VM (macOS, Linux)",
       "menu" => "                                        interactive mode (also: maf without a command)",
       "guide" => "                                        print the setup guide for an AI agent (install.md)",
@@ -76,10 +78,25 @@ module Maf
       abort "maf: unknown command '#{@command}'. Run: maf help" unless COMMANDS.key?(@command)
       abort "maf: #{Migrate::HINT}" if old_layout?
 
-      send("run_#{@command}")
+      backed_up { send("run_#{@command}") }
     end
 
+    NO_BACKUP = %w[version guide roles].freeze
+
     private
+
+    def backed_up
+      backup = checked_backup unless NO_BACKUP.include?(@command)
+      yield
+    ensure
+      backup&.save
+    end
+
+    def checked_backup
+      backup = Backup.new(SetupAgent::Project.root)
+      backup.warn_missing unless @command == "restore"
+      backup.tap(&:save)
+    end
 
     # Every command except these needs the new layout.
     # maf uninstall --check previews the migration on an old layout.
@@ -132,6 +149,7 @@ module Maf
     def run_guide = puts(File.read(File.join(Flow::ROOT, "install.md")))
     def run_version = puts("maf #{VERSION}")
     def run_untrack = Untrack.new(SetupAgent::Project.root, @args).run
+    def run_restore = Restore.new(SetupAgent::Project.root, @args).run
     def run_migrate = Migrate::Runner.new(["--project", Dir.pwd, *@args]).run
 
     def run_agents

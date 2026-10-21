@@ -1311,6 +1311,31 @@ maf untrack           # asks for confirmation; --yes skips the question
 maf does not commit. Review the change with `git status`, then commit it.
 A `CLAUDE.md` that an older maf moved into `AGENTS.md` stays in `AGENTS.md`.
 
+> **Warning:** another branch can still track the flow files. A checkout of that
+> branch and a merge of the untrack commit into it delete the files from the disk.
+> `maf restore` puts the config back (see [Back up the flow config](#back-up-the-flow-config)).
+
+## Back up the flow config
+
+`maf update` makes all files in `.maf/` again, except four: `config.json` (the agents,
+`base_branch`, `github`, `team`), `roles.yml`, `workflow.md`, and `sandbox.json`.
+Each maf command copies these files to `.git/maf/backup/<UTC time>/` before and
+after it runs, when `config.json` exists and the files changed. maf keeps the 10
+newest copies. No checkout, merge, or reset changes the `.git` folder.
+
+```sh
+maf restore --list            # each backup: its time, its agents, its files
+maf restore                   # the newest backup
+maf restore 20261020T204319Z  # one backup
+maf restore --force           # also replace the files that exist
+```
+
+`maf restore` writes only the missing files, unless `--force` is given. When it
+writes `config.json`, it runs `maf update`, which makes the other files of the flow again.
+
+When `.maf/` exists but `config.json` is missing, each maf command names the
+newest backup and `maf restore`.
+
 ---
 
 ## Upgrade from a version before the flow glossary
@@ -1517,6 +1542,7 @@ This section holds the board details for the operator.
 | `coord export` | Write the raw tasks JSON. |
 | `maf migrate [--check] [--yes]` | Move an old-layout install into `.maf/`. See the migration section. |
 | `maf untrack [--check] [--yes]` | Remove an older install from git. The files stay. Review `git status`, then commit. |
+| `maf restore [--list] [BACKUP] [--force]` | Put the flow config back from `.git/maf/backup/`. Writes only the missing files, unless `--force`. Then runs `maf update`. |
 | `maf uninstall [--check] [--yes] [--force]` | Remove the flow from the project. Keeps the graph, the vault, the code, and the decisions. |
 | `maf start HARNESS ROLE[_WORKER]` | Worktree + env + role + launch the harness, in one command. |
 | `maf start HARNESS ROLE --dispatch [FLAGS]` | Same setup, then run `dispatcher`. |
@@ -1533,6 +1559,7 @@ This section holds the board details for the operator.
 | `Ruby 3.0+ required` or syntax error | Install Ruby 3.0 or later (step 0). |
 | A worktree has no `coord` | Run `maf update` in the main project, then `maf start` again. `coord worktree` copies `.maf/bin/` into each worktree. |
 | `git status` shows `.maf/` files | An older maf version committed them. Run `maf untrack`, then commit. |
+| `maf agents` says "No agents yet", but `.maf/` exists | A checkout or a merge deleted `.maf/config.json`. Run `maf restore`. |
 | A dispatcher logs `agent failed` | Read the last log lines. Usual causes: missing CLI login, or a model name the harness does not accept. |
 | A worker status shows `halted` and the PM got an escalation | The harness does not know the model. Fix the name with `maf add HARNESS:ROLE:MODEL` and in the worker entry of `.maf/coordination/workers.json`, then run `maf worker restart WORKER`. The claims stay. |
 | Two dispatchers for one role share a session | Set a different `COORD_WORKER` for each dispatcher. |

@@ -111,6 +111,24 @@ class UntrackTest < Minitest::Test
     refute_includes out, "maf untrack"
   end
 
+  # Regression: after untrack, a merge of a branch that still tracked the flow deleted the files.
+  def untrack_and_merge_into_an_old_branch
+    main = IO.popen(%w[git branch --show-current], chdir: @dir, &:read).strip
+    git("branch", "dev")
+    maf("untrack", "--yes")
+    git("commit", "-q", "-m", "untrack")
+    [%w[checkout -q dev], ["merge", "-q", "--ff-only", main], ["checkout", "-q", main]].each { |args| git(*args) }
+  end
+
+  def test_restore_brings_back_the_config_that_a_merge_deleted
+    untrack_and_merge_into_an_old_branch
+    refute File.exist?(File.join(@dir, ".maf", "config.json"))
+
+    assert_includes maf("agents").first, "Run: maf restore"
+    assert_equal 0, maf("restore").last
+    assert_includes maf("agents").first, "claude:architect"
+  end
+
   def test_a_second_run_finds_nothing
     maf("untrack", "--yes")
     git("commit", "-q", "-m", "untrack")
