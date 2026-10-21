@@ -64,6 +64,10 @@ module Maf
       end
     ].freeze
 
+    # Claude Code environment of a flow session. Agent teams stay off: with
+    # them on, a subagent that Claude names starts as a teammate.
+    CLAUDE_ENV = { "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" => "0" }.freeze
+
     # The knowledge graph and the Obsidian vault, at the project root where graphify looks by default.
     GRAPH_DIR = "graphify-out"
 

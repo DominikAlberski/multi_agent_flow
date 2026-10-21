@@ -2,9 +2,10 @@
 
 module Maf
   module Bootstrap
-    # ClaudeSettings plans and applies the Claude Code hooks in the settings
-    # file of the flow, .maf/claude/settings.json. `maf start` passes the file
-    # with --settings. Claude Code runs these hooks next to the project's own.
+    # ClaudeSettings plans and applies the Claude Code hooks and environment in
+    # the settings file of the flow, .maf/claude/settings.json. `maf start`
+    # passes the file with --settings. Claude Code runs these hooks next to the
+    # project's own. The --settings env wins over the env of the user settings.
     class ClaudeSettings
       def initialize(project)
         @project = project
@@ -12,22 +13,29 @@ module Maf
 
       def plan
         file = @project.path(CLAUDE_SETTINGS)
-        [@project.action(status(file), file, "#{file} (next-task + board-watch hooks)", :claude_stop_hook)]
+        [@project.action(status(file), file, "#{file} (next-task + board-watch hooks, env)", :claude_stop_hook)]
       end
 
       def configure(file)
         settings = read(file)
-        missing = missing_hooks(settings)
-        missing.each { |event, hook| add_hook(settings, event, hook) }
-        write(file, settings) unless missing.empty?
-        !missing.empty?
+        return false if current?(settings)
+
+        write(file, update(settings))
+        true
       end
 
       private
 
       def status(file)
-        File.exist?(file) && missing_hooks(read(file)).empty? ? :skip : :configure_claude_hook
+        File.exist?(file) && current?(read(file)) ? :skip : :configure_claude_hook
       end
+
+      def update(settings)
+        missing_hooks(settings).each { |event, hook| add_hook(settings, event, hook) }
+        settings.merge("env" => (settings["env"] || {}).merge(CLAUDE_ENV))
+      end
+
+      def current?(settings) = missing_hooks(settings).empty? && (settings["env"] || {}) >= CLAUDE_ENV
 
       def read(file)
         File.exist?(file) ? (JSON.parse(File.read(file)) rescue {}) : {}

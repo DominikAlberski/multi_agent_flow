@@ -366,7 +366,8 @@ Run the full suite with system tests under one lock:
 An idle Claude Code session does not poll the board by itself. `maf add`
 writes the hooks of the flow to `.maf/claude/settings.json`. `maf start` passes the
 file with `claude --settings`. Claude Code runs these hooks next to the project's own
-hooks, and `.claude/settings.json` stays as it is:
+hooks, and `.claude/settings.json` stays as it is. The file also turns agent teams off
+(see "Native subagents"):
 
 - `next-task.rb` registers the harness session ID on `SessionStart`.
   Its synchronous `Stop` hook continues a registered session when unclaimed tasks exist.
@@ -1427,6 +1428,14 @@ This section holds the board details for the operator.
   If a receiver role has no live worker and no message hook, `coord msg` prints a warning.
   The message waits until a session for that role starts.
 - **Read-only roles.** A role with `can_edit: false` gets a read-only tool grant where the harness supports one.
+- **Native subagents.** The flow starts the workers, and coord is the only task board. So a worker does not
+  start a team of its own:
+  - Claude Code: the settings of the flow set `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=0`, also when the user
+    settings turn agent teams on. A dispatched run uses `--agent ROLE`, and the role file names no `Agent` tool.
+  - Codex: a dispatched run starts with `--disable multi_agent`.
+  - opencode: a role file allows only the `explore` subagent.
+  - Hermes: each role gets a toolset list (`-t`) without `kanban`, `delegation`, and `cronjob`. The list names
+    the graph server, `mcp-graphify-<project>`.
 - **Vault.** `vault` controls the graphify watcher. `vault status` and `vault stop` report or stop the watcher.
   `vault export` regenerates the Obsidian vault one time. Agents never run `graphify export`.
   The separate `graphify-mcp` process (`vault mcp`) serves MCP, not the watcher.

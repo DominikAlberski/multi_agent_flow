@@ -82,9 +82,14 @@ class HermesHarnessTest < Minitest::Test
 
   def command_of(role) = in_project(MANIFEST) { harness.build_command(config(role: role, max_turns: 5), "go", nil) }
 
-  def test_a_read_only_role_gets_the_limited_toolsets
-    assert_includes pairs(command_of("reviewer")), ["-t", Maf::Shared::Roles::READ_ONLY_TOOLSETS]
-    refute_includes command_of("tester"), "-t"
+  def toolsets(role) = pairs(command_of(role)).find { |flag, _| flag == "-t" }.last.split(",")
+
+  # Regression: with -t, a read-only role lost the graph server. coord is the board, and maf starts the workers.
+  def test_each_role_gets_its_toolsets_the_graph_server_and_no_kanban
+    reviewer, tester = %w[reviewer tester].map { |role| toolsets(role) }
+    assert_equal([false, true], [reviewer, tester].map { |list| list.include?("file") })
+    [reviewer, tester].each { |list| assert_equal 1, list.grep(/\Amcp-graphify-./).size }
+    assert_empty (reviewer + tester) & %w[kanban delegation cronjob computer_use]
   end
 
   # A lead role owns no task. Its launch prompt must not tell it to claim one.

@@ -14,6 +14,10 @@ module Maf
       # Hermes toolsets for a role with can_edit false: no file, code_execution,
       # or delegation toolset. The shell stays, because the role needs coord and git.
       READ_ONLY_TOOLSETS = "terminal,web,skills,todo,memory,session_search,clarify"
+
+      # Hermes toolsets for a role that edits. coord is the only task board and
+      # maf starts the workers, so kanban, delegation, and cronjob stay off.
+      EDIT_TOOLSETS = "#{READ_ONLY_TOOLSETS},file,code_execution,browser,vision".freeze
     end
   end
 end

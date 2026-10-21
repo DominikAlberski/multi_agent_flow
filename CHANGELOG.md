@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- A worker does not start a team of its own. `.maf/claude/settings.json` sets
+  `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=0`, so a subagent that Claude names in a `maf start`
+  session does not start as a teammate. `maf update` adds the setting.
+- Hermes: each role gets a toolset list. A role that edits no longer gets `kanban`,
+  `delegation`, `cronjob`, `computer_use`, and the other toolsets outside the list.
+- Fix: a Hermes role with `can_edit: false` did not get the graph MCP server, because its
+  toolset list did not name `mcp-graphify-<project>`.
 - The dispatcher blocks a task after 3 runs in a row that leave it claimed and not done, and
   escalates it to the project manager. Before, it resumed such a task each hour without end.
   New commands: `coord block ID TEXT` holds a task out of `coord next`, and `coord unblock ID`

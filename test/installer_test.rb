@@ -269,6 +269,17 @@ class BootstrapTest < InstallerTestCase
     assert_equal "{}", File.read(project_settings)
   end
 
+  # Agent teams in the user settings must not turn a subagent of a flow session into a teammate.
+  def test_the_flow_settings_turn_agent_teams_off
+    settings = File.join(@dir, ".maf", "claude", "settings.json")
+    FileUtils.mkdir_p(File.dirname(settings))
+    File.write(settings, JSON.generate("env" => { "KEEP" => "1" }))
+    assert_equal 0, bootstrap.last
+
+    env = JSON.parse(File.read(settings))["env"]
+    assert_equal({ "KEEP" => "1", "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" => "0" }, env)
+  end
+
   def opencode_plugin = File.join(@dir, ".opencode", "plugins", "board-watch.js")
 
   def test_installs_the_opencode_plugin_when_opencode_is_used
