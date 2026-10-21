@@ -8,6 +8,9 @@
   shell, allows 3 runs per hour for one argument, and sends the result to the inbox of the role
   that asked. `maf start` starts steward. The project manager and the architect prompts list the
   operations. `maf update` installs `.maf/bin/steward`.
+- New: operations that wait for the user: `worker-start`, `worker-model WORKER MODEL`, and
+  `bundle-install` (frozen to `Gemfile.lock`). `maf op list|approve ID|deny ID` handles them.
+  `.maf/sandbox.json` key `ops` sets the level of each operation: `auto`, `approve`, or `off`.
 
 - After `maf untrack`, maf moves the old branches. `maf start` fast-forwards a worker branch
   also when the only changes are in flow files that the base branch no longer tracks: maf

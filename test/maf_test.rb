@@ -619,6 +619,13 @@ class MafTeamTest < Minitest::Test
     assert workers.key?("tester-2")
   end
 
+  def test_an_agent_cannot_approve_a_host_operation
+    out, status = as_agent { maf("op", "approve", "20261021T120000Z-a1b2c3") }
+
+    refute_equal 0, status
+    assert_includes out, "only the user approves"
+  end
+
   def test_an_agent_cannot_set_the_budget
     out, status = as_agent { maf("team", "set", "--max", "9") }
 

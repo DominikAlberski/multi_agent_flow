@@ -353,17 +353,34 @@ Some repairs need the host: a restart of a worker, a merge that deletes protecte
   `.maf/coordination/ops/requests/`.
 - `steward` runs only these operations:
 
-  | Operation | Argument | Command |
-  |---|---|---|
-  | `worker-restart` | worker | `maf worker restart WORKER` |
-  | `worker-retire` | worker | `maf retire WORKER` |
-  | `worktree-sync` | worker | `coord worktree ROLE ID` (fast-forward of the worker branch) |
-  | `goal-sync` | goal short id | `coord goal sync ID` |
-  | `runtime-restore` | none | `maf update` |
+  | Operation | Arguments | Command | Default level |
+  |---|---|---|---|
+  | `worker-restart` | worker | `maf worker restart WORKER` | auto |
+  | `worker-retire` | worker | `maf retire WORKER` | auto |
+  | `worktree-sync` | worker | `coord worktree ROLE ID` (fast-forward of the worker branch) | auto |
+  | `goal-sync` | goal short id | `coord goal sync ID` | auto |
+  | `runtime-restore` | none | `maf update` | auto |
+  | `worker-start` | worker | `maf worker start WORKER` | approve |
+  | `worker-model` | worker, model | `maf prepare ... --model MODEL --replace WORKER` | approve |
+  | `bundle-install` | none | `bundle install` with `BUNDLE_FROZEN=true` | approve |
+
+- `steward` runs an `auto` operation at once. An `approve` operation waits in
+  `.maf/coordination/ops/pending/`. steward tells the role that asked and the project manager.
+  You run `maf op list`, then `maf op approve ID` or `maf op deny ID`. `maf op` refuses when an agent
+  runs it, and `steward approve` refuses in the sandbox.
+- Change a level in `.maf/sandbox.json`, which the sandbox protects. A level is `auto`, `approve`, or `off`:
+
+  ```json
+  { "mode": "auto", "ops": { "worker-start": "auto", "bundle-install": "off" } }
+  ```
 
 - `steward` checks each argument against the project, not against the request. A worker must be in
   `workers.json`, with its folder in `.maf/worktrees/`. A goal id must be 8 hex characters with a
-  branch `goal/ID`. The command is an argument list without a shell.
+  branch `goal/ID`. A model has only letters, digits, and `. _ : / @ -`, and does not start with `-`.
+  `bundle-install` needs a `Gemfile.lock`. The command is an argument list without a shell.
+- `approve` keeps the user in the loop for a lead that asks in good faith. It is not a wall: an agent
+  can edit `workers.json`, which the sandbox does not protect. `bundle install` fails in the sandbox,
+  so only an approved run can install gems.
 - `steward` runs an operation at most 3 times per hour for one argument. Then it refuses and sends an
   escalation to the project manager.
 - `steward` sends the result to the inbox of the role that asked. Each request, result, and refusal is
