@@ -2571,8 +2571,9 @@ end
       event_log.append("broadcast", @worker, text)
     end
 
-    NO_PUSH = "coord: %<role>s has no live session and no message hook. The message waits until a %<role>s " \
-              "session starts. Fix: maf start HARNESS %<role>s --dispatch --detach, " \
+    NO_PUSH = "coord: %<role>s has no live session and no message hook. " \
+              "The message waits until a session of %<role>s starts. " \
+              "Fix: maf start HARNESS %<role>s --dispatch --detach, " \
               "or add an executable .maf/coordination/message-hooks/%<role>s.sh"
 
     # A message is pushed by a hook or read by a live session. Without both,

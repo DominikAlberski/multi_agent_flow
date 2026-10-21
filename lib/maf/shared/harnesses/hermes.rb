@@ -21,9 +21,6 @@ module Maf
 
         DEFAULT_DIR = File.join(Dir.home, ".hermes", "skills")
         MAX_TURNS = 50
-        # Stop Hermes before the dispatcher kills it, so it can still write its
-        # result event. NOTE: assets/dispatcher Spawn::GRACE.
-        KILL_GRACE = 5
 
         def sandbox_dirs = [File.join(Dir.home, ".hermes")]
         PROTECTED = %w[config.yaml .env shell_init.sh SOUL.md hooks agent-hooks shell-hooks-allowlist.json bin scripts
@@ -61,7 +58,7 @@ module Maf
         def efforts(_model = nil) = EFFORTS
         def effort_flag(effort) = super(effort, "--reasoning")
         def mcp_command(server, vault) = "hermes mcp add #{server} --command ruby --args #{vault} mcp"
-        def install_hooks(_project) = Flow::HermesHookSetup.new.install
+        def install_hooks(_project) = Flow::HermesHookSetup.new.install | Flow::HermesEnvSetup.new.install
         def global_files = [File.join(Dir.home, ".hermes", "agent-hooks", "next-task.sh")]
 
         # The skill name uses the main checkout's name, from the project root
@@ -108,7 +105,7 @@ module Maf
         def build_command(config, prompt, session_id)
           cmd = %w[hermes chat --oneshot --yolo --format stream-json -Q]
           cmd += run_flags(config)
-          cmd += ["--max-turns", config.max_turns.to_s, "--run-budget", [config.timeout - KILL_GRACE, 1].max.to_s]
+          cmd += ["--max-turns", config.max_turns.to_s]
           cmd + resume(session_id, "--resume") + ["-q", prompt]
         end
 

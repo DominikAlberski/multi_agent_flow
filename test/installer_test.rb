@@ -993,6 +993,43 @@ class HermesHookTest < Minitest::Test
   end
 end
 
+# HermesEnvSetup checks that the Hermes gateway passes the flow variables to the agent commands.
+class HermesEnvSetupTest < Minitest::Test
+  def setup
+    @dir = File.realpath(Dir.mktmpdir("hermes-env-test"))
+    @config = File.join(@dir, "config.yaml")
+  end
+
+  def teardown
+    FileUtils.remove_entry(@dir)
+  end
+
+  def setup_for(yaml)
+    File.write(@config, yaml)
+    Maf::Flow::HermesEnvSetup.new(@config)
+  end
+
+  def test_no_step_when_the_list_has_all_names
+    names = Maf::Flow::HermesEnvSetup::NAMES.map { |name| "    - #{name}\n" }.join
+    out, = capture_io { refute setup_for("terminal:\n  client_env_passthrough:\n#{names}").install }
+
+    assert_includes out, "hermes env ready"
+  end
+
+  def test_the_step_keeps_the_names_of_the_user
+    out, = capture_io { assert setup_for("terminal:\n  client_env_passthrough: [MY_VAR]\n").install }
+
+    assert_includes out, %(client_env_passthrough '["MY_VAR","COORD_DIR",)
+  end
+
+  def test_a_missing_or_broken_config_gives_the_step
+    out, = capture_io { assert Maf::Flow::HermesEnvSetup.new(File.join(@dir, "none.yaml")).install }
+
+    assert_includes out, %(client_env_passthrough '["COORD_DIR",)
+    assert_empty setup_for("terminal: [").listed
+  end
+end
+
 # The commit guard is a git pre-commit hook. It blocks commits by roles with
 # can_edit false. `git merge` does not run pre-commit, so merges still pass.
 class CommitGuardTest < InstallerTestCase

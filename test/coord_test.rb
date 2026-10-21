@@ -907,6 +907,7 @@ end
     _out, err = capture_io { Coord::CLI.new(["msg", "--from", "tester", "architect", "decide"], env: @env).run }
 
     assert_includes err, "architect has no live session and no message hook"
+    assert_includes err, "The message waits until a session of architect starts."
   end
 
   def test_msg_is_quiet_when_the_role_is_live

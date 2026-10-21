@@ -21,9 +21,9 @@ class HermesHarnessTest < Minitest::Test
     assert_equal expected, pairs(cmd) & expected
   end
 
-  # Stop Hermes before the dispatcher kills it, so it can still write its result event.
-  def test_the_run_budget_ends_before_the_timeout
-    assert_includes pairs(full_command), %w[--run-budget 295]
+  # Regression: the stream-json gateway of Hermes 0.22 refuses --run-budget, so each run failed.
+  def test_the_command_has_no_run_budget
+    refute_includes full_command, "--run-budget"
   end
 
   def test_build_command_without_skill_or_session

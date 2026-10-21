@@ -26,7 +26,7 @@ module Maf
       @root = root
       @force = force
       @limits = limits
-      @worker = Workers.id(spec)
+      @worker = resolve(Workers.at(root).all, Workers.id(spec))
       @entry = Workers.at(root).find(@worker) || abort("maf: no worker #{@worker}")
     end
 
@@ -38,6 +38,17 @@ module Maf
     end
 
     private
+
+    def resolve(workers, worker)
+      return worker if workers.key?(worker)
+
+      only_worker(worker, workers.select { |_, entry| entry["role"] == worker }.keys) || worker
+    end
+
+    def only_worker(role, names)
+      abort "maf: role #{role} has more than one worker: #{names.join(", ")}. Name one." if names.size > 1
+      names.first
+    end
 
     def status = puts("#{@worker}: #{live? ? "running (pid #{pid})" : "stopped"}")
 
