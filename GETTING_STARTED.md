@@ -239,8 +239,11 @@ claimable again without `--force`. To release a task without finishing it:
 coord unclaim $ID
 ```
 
-Do not unclaim a task you are blocked on. Keep the claim, annotate the blocker,
-and message the architect. Another worker would hit the same wall.
+Do not unclaim a task you are blocked on. Another worker would hit the same wall.
+Block it: `coord block $ID --kind needs_input|dependency|capability "<blocker>"`.
+The task leaves `coord next`, and coord tells the architect (dependency) or the
+project manager (the other kinds). A lead role runs `coord unblock $ID` when the
+blocker is gone.
 
 ---
 
@@ -419,7 +422,7 @@ take the same task.
 5. Use `annotate` for progress. Use `msg` to talk to another agent.
 6. Write `annotate` and `msg` text in Simplified Technical English: one
    instruction per sentence, active voice, named subject, no idioms.
-7. If blocked, keep the claim. Annotate the blocker. Message the architect.
+7. If blocked, run `coord block ID --kind K TEXT`. coord tells the role that can remove the blocker.
 
 ---
 

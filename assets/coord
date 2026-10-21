@@ -87,7 +87,9 @@ module Coord
         coord conflicts                      list pending tasks with overlapping scopes
         coord claim ID [--force]             claim for COORD_WORKER (atomic; refused for lead roles)
         coord unclaim ID                     release a claim without finishing it
-        coord block ID TEXT...               release the claim and hold the task out of coord next
+        coord block ID [--kind K] TEXT...    release the claim, hold the task out of coord next, and tell
+                                             the architect (K=dependency) or the project manager
+                                             (K=needs_input, the default, capability, or failing)
         coord unblock ID                     return a blocked task to the backlog
         coord done ID [--force]              complete (refused while the task branch lacks the goal head,
                                              or while the verify command fails)
@@ -2320,18 +2322,32 @@ end
     end
   end
 
-  # Block commands hold a task out of coord next and return it.
+  # Block commands hold a task out of coord next, tell the role that can
+  # remove the blocker, and return the task.
   module BlockCommands
+    BLOCK_KINDS = %w[needs_input dependency capability failing].freeze
+    BLOCK_USAGE = "usage: coord block ID [--kind #{BLOCK_KINDS.join("|")}] TEXT...".freeze
+
     def cmd_block
+      kind = block_kind(@args.value_of("--kind") || BLOCK_KINDS.first)
       id = @args.require_arg("block", "ID")
-      block(id, @args.require_text("block"))
-      puts "blocked #{id}"
+      block(id, kind, @args.require_text("block"))
+      puts "blocked #{id} (#{kind})"
     end
 
-    def block(id, text)
-      tasks.annotate(id, "BLOCKED: #{text}")
+    def block(id, kind, text)
+      tasks.annotate(id, "BLOCKED (#{kind}): #{text}")
       tasks.block(id)
-      event_log.append("block", @worker, "#{id} #{text}")
+      event_log.append("block", @worker, "#{id} #{kind} #{text}")
+      notify_block(id, kind, text)
+    end
+
+    def block_kind(kind) = BLOCK_KINDS.include?(kind) ? kind : abort(BLOCK_USAGE)
+
+    def notify_block(id, kind, text)
+      return deliver("architect", @role, "BLOCKED task #{id} (dependency), #{@worker}: #{text}") if kind == "dependency"
+
+      send_escalation(id, "blocked (#{kind}): #{text}")
     end
 
     def cmd_unblock

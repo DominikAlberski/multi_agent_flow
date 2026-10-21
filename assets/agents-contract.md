@@ -31,6 +31,8 @@ coord claim ID | start-task ID | done ID     # take a task, check out its branch
 coord annotate ID TEXT                       # add a note to a task
 coord lesson ID dead_end|corrected TEXT      # an approach that failed, or the right way: the graph keeps it
 coord escalate [--task ID] TEXT              # a problem you cannot fix: the project manager asks the user
+coord block ID --kind K TEXT                 # you cannot finish: K is needs_input, dependency, or capability
+coord unblock ID                             # lead roles: the blocker is gone; the task returns to coord next
 coord msg --from A [--task ID] [--fyi] TO TEXT   # message a role or a worker; --task also notes the task
                                              # --fyi: no run starts; the next run of TO reads it
 coord broadcast --from A [--to workers|leads|all] TEXT

@@ -206,12 +206,29 @@ class TaskwarriorTest < Minitest::Test
   def test_block_releases_the_claim_and_hides_the_task_from_next
     id = add("flaky")
     tasks.claim(id, "backend-1")
-    assert_equal "blocked #{id}\n", run_cli("block", id, "three failed runs")
+    assert_equal "blocked #{id} (failing)", run_cli("block", "--kind", "failing", id, "three failed runs").lines.last.strip
     task = find(id)
     assert_empty task["worker"].to_s
     assert_includes task["tags"], "blocked"
-    assert_equal "BLOCKED: three failed runs", task["annotations"].last["description"]
+    assert_equal "BLOCKED (failing): three failed runs", task["annotations"].last["description"]
     assert_empty Coord::Tasks.new.next_for("backend-developer")
+  end
+
+  def architect_mail = Dir.glob(File.join(@env["COORD_DIR"], "inbox", "architect", "*.md")).map { |path| File.read(path) }
+
+  # Without a project manager, the architect gets the escalation too.
+  def test_block_tells_the_role_that_can_remove_the_blocker
+    id = add("flaky")
+    run_cli("block", "--kind", "dependency", id, "needs the API task")
+    assert_match(/BLOCKED task #{id} \(dependency\), backend-1: needs the API task/, architect_mail.join)
+    run_cli("block", id, "which currency?")
+    assert_match(/ESCALATION from backend-1 \(task #{id}\): blocked \(needs_input\): which currency\?/, architect_mail.join)
+  end
+
+  def test_block_refuses_an_unknown_kind
+    id = add("flaky")
+    assert_raises(SystemExit) { capture_io { run_cli("block", "--kind", "later", id, "text") } }
+    assert_nil find(id)["tags"]
   end
 
   def test_unblock_returns_the_task_to_next

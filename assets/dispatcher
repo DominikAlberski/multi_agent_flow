@@ -102,8 +102,8 @@
 # same task set is still unclaimed afterwards, it waits with a doubling
 # backoff (capped at MAX_BACKOFF) before it tries again. A changed task set
 # dispatches at once. After MAX_ATTEMPTS runs in a row that leave a task
-# claimed and not done, the dispatcher blocks the task (`coord block`) and
-# escalates it. A usage limit or an unknown model counts no run.
+# claimed and not done, the dispatcher blocks the task (`coord block --kind
+# failing`), which escalates it. A usage limit or an unknown model counts no run.
 #
 # Sessions and the prompt cache: the session ID is saved to
 # .maf/coordination/sessions/<worker>.session and resumed on the next run, so the
@@ -323,7 +323,7 @@ module Dispatcher
   end
 
   # FailureLimit counts the runs in a row that left a task claimed and not
-  # done. At MAX_ATTEMPTS it blocks the task and escalates it. The count is in
+  # done. At MAX_ATTEMPTS it blocks the task, which escalates it. The count is in
   # .maf/coordination/failures/<id>, so a restart keeps it.
   class FailureLimit
     NOTICE = "Task %<id>s is blocked: %<runs>d runs of %<worker>s in a row ended without coord done. " \
@@ -356,7 +356,7 @@ module Dispatcher
     def block(id, runs)
       text = format(NOTICE, id: id, runs: runs, worker: @config.worker, last: Log.last.to_s[0, 200])
       Log.line("task #{id}: #{runs} unfinished runs in a row; blocking it")
-      @coord.call("block", id, text) && @coord.call("escalate", text)
+      @coord.call("block", "--kind", "failing", id, text)
       clear(id)
     end
 

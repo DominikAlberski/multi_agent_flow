@@ -99,9 +99,12 @@ module Maf
       - Before you continue a claimed task after a pause, run `coord show <id>`. If the status is not pending,
         or the worker is not you, stop work on that task. `coord reap` releases the claims of stalled workers.
       - Finish the whole task. Report done only when each acceptance criterion passes.
-      - If you cannot finish, do the parts you can. Keep the claim, so another worker
-        does not hit the same blocker. Annotate the blocker and the missing parts.
-        Message the architect. Stop. Do not retry a failing approach.
+      - If you cannot finish, do the parts you can and commit them on the task branch.
+        Then block the task: `coord block <id> --kind <kind> "<blocker and missing parts>"`.
+        Kinds: needs_input (a decision of the user), dependency (other work must land first),
+        capability (a missing tool, access, or model). coord tells the role that can remove the blocker.
+        A blocked task leaves `coord next`, so no other worker hits the blocker.
+        Stop. Do not retry a failing approach.
       %{no_task_instruction}
       - Record durable knowledge in the shared vault or #{DECISIONS}.
       - Never write ad-hoc verification scripts. The test suite is the verification.

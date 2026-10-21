@@ -11,8 +11,11 @@
   toolset list did not name `mcp-graphify-<project>`.
 - The dispatcher blocks a task after 3 runs in a row that leave it claimed and not done, and
   escalates it to the project manager. Before, it resumed such a task each hour without end.
-  New commands: `coord block ID TEXT` holds a task out of `coord next`, and `coord unblock ID`
-  returns it. `coord status` and `coord board` show blocked tasks.
+  New commands: `coord block ID [--kind K] TEXT` holds a task out of `coord next`, and
+  `coord unblock ID` returns it. `coord status` and `coord board` show blocked tasks.
+- A worker that cannot finish a task blocks it with a kind: `needs_input`, `dependency`, or
+  `capability`. coord tells the architect (dependency) or the project manager (the other kinds).
+  Before, the worker kept the claim, and the dispatcher resumed the task each hour.
 - `maf worker list` shows each running worker: its role, harness, mode (session or dispatch),
   pid, and start time. A worker that runs twice, for example as a session and as a
   dispatcher, gets a warning. The last line names the registered workers that do not run.

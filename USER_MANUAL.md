@@ -643,7 +643,7 @@ task starts a run immediately. A message run never claims a task.
 
 **Failing tasks.** A run that ends with the task still claimed and not done is an
 unfinished run. After 3 unfinished runs in a row, the dispatcher blocks the task
-(`coord block`) and escalates it to the project manager. A blocked task stays out of
+(`coord block --kind failing`), which escalates it to the project manager. A blocked task stays out of
 `coord next` until someone runs `coord unblock ID`. A usage limit or an unknown model
 counts no run. The count is in `.maf/coordination/failures/<id>`, so it stays correct
 after a restart.
@@ -1475,7 +1475,7 @@ This section holds the board details for the operator.
 | `coord claim ID` | Atomically claim a task for `$COORD_WORKER`. Refuses to steal an active claim. Refused for lead roles. |
 | `coord start-task ID` | In a worker worktree: check out `task/<short-id>` from the goal branch. |
 | `coord unclaim ID` | Release a claim without finishing it. |
-| `coord block ID TEXT` | Release the claim, note the reason, and hold the task out of `coord next`. |
+| `coord block ID [--kind K] TEXT` | Release the claim, note the reason, and hold the task out of `coord next`. Tells the architect (`dependency`) or the project manager (`needs_input`, the default, `capability`, `failing`). |
 | `coord unblock ID` | Return a blocked task to the backlog. |
 | `coord done ID [--force]` | Complete a task. Refused while the task branch has own commits and lacks the goal branch head. |
 | `coord annotate ID TEXT` | Add a note to a task (permanent). |
