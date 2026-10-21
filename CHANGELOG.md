@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Backup of the flow config. Each maf command copies `.maf/config.json`, `roles.yml`,
+  `workflow.md`, and `sandbox.json` to `.git/maf/backup/` when they changed, and keeps 10
+  copies. New command `maf restore [--list] [BACKUP] [--force]` puts them back and runs
+  `maf update`. When `.maf/` exists without `config.json`, maf names the backup. Before, a
+  merge of the `maf untrack` commit into a branch that still tracked the flow deleted the
+  config, and the agents, `base_branch`, and `github` settings were lost.
+
 ## [0.3.0] - 2026-10-21
 
 - Fix: each dispatched Hermes run failed. Hermes 0.22 refuses `--run-budget` with `--format

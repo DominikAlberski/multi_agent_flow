@@ -192,6 +192,8 @@ multi_agent_flow/
     flow/workflow.rb          # reads .maf/workflow.md for the architect prompt
     flow/mcp_config.rb        # writes the graphify MCP server into .maf/mcp/
     untrack.rb                # maf untrack: removes an older install from git
+    backup.rb                 # copies of the flow config in .git/maf/backup
+    restore.rb                # maf restore: puts the flow config back from a backup
     local_exclude.rb          # the flow block in .git/info/exclude
     shared/                   # stdlib-only code that the maf CLI and the scripts share (installed as .maf/lib/maf/shared/)
     shared/harness/           # the harness registry, the default of each harness method, shared modules
@@ -234,6 +236,7 @@ multi_agent_flow/
     worker_control_test.rb    # tests for maf worker
     worker_list_test.rb       # tests for maf worker list
     untrack_test.rb           # tests for maf untrack
+    backup_test.rb            # tests for the backup and maf restore
     analyst_test.rb           # tests for the analyst
     shared_test.rb            # tests for lib/maf/shared/
     gemspec_test.rb           # tests that the gem holds every runtime file
@@ -371,6 +374,7 @@ ruby test/context_watch_test.rb      # covers the context-watch hook
 ruby test/worker_control_test.rb     # covers maf worker
 ruby test/worker_list_test.rb        # covers maf worker list
 ruby test/untrack_test.rb            # covers maf untrack
+ruby test/backup_test.rb             # covers the backup and maf restore
 ruby test/analyst_test.rb            # covers the analyst
 ruby test/shared_test.rb             # covers lib/maf/shared/
 ```
