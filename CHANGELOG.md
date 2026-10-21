@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-21
+
 - Fix: in the macOS sandbox, a worker that the project manager started failed on each run with
   `sandbox_apply: Operation not permitted`. macOS cannot start a sandbox inside a sandbox. The
   sandbox now sets `MAF_SEATBELT=1`. In the sandbox, `maf prepare --dispatch` prepares the worker
