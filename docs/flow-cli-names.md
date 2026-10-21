@@ -17,6 +17,7 @@ This file lists the code and CLI name of each term in [flow-glossary.md](flow-gl
 | slot | `COORD_SLOT`, `.maf/coordination/worktree-env.rb` |
 | worker registry | `.maf/coordination/workers.json`, `maf prepare`, `maf retire` |
 | team budget | `.maf/config.json` key `team`, `maf team set` |
+| host operation | `coord op request`, `steward`, `Steward::Ops::TABLE`, `.maf/coordination/ops/` |
 | lead | `coord broadcast --to leads`, `LEADS` |
 | scope | task field `scope`, `--scope` |
 | message | `Messages`, `coord msg` |

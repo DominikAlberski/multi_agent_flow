@@ -99,6 +99,8 @@ module Coord
         coord lesson ID dead_end|corrected TEXT...
                                              save a lesson of a task to the graph memory: an approach that
                                              failed (dead_end), or the right way (corrected)
+        coord op request OPERATION [ARGUMENT]  ask steward for a host operation (worker-restart, worker-retire,
+                                             worktree-sync, goal-sync, runtime-restore); the result comes to your inbox
         coord msg [--from A] [--task ID] [--fyi] TO TEXT...
                                              TO is a role or a worker; a worker's mail goes to its role inbox.
                                              --task also saves the text as a note on the task.
@@ -136,7 +138,7 @@ module Coord
     "land" => :cmd_land, "gc" => :cmd_gc, "reap" => :cmd_reap, "review-watch" => :cmd_review_watch,
     "show" => :cmd_show, "escalate" => :cmd_escalate,
     "status" => :cmd_status, "board" => :cmd_board, "export" => :cmd_export,
-    "who" => :cmd_who, "help" => :cmd_help
+    "who" => :cmd_who, "op" => :cmd_op, "help" => :cmd_help
   }.freeze
 
   ADD_OPTS = { "--role" => :role, "--scope" => :scope, "--ref" => :ref,
@@ -2916,6 +2918,26 @@ end
     end
   end
 
+  # OpCommands writes a request for steward. steward validates and runs it on the host.
+  module OpCommands
+    OP_USAGE = "usage: coord op request OPERATION [ARGUMENT]"
+
+    def cmd_op
+      abort OP_USAGE unless @args.shift == "request" && (op = @args.shift)
+
+      id = "#{Time.now.utc.strftime("%Y%m%dT%H%M%SZ")}-#{format("%06x", rand(0xffffff))}"
+      write_op(id, "id" => id, "op" => op, "arg" => @args.shift, "role" => @role, "worker" => @worker)
+      puts "op #{id} requested. steward sends the result to the #{@role} inbox."
+    end
+
+    def write_op(id, request)
+      dir = File.join(paths.coord_dir, "ops", "requests")
+      FileUtils.mkdir_p(dir)
+      File.write(File.join(dir, "#{id}.json"), JSON.generate(request.merge("at" => Time.now.utc.iso8601)))
+      event_log.append("op-request", @worker, "#{request["op"]} #{request["arg"]}".strip)
+    end
+  end
+
   # Upkeep commands handle locks, the event log, worktrees, and cleanup.
   module UpkeepCommands
     def cmd_lock
@@ -3055,6 +3077,7 @@ end
     include GoalCommands
     include ReviewCommands
     include UpkeepCommands
+    include OpCommands
     include CommandHelpers
     include Wiring
 

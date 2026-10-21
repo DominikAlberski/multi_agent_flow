@@ -342,6 +342,34 @@ the file directly can still change the budget. The refusal stops a mistake, not 
 The verify command and the analyst command in `.maf/config.json` run in the sandbox, so a change to them
 cannot run a command on the host.
 
+### Host operations (steward)
+
+Some repairs need the host: a restart of a worker, a merge that deletes protected files, a new
+`maf update`. An agent cannot run them in the sandbox. `steward` runs a fixed list of them for the agents.
+
+- `maf start` starts `steward` outside the sandbox, one daemon per project. `steward` refuses to start
+  in the sandbox.
+- An agent runs `coord op request OPERATION [ARGUMENT]`. coord writes the request to
+  `.maf/coordination/ops/requests/`.
+- `steward` runs only these operations:
+
+  | Operation | Argument | Command |
+  |---|---|---|
+  | `worker-restart` | worker | `maf worker restart WORKER` |
+  | `worker-retire` | worker | `maf retire WORKER` |
+  | `worktree-sync` | worker | `coord worktree ROLE ID` (fast-forward of the worker branch) |
+  | `goal-sync` | goal short id | `coord goal sync ID` |
+  | `runtime-restore` | none | `maf update` |
+
+- `steward` checks each argument against the project, not against the request. A worker must be in
+  `workers.json`, with its folder in `.maf/worktrees/`. A goal id must be 8 hex characters with a
+  branch `goal/ID`. The command is an argument list without a shell.
+- `steward` runs an operation at most 3 times per hour for one argument. Then it refuses and sends an
+  escalation to the project manager.
+- `steward` sends the result to the inbox of the role that asked. Each request, result, and refusal is
+  an `op` line in `events.log`. The request files stay in `.maf/coordination/ops/done/`.
+- No operation runs new code, changes a protected file, pushes, or changes the team budget.
+
 ## 7. Notes for each harness
 
 | Harness | Folders of the harness | Notes |
