@@ -603,6 +603,49 @@ class MafTeamTest < Minitest::Test
     assert_includes out, "not allowed"
   end
 
+  def test_an_agent_cannot_add_a_worker_without_a_budget
+    out, status = as_agent { maf("prepare", "opencode", "tester_2") }
+
+    refute_equal 0, status
+    assert_includes out, "without a budget"
+    refute_path_exists worktree("tester-2")
+  end
+
+  def test_an_agent_adds_a_worker_within_the_budget
+    maf("team", "set", "--max", "3")
+    _, status = as_agent { maf("prepare", "opencode", "tester_2") }
+
+    assert_equal 0, status
+    assert workers.key?("tester-2")
+  end
+
+  def test_an_agent_cannot_set_the_budget
+    out, status = as_agent { maf("team", "set", "--max", "9") }
+
+    refute_equal 0, status
+    assert_includes out, "only the user"
+    refute_includes File.read(File.join(@project, ".maf/config.json")), "max_workers"
+  end
+
+  def test_a_sandboxed_agent_leaves_the_dispatcher_start_to_the_user
+    skip "sandbox-exec is macOS only" unless File.executable?("/usr/bin/sandbox-exec")
+    maf("team", "set", "--max", "3")
+    nested = { "MAF_SANDBOX" => "seatbelt", "MAF_SEATBELT" => "1" }
+    out, = as_agent(nested) { maf("prepare", "opencode", "tester_2", "--dispatch") }
+
+    assert_includes out, "maf start"
+    assert workers.dig("tester-2", "dispatch")
+    refute workers.dig("tester-2", "pid")
+  end
+
+  def as_agent(env = {})
+    saved = @env
+    @env = @env.merge("COORD_ROLE" => "project-manager", "COORD_WORKER" => "project-manager-1", **env)
+    yield
+  ensure
+    @env = saved
+  end
+
   def test_prepare_refuses_a_worker_over_the_limit
     maf("team", "set", "--max", "1")
     maf("prepare", "opencode", "architect_2", "--interactive")

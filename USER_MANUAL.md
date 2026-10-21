@@ -313,15 +313,21 @@ Give the project manager a budget. Example:
 > "You have 6 worker slots. Use claude and opencode with deepseek-v4-flash.
 > Manage your team in dispatch mode."
 
-The project manager records the budget:
+You record the budget. The project manager cannot set it:
 
 ```sh
 maf team set --max 6 --allow claude --allow opencode:deepseek-v4-flash
 ```
 
-Then it adds workers itself, for example
+Then the project manager adds workers itself, for example
 `maf prepare opencode backend-developer_1 --dispatch`. With `--dispatch`,
 `maf prepare` starts the dispatcher in the background. You run no commands.
+Without a budget, `maf prepare` refuses when an agent runs it. The project manager
+then gives you the command.
+
+In the macOS sandbox, the project manager cannot start a dispatcher: macOS cannot
+start a sandbox inside a sandbox. `maf prepare --dispatch` then prepares the worker
+and prints `cd <worktree>` and `maf start`. Run them in a terminal.
 `maf prepare` dispatches the architect by default: the architect never talks to you,
 and a dispatched session stays small. Add `--interactive` for an architect in a terminal.
 
@@ -1494,7 +1500,7 @@ This section holds the board details for the operator.
 | `maf retire ROLE[_WORKER]` | Remove a worker. Stops its background dispatcher. Its claimed tasks return to the pool. |
 | `maf worker ACTION ROLE[_WORKER] [--force]` | Control one worker. ACTION is status, stop, start, or restart. Each action is idempotent. A dispatched worker starts again in the background. An idle interactive session stops; maf prints its start command. `--force` stops a session that maf cannot check (opencode). `start` and `restart` take `--max-context N`, `--max-session-runs N`, and `--cache-window S`, and save them for the role. |
 | `maf team` | Show the budget, the workers, and the tasks by role. |
-| `maf team set --max N --allow HARNESS[:MODEL]` | Set the team budget in `.maf/config.json`. |
+| `maf team set --max N --allow HARNESS[:MODEL]` | Set the team budget in `.maf/config.json`. An agent cannot run it. |
 | `maf start ... --dispatch --detach` | Start a dispatcher in the background. |
 | `maf start` (in a prepared worktree) | Start the worker that `maf prepare` made. |
 | `coord init` | Create the `.maf/coordination/` folders. |

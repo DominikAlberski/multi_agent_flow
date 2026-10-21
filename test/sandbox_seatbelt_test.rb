@@ -65,6 +65,17 @@ class SandboxSeatbeltTest < Minitest::Test
           "<key>CFBundleIdentifier</key><string>maf.test.probe</string>" \
           "<key>CFBundlePackageType</key><string>APPL</string></dict></plist>"
 
+  def test_a_sandboxed_command_sees_the_marker
+    in_project("sandbox" => { "mode" => "seatbelt" }) { assert sandboxed('test "$MAF_SEATBELT" = 1') }
+  end
+
+  def test_a_sandboxed_process_cannot_start_a_second_sandbox
+    in_project("sandbox" => { "mode" => "seatbelt" }) do
+      error = assert_raises(SystemExit) { with_env("MAF_SEATBELT" => "1") { capture_io { wrapped("true") } } }
+      refute error.success?
+    end
+  end
+
   def test_the_sandbox_keeps_dns
     skip "no network" unless system(*LOOKUP, err: File::NULL)
     in_project("sandbox" => { "mode" => "seatbelt" }) do

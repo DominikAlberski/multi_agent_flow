@@ -40,6 +40,30 @@ class DispatcherSandboxTest < Minitest::Test
     assert_equal [[%w[sh -c true], Dispatcher::Harness::Generic]], calls
   end
 
+  def test_a_dispatcher_in_a_sandbox_stops_with_the_reason
+    Dir.mktmpdir do |dir|
+      log = File.join(dir, "dispatcher.log")
+      error = with_log(log) { nested { assert_raises(SystemExit) { Dispatcher.refuse_nested } } }
+      assert_equal [false, true], [error.success?, File.read(log).include?("maf start")]
+    end
+  end
+
+  def nested
+    original = Sandbox.method(:nested?)
+    Sandbox.define_singleton_method(:nested?) { |*| true }
+    yield
+  ensure
+    Sandbox.define_singleton_method(:nested?, original)
+  end
+
+  def with_log(path)
+    saved = ENV.fetch("DISPATCHER_LOG", nil)
+    ENV["DISPATCHER_LOG"] = path
+    yield
+  ensure
+    ENV["DISPATCHER_LOG"] = saved
+  end
+
   def test_the_sandbox_takes_the_generic_harness
     Dir.mktmpdir do |dir|
       paths = Sandbox::Paths.new([Dispatcher::Harness::Generic], dir, nil, [])

@@ -11,6 +11,7 @@ module Maf
       # Seatbelt runs a command in a macOS sandbox-exec profile.
       module Seatbelt
         COMMAND = "/usr/bin/sandbox-exec"
+        MARKER = "MAF_SEATBELT"
         DEVICES = '(literal "/dev/null") (literal "/dev/zero") (literal "/dev/dtracehelper") ' \
                   '(regex #"^/dev/tty") (regex #"^/dev/fd/") (regex #"^/dev/ptmx")'
         DNS = '(path-literal "/private/var/run/mDNSResponder")'
@@ -20,8 +21,11 @@ module Maf
 
         def self.wrap(cmd, paths)
           tmp = private_tmp(paths.root)
-          [COMMAND, "-p", profile(paths, tmp), "env", "TMPDIR=#{tmp}/", "XDG_CACHE_HOME=#{tmp}/cache", *cmd]
+          [COMMAND, "-p", profile(paths, tmp), "env", "#{MARKER}=1", "TMPDIR=#{tmp}/", "XDG_CACHE_HOME=#{tmp}/cache",
+           *cmd]
         end
+
+        def self.inside? = ENV[MARKER] == "1"
 
         def self.available? = File.executable?(COMMAND)
         def self.require! = available? || abort("maf: sandbox mode seatbelt needs #{COMMAND} (macOS only).")

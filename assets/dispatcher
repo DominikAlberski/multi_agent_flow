@@ -175,6 +175,13 @@ module Dispatcher
     end
   end
 
+  def self.refuse_nested
+    return unless Maf::Shared::Sandbox.nested?
+
+    Log.line(Maf::Shared::Sandbox::NESTED.delete_prefix("maf: "))
+    exit 1
+  end
+
   # Project finds the main checkout from any worktree. Lead roles own no
   # tasks: they get an inbox prompt and no task polling.
   Project = Maf::Shared::Project
@@ -1512,5 +1519,6 @@ if __FILE__ == $PROGRAM_NAME
   ENV["PATH"] = [File.dirname(File.expand_path(__FILE__)), ENV["PATH"]].compact.join(File::PATH_SEPARATOR)
   # Each run inherits the git persona of the agents.
   Maf::Shared::GitIdentity.apply(Dispatcher::Project.manifest)
+  Dispatcher.refuse_nested
   Dispatcher::Main.new(Dispatcher::Options.parse(ARGV)).run
 end

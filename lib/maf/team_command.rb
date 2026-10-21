@@ -18,7 +18,14 @@ module Maf
       @root = root
     end
 
-    def run = @argv.first == "set" ? set(@argv.drop(1)) : show
+    AGENT_SET = "maf: only the user sets the team budget. Give the user this command to run in a terminal."
+
+    def run
+      return show unless @argv.first == "set"
+
+      abort AGENT_SET if Team.agent?
+      set(@argv.drop(1))
+    end
 
     private
 
