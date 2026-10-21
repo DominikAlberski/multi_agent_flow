@@ -8,6 +8,7 @@ require_relative "workers"
 require_relative "retire"
 require_relative "role_limits"
 require_relative "shared/processes"
+require_relative "session_records"
 
 module Maf
   # WorkerControl stops, starts, or restarts one worker. Each action is
@@ -19,6 +20,8 @@ module Maf
     ACTIONS = %w[status stop start restart].freeze
     MAF = File.expand_path("../../exe/maf", __dir__)
     IDLE = 60
+    STUCK = "maf: %<worker>s did not stop after TERM. Its terminal may be closed. " \
+            "Stop it with: pkill -9 -P %<pid>s; kill -9 %<pid>s"
 
     # force stops an interactive session also when maf cannot tell if it is idle.
     # limits are session limits of the role. start and restart save them first.
@@ -83,8 +86,12 @@ module Maf
       abort "maf: #{@worker} is in a turn. Try again when the session is idle." if busy?
       abort "maf: maf cannot tell if #{@worker} is idle. Stop it in its terminal, or add --force." if unknown?
 
+      terminate_session
+    end
+
+    def terminate_session
       RunningProcesses.terminate(pid)
-      RunningProcesses.wait_for_exit(pid, timeout: 10)
+      abort format(STUCK, worker: @worker, pid: pid) unless RunningProcesses.wait_for_exit(pid, timeout: 10)
       puts "Stopped #{@worker}. To start it again: #{start_hint}"
     end
 
@@ -95,7 +102,8 @@ module Maf
 
     def start_hint = "cd #{@entry["dir"]} && maf start"
     def coord_dir = File.join(@root, ".maf", "coordination")
-    def presence = read(File.join(coord_dir, "presence", "#{@worker}.json"))
+    def presence = @presence ||= SessionRecords.new(coord_dir).find(@worker) || presence_file
+    def presence_file = read(File.join(coord_dir, "presence", "#{@worker}.json"))
     def pid = presence["pid"].to_i
     def live? = Shared::Processes.live?(presence)
     def ours? = Shared::Processes.same?(pid, presence["started"])
