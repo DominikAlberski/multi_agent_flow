@@ -137,6 +137,41 @@ class WorkerControlTest < Minitest::Test
     assert_includes out, "maf start"
   end
 
+  # The presence file can name an older session. maf start writes a session record for each session.
+  def test_stop_finds_the_session_that_the_presence_file_misses
+    register(dispatch: false)
+    pid = spawn_worker
+    write("presence", "pid" => 999_999, "started" => "")
+    session_record(pid)
+    control("stop", force: true)
+
+    refute Maf::Shared::Processes.alive?(pid)
+  end
+
+  def test_a_session_that_does_not_stop_gets_the_kill_command
+    register(dispatch: false)
+    session_record(spawn_worker)
+    message = never_exits { refused_with_force("stop") }
+
+    assert_includes message, "kill -9"
+  end
+
+  def session_record(pid)
+    FileUtils.mkdir_p(File.join(@coord, "sessions"))
+    File.write(File.join(@coord, "sessions", "token.maf.json"),
+               JSON.generate("worker" => "architect-1", "role" => "architect", "harness" => "claude", "pid" => pid))
+  end
+
+  def refused_with_force(action) = assert_raises(SystemExit) { control(action, force: true) }.message
+
+  def never_exits
+    original = Maf::RunningProcesses.method(:wait_for_exit)
+    Maf::RunningProcesses.define_singleton_method(:wait_for_exit) { |*, **| false }
+    yield
+  ensure
+    Maf::RunningProcesses.define_singleton_method(:wait_for_exit, original)
+  end
+
   # A pid of a dead worker can belong to a new process later.
   def test_a_reused_pid_is_not_the_worker
     register(dispatch: true)

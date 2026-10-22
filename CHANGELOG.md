@@ -7,6 +7,11 @@
   discards them first. `maf update` runs the new `coord goal migrate`, which merges the base
   branch into each goal branch that still tracks the flow files. Before, the user did these
   steps by hand, because the sandbox blocks an agent from deleting the flow files.
+- Fix: `maf worker stop` did nothing for a session that `maf worker list` showed as running.
+  `stop` read only the presence file, and that file can name an older session. `stop`, `start`,
+  and `status` now find the session from the records of `maf start`, as `list` does.
+- `maf worker stop` reports a session that does not stop after TERM, and prints the `kill -9`
+  command. A session in a closed terminal can ignore TERM.
 
 ## [0.4.0] - 2026-10-21
 
