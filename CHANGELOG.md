@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Fix: `maf worker stop` did nothing for a session that `maf worker list` showed as running.
+  `stop` read only the presence file, and that file can name an older session. `stop`, `start`,
+  and `status` now find the session from the records of `maf start`, as `list` does.
+- `maf worker stop` reports a session that does not stop after TERM, and prints the `kill -9`
+  command. A session in a closed terminal can ignore TERM.
+
 ## [0.4.0] - 2026-10-21
 
 - Fix: in the macOS sandbox, a worker that the project manager started failed on each run with

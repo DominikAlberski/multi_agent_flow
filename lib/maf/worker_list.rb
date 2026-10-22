@@ -5,6 +5,7 @@ require "json"
 require "time"
 require_relative "workers"
 require_relative "shared/processes"
+require_relative "session_records"
 
 module Maf
   # WorkerList shows each running worker process of the project. A worker
@@ -12,7 +13,6 @@ module Maf
   class WorkerList
     Row = Struct.new(:worker, :role, :harness, :mode, :pid, :started)
     HEADER = %w[WORKER ROLE HARNESS MODE PID STARTED].freeze
-    LSTART = "%a %b %d %H:%M:%S %Y %z"
 
     def initialize(root)
       @root = root
@@ -31,18 +31,7 @@ module Maf
     def coord_dir = File.join(@root, ".maf", "coordination")
     def records(dir, pattern) = Dir.glob(File.join(coord_dir, dir, pattern)).map { |path| [path, read(path)] }
 
-    def sessions
-      records("sessions", "*.maf.json").filter_map do |path, record|
-        row(record, "session") if session_live?(record["pid"], File.mtime(path))
-      end
-    end
-
-    def session_live?(pid, registered)
-      started = Shared::Processes.started_at(pid)
-      Shared::Processes.alive?(pid) && !started.empty? && Time.strptime("#{started} +0000", LSTART) <= registered
-    rescue ArgumentError
-      false
-    end
+    def sessions = SessionRecords.new(coord_dir).live.map { |record| row(record, "session") }
 
     def dispatchers
       records("presence", "*.json").filter_map do |_, entry|
