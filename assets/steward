@@ -1,0 +1,294 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# steward - run the host operations that the leads request.
+#
+# Usage: steward [start|stop|status|daemon]
+#   steward          # start the daemon; no-op if it already runs
+#   steward stop
+#   steward status
+#
+# An agent runs `coord op request OPERATION [ARGUMENT]`. coord writes the
+# request to .maf/coordination/ops/requests/. The daemon runs only the
+# operations in Steward::Ops::TABLE, outside the sandbox, and sends the
+# result to the inbox of the role that asked.
+require "json"
+require "fileutils"
+require "rbconfig"
+require "time"
+begin
+  require_relative "../lib/maf/shared/project"
+  require_relative "../lib/maf/shared/processes"
+  require_relative "../lib/maf/shared/sandbox"
+rescue LoadError
+  abort "steward: the maf shared library is missing. Run maf update."
+end
+
+# Steward runs the operations of Steward::Ops::TABLE for the leads.
+module Steward
+  COORD_DIR = File.join(".maf", "coordination")
+  OPS_DIR = File.join(COORD_DIR, "ops")
+  PID_FILE = File.join(COORD_DIR, "steward.pid")
+  LOG_FILE = File.join(COORD_DIR, "steward.log")
+  POLL = 3
+
+  COMMANDS = { "stop" => :stop, "status" => :status, "daemon" => :loop_forever }.freeze
+
+  def self.run(argv)
+    Dir.chdir(Maf::Shared::Project.root)
+    Daemon.public_send(COMMANDS.fetch(argv.first, :start))
+  end
+
+  def self.coord = [RbConfig.ruby, File.join(".maf", "bin", "coord")]
+
+  # Daemon starts, stops, and runs the poll loop. It exits when the pid file is gone.
+  module Daemon
+    NESTED = "steward: this process runs in the sandbox. Start steward from a terminal."
+    LOG = { out: LOG_FILE, err: LOG_FILE, pgroup: true }.freeze
+
+    def self.start
+      abort NESTED if inside_sandbox?
+      return puts("steward: already running (pid #{Pid.read})") if Pid.running?
+
+      spawn_daemon
+    end
+
+    def self.inside_sandbox? = Maf::Shared::Sandbox::Seatbelt.inside? || ENV["MAF_BWRAP"] == "1"
+
+    def self.spawn_daemon
+      FileUtils.mkdir_p(COORD_DIR)
+      pid = Process.spawn(RbConfig.ruby, File.expand_path(__FILE__), "daemon", **LOG)
+      Process.detach(pid) && Pid.write(pid)
+      puts "steward: started (pid #{pid}), log at #{LOG_FILE}"
+    end
+
+    def self.stop
+      return puts("steward: not running") unless Pid.running?
+
+      Process.kill("TERM", Pid.read)
+      Pid.clear
+      puts "steward: stopped"
+    end
+
+    def self.status = puts(Pid.running? ? "steward: running (pid #{Pid.read})" : "steward: not running")
+
+    def self.loop_forever
+      Pid.write(Process.pid)
+      Signal.trap("TERM") { exit }
+      tick while File.exist?(PID_FILE)
+    end
+
+    def self.tick
+      Queue.new(OPS_DIR).each_request { |request| Handler.new(request).run }
+      sleep POLL
+    end
+  end
+
+  # Pid reads and writes the pid file. A non-positive pid is not a process.
+  module Pid
+    def self.running? = read.positive? && Maf::Shared::Processes.alive?(read)
+    def self.read = File.exist?(PID_FILE) ? File.read(PID_FILE).to_i : 0
+    def self.write(pid) = File.write(PID_FILE, pid)
+    def self.clear = FileUtils.rm_f(PID_FILE)
+  end
+
+  # Queue moves each request file to done/ before the handler runs it, so a
+  # restart of the daemon never runs a request twice.
+  class Queue
+    def initialize(dir)
+      @dir = dir
+    end
+
+    def each_request
+      Dir.glob(File.join(@dir, "requests", "*.json")).each do |path|
+        request = take(path)
+        yield request if request
+      end
+    end
+
+    private
+
+    def take(path)
+      done = done_path(path)
+      File.rename(path, done)
+      JSON.parse(File.read(done)).merge("path" => done)
+    rescue JSON::ParserError, SystemCallError
+      nil
+    end
+
+    def done_path(path)
+      File.join(@dir, "done", File.basename(path)).tap { |done| FileUtils.mkdir_p(File.dirname(done)) }
+    end
+  end
+
+  # Ops holds the fixed list of operations. Each one maps validated
+  # arguments to an argument list. No request text reaches a shell.
+  module Ops
+    TABLE = {
+      "worker-restart" => { arg: :worker, argv: ->(w) { ["maf", "worker", "restart", w["id"]] } },
+      "worker-retire" => { arg: :worker, argv: ->(w) { ["maf", "retire", w["id"]] } },
+      "worktree-sync" => { arg: :worker, argv: ->(w) { [*Steward.coord, "worktree", w["role"], w["worker_id"]] } },
+      "goal-sync" => { arg: :goal, argv: ->(g) { [*Steward.coord, "goal", "sync", g] } },
+      "runtime-restore" => { arg: nil, argv: ->(_) { %w[maf update] } }
+    }.freeze
+
+    def self.argv(name, arg)
+      spec = TABLE.fetch(name) { raise Refused, "unknown operation #{name}. Known: #{TABLE.keys.join(", ")}" }
+      spec[:argv].call(Validate.public_send(spec[:arg] || :none, arg))
+    end
+  end
+
+  class Refused < StandardError; end
+
+  # Validate checks each argument against the project state, not against the request.
+  module Validate
+    WORKTREES = File.join(".maf", "worktrees")
+
+    def self.none(arg) = arg.to_s.empty? ? nil : raise(Refused, "this operation takes no argument")
+
+    def self.worker(arg)
+      entry = workers.fetch(arg.to_s) { raise Refused, "no worker #{arg}" }
+      raise Refused, "worker #{arg} is outside #{WORKTREES}" unless inside_worktrees?(entry["dir"].to_s)
+
+      entry.merge("id" => arg.to_s)
+    end
+
+    def self.goal(arg)
+      raise Refused, "a goal id is 8 hex characters" unless arg.to_s.match?(/\A\h{8}\z/)
+      raise Refused, "no goal branch goal/#{arg}" unless system("git", "rev-parse", "-q", "--verify",
+                                                                "refs/heads/goal/#{arg}", out: File::NULL)
+
+      arg
+    end
+
+    def self.workers
+      JSON.parse(File.read(File.join(COORD_DIR, "workers.json")))
+    rescue JSON::ParserError, SystemCallError
+      {}
+    end
+
+    def self.inside_worktrees?(dir)
+      root = File.realpath(WORKTREES)
+      File.realpath(dir).start_with?("#{root}/")
+    rescue SystemCallError
+      false
+    end
+  end
+
+  # Limit allows each operation 3 runs per hour for one argument. A loop of
+  # restarts then stops, and the project manager hears about it.
+  class Limit
+    MAX = 3
+    WINDOW = 3600
+
+    def initialize(path) = @path = path
+
+    def allow?(key) = recent.count(key) < MAX
+    def record(key) = File.open(@path, "a") { |file| file.puts(JSON.generate("at" => Time.now.to_i, "key" => key)) }
+
+    private
+
+    def recent
+      return [] unless File.exist?(@path)
+
+      File.readlines(@path).filter_map { |line| entry(line) }
+    end
+
+    def entry(line)
+      data = JSON.parse(line)
+      data["key"] if Time.now.to_i - data["at"].to_i < WINDOW
+    rescue JSON::ParserError
+      nil
+    end
+  end
+
+  # Handler runs one request and reports the result to the role that asked.
+  class Handler
+    TIMEOUT = 2000
+
+    def initialize(request, runner: Runner, limit: Limit.new(File.join(OPS_DIR, "history.jsonl")))
+      @request = request
+      @runner = runner
+      @limit = limit
+    end
+
+    def run
+      execute(Ops.argv(@request["op"].to_s, @request["arg"]))
+    rescue Refused => e
+      report(false, "refused: #{e.message}")
+    end
+
+    def execute(argv)
+      return over_limit unless @limit.allow?(key)
+
+      @limit.record(key)
+      report(*@runner.call(argv, TIMEOUT))
+    end
+
+    private
+
+    def key = [@request["op"], @request["arg"]].join(" ").strip
+
+    def over_limit
+      report(false, "refused: #{key} ran #{Limit::MAX} times in the last hour")
+      Reply.deliver("project-manager", "ESCALATION from steward: #{key} ran #{Limit::MAX} times in an hour. " \
+                                       "Check the cause before a new request.")
+    end
+
+    def report(success, output)
+      text = "op #{@request["id"]} #{key}: #{success ? "done" : "failed"}. #{output.to_s.lines.last(5).join.strip}"
+      File.write(@request["path"], JSON.generate(@request.merge("ok" => success, "output" => output.to_s)))
+      Reply.event(text)
+      Reply.deliver(@request["role"].to_s, text)
+    end
+  end
+
+  # Runner runs an argument list without a shell and stops it at the timeout.
+  module Runner
+    def self.call(argv, timeout)
+      reader, writer = IO.pipe
+      pid = start(argv, writer)
+      writer.close
+      pid ? collect(pid, reader, timeout) : [false, "cannot start #{argv.first}"]
+    end
+
+    def self.start(argv, writer)
+      Process.spawn(*argv, out: writer, err: writer, pgroup: true)
+    rescue SystemCallError
+      nil
+    end
+
+    def self.collect(pid, reader, timeout)
+      output = Thread.new { reader.read }
+      [succeeded?(pid, timeout), output.value]
+    end
+
+    def self.succeeded?(pid, timeout)
+      deadline = Time.now + timeout
+      sleep 0.2 until (status = Process.waitpid2(pid, Process::WNOHANG)&.last) || Time.now > deadline
+      kill(pid) unless status
+      status&.success? || false
+    end
+
+    def self.kill(pid)
+      Process.kill("KILL", -pid)
+      Process.wait(pid)
+    end
+  end
+
+  # Reply writes the event log line and the inbox message.
+  module Reply
+    def self.event(text)
+      line = [Time.now.utc.iso8601, "op", "steward", text.tr("\t\n", "  ")].join("\t")
+      File.open(File.join(COORD_DIR, "events.log"), "a") { |file| file.puts(line) }
+    end
+
+    def self.deliver(role, text)
+      return if role.empty?
+
+      system(*Steward.coord, "msg", "--from", "steward", role, text, out: File::NULL, err: File::NULL)
+    end
+  end
+end
+
+Steward.run(ARGV) if __FILE__ == $PROGRAM_NAME

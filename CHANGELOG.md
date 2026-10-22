@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- New: `steward`, a daemon outside the sandbox that runs a fixed list of host operations for the
+  leads: `worker-restart`, `worker-retire`, `worktree-sync`, `goal-sync`, `runtime-restore`. An
+  agent asks with `coord op request OPERATION [ARGUMENT]`. steward checks each argument, runs no
+  shell, allows 3 runs per hour for one argument, and sends the result to the inbox of the role
+  that asked. `maf start` starts steward. The project manager and the architect prompts list the
+  operations. `maf update` installs `.maf/bin/steward`.
+
 - After `maf untrack`, maf moves the old branches. `maf start` fast-forwards a worker branch
   also when the only changes are in flow files that the base branch no longer tracks: maf
   discards them first. `maf update` runs the new `coord goal migrate`, which merges the base

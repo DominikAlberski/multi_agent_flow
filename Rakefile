@@ -26,7 +26,7 @@ require "rbconfig"
 BOARD_ENV = %w[TASKRC COORD_DIR COORD_ROLE COORD_WORKER].to_h { |name| [name, nil] }.freeze
 GIT_ENV = { "GIT_CONFIG_COUNT" => "2", "GIT_CONFIG_KEY_0" => "maintenance.auto", "GIT_CONFIG_VALUE_0" => "false",
             "GIT_CONFIG_KEY_1" => "gc.auto", "GIT_CONFIG_VALUE_1" => "0" }.freeze
-TEST_ENV = BOARD_ENV.merge(GIT_ENV).freeze
+TEST_ENV = BOARD_ENV.merge(GIT_ENV).merge("STEWARD_SKIP" => "1").freeze
 
 desc "Run the repo consistency checks"
 task :check do

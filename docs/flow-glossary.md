@@ -44,6 +44,8 @@ The names of the terms in code and in the CLI are in [flow-cli-names.md](flow-cl
 
 **Team budget**: The limits for `maf prepare`: the maximum number of workers and the allowed harnesses and models. The project manager does not count.
 
+**Host operation**: One operation from a fixed list that `steward` runs outside the sandbox when a lead requests it. Example: `worker-restart`.
+
 **Lead**: The project manager or the architect. All other roles are workers for `coord broadcast`. A lead never claims a task.
 
 **Scope**: The file paths that a task may change. Example: `test/queries/**`.

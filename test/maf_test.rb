@@ -274,7 +274,7 @@ module MafProject
     FileUtils.mkdir_p(bin)
     File.write(File.join(bin, "opencode"), format(MOCK, ruby: RbConfig.ruby))
     FileUtils.chmod("+x", File.join(bin, "opencode"))
-    @env = { "VAULT_SKIP" => "1", "MOCK_LOG" => @log, "PATH" => "#{bin}:#{ENV.fetch("PATH")}" }
+    @env = { "VAULT_SKIP" => "1", "STEWARD_SKIP" => "1", "MOCK_LOG" => @log, "PATH" => "#{bin}:#{ENV.fetch("PATH")}" }
   end
 
   def install_project

@@ -81,6 +81,7 @@ module Maf
     end
 
     def self.launch(args, _worktree)
+      Steward.ensure(Project.root)
       identify(args)
       return Dispatch.launch(args) if args.dispatch
 
@@ -106,4 +107,5 @@ require_relative "setup_agent/worktree"
 require_relative "setup_agent/launcher"
 require_relative "setup_agent/project"
 require_relative "setup_agent/runtime_hooks"
+require_relative "setup_agent/steward"
 require_relative "../../assets/harness-hooks/session-guard"

@@ -9,6 +9,7 @@ module Maf
                      ".maf/bin/dashboard.html" => Bootstrap::DASHBOARD_PAGE_SIGNATURE,
                      ".maf/bin/analyst" => Bootstrap::ANALYST_SIGNATURE,
                      ".maf/bin/vault" => Bootstrap::VAULT_SIGNATURE,
+                     ".maf/bin/steward" => Bootstrap::STEWARD_SIGNATURE,
                      ".maf/bin/doc-graph-refresh" => Bootstrap::DOC_GRAPH_SIGNATURE,
                      ".maf/env.sh" => Bootstrap::ENV_SIGNATURE,
                      Bootstrap::OPENCODE_PLUGIN => Bootstrap::OPENCODE_BOARD_WATCH_SIGNATURE }.freeze
