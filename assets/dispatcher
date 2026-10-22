@@ -790,7 +790,7 @@ module Dispatcher
     end
 
     def self.crashes(start, reports)
-      files = Dir.glob(File.join(reports, "*.ips")).select { |path| File.mtime(path) >= start }
+      files = Dir.glob(File.join(reports, "*.ips")).select { |path| File.mtime(path) >= start - 1 }
       files.filter_map { |path| crashed_app(path, start) }.tally
     end
 

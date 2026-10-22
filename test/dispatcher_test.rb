@@ -342,11 +342,18 @@ class SpawnTest < Minitest::Test
     sleep 0.1 until File.size?(pid_file)
     run.raise(Interrupt)
     assert_raises(Interrupt) { run.join }
-    child = File.read(pid_file).to_i
-    assert_raises(Errno::ESRCH) { Process.kill(0, child) }
+    assert stops?(File.read(pid_file).to_i)
   ensure
     FileUtils.remove_entry(dir) if dir
   end
+
+  # A killed child can stay a zombie until its new parent reaps it.
+  def stops?(pid)
+    20.times { stopped?(pid) ? (return true) : sleep(0.1) }
+    false
+  end
+
+  def stopped?(pid) = `ps -o stat= -p #{pid}`.strip.then { |stat| stat.empty? || stat.start_with?("Z") }
 
   def test_missing_binary_is_a_failure
     result = Dispatcher::Spawn.run(["no-such-agent-binary"], env: {}, timeout: 5)
