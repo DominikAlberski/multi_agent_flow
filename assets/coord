@@ -25,6 +25,7 @@ begin
   require_relative "../lib/maf/shared/git_exclude"
   require_relative "../lib/maf/shared/git_identity"
   require_relative "../lib/maf/shared/harness"
+  require_relative "../lib/maf/shared/flow_files"
 rescue LoadError
   abort "coord: the maf shared library is missing. Run maf update."
 end
@@ -72,6 +73,7 @@ module Coord
         coord goal list                      list open goals
         coord goal show ID                   show a goal and its tasks
         coord goal sync ID                   merge the base branch into the goal branch
+        coord goal migrate                   sync each goal branch that still tracks the flow files (after maf untrack)
         coord goal done ID                   close a goal (refused while a task is open or the goal lacks the base head)
         coord goal pr ID                     push the goal branch as the GitHub bot and open or update its pull request
         coord review-watch [--once] [--interval S]
@@ -1260,8 +1262,10 @@ end
       goal
     end
 
+    def open = @tasks.pending.select { |task| task["role"] == ROLE }
+
     def list
-      goals = @tasks.pending.select { |task| task["role"] == ROLE }
+      goals = open
       return puts("no open goals") if goals.empty?
 
       goals.each { |goal| puts goal_line(goal) }
@@ -1332,7 +1336,7 @@ end
       paths = Git.changed(@dir)
       return if paths.empty?
 
-      flow = paths.all? { |path| path.start_with?(".maf/") || Worktree::RUNTIME_FILES.include?(path) }
+      flow = paths.all? { |path| Maf::Shared::FlowFiles.path?(path) || Worktree::RUNTIME_FILES.include?(path) }
       raise Error, ["uncommitted changes in #{@dir}: #{paths.first(5).join(", ")}#{" ..." if paths.size > 5}.",
                     flow ? FLOW_FILES : "Commit or stash them first."].join(" ")
     end
@@ -1496,17 +1500,21 @@ end
 
     # A missing base ref has no head to lack.
     def behind? = Git.run(@root, "rev-parse", "-q", "--verify", ref) && !Git.ancestor?(@root, ref, @branch)
+    def untracked_upstream? = Dir.exist?(@dir) && Maf::Shared::FlowFiles.tracked?(@dir) && !flow_in_ref?
+    def flow_in_ref? = !Git.out(@root, "ls-tree", "--name-only", ref, "--", ".maf").empty?
     def ref = @ref ||= Git.base_ref(@root, @base)
 
     def run
       return puts("#{@branch} already contains #{ref}") unless behind?
-      raise Error, "uncommitted changes in #{@dir}. Commit or stash them first." unless Git.clean?(@dir)
+      raise Error, "uncommitted changes in #{@dir}. Commit or stash them first." unless clean?
 
       merge
       puts "merged #{ref} into #{@branch}"
     end
 
     private
+
+    def clean? = Maf::Shared::FlowFiles.discard(@dir, ref) && Git.clean?(@dir)
 
     def merge
       return if Git.run(@dir, "merge", "-q", "--no-edit", ref)
@@ -1945,13 +1953,17 @@ end
 
     private
 
-    def checks
+    # The flow files are discarded last, only when the fast-forward can run.
+    def checks = ready_checks + [[-> { clean? }, "the worktree has uncommitted changes"]]
+
+    def ready_checks
       [[-> { head == @branch }, "#{@branch} is not checked out"],
-       [-> { Git.clean?(@dir) }, "the worktree has uncommitted changes"],
        [-> { Git.run(@dir, "fetch", "-q", "origin", @base) }, "git fetch origin #{@base} failed"],
        [-> { Git.run(@dir, "merge-base", "--is-ancestor", "HEAD", target) },
         "#{@branch} has commits that #{target} lacks"]]
     end
+
+    def clean? = Maf::Shared::FlowFiles.discard(@dir, target) && Git.clean?(@dir)
 
     def merge
       return if rev("HEAD") == rev(target)
@@ -2669,11 +2681,11 @@ end
   # Goal commands create, sync, land, and close goals.
   module GoalCommands
     GOAL_COMMANDS = { "add" => :goal_add, "list" => :goal_list, "show" => :goal_show, "done" => :goal_done,
-                      "sync" => :goal_sync, "pr" => :goal_pr }.freeze
+                      "sync" => :goal_sync, "migrate" => :goal_migrate, "pr" => :goal_pr }.freeze
 
     def cmd_goal
       sub = @args.shift
-      abort "usage: coord goal add|list|show|sync|pr|done" unless GOAL_COMMANDS.key?(sub)
+      abort "usage: coord goal add|list|show|sync|migrate|pr|done" unless GOAL_COMMANDS.key?(sub)
 
       send(GOAL_COMMANDS[sub])
     end
@@ -2711,6 +2723,20 @@ end
       goal = goals.find!(@args.require_arg("goal sync", "ID"))
       goal_sync_for(goal).run
       event_log.append("goal-sync", @worker, goal["description"])
+    end
+
+    def goal_migrate = goals.open.each { |goal| migrate_goal(goal) }
+
+    def migrate_goal(goal)
+      sync = goal_sync_for(goal)
+      sync.untracked_upstream? && run_migration(sync, goal)
+    end
+
+    def run_migration(sync, goal)
+      sync.run
+      event_log.append("goal-sync", @worker, goal["description"])
+    rescue Error => e
+      warn "coord: #{e.message}"
     end
 
     def goal_sync_for(goal) = GoalSync.new(main_root, goal["uuid"], Git.base_branch(main_root, manifest))

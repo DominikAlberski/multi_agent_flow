@@ -1808,6 +1808,75 @@ class GoalTest < Minitest::Test
     end
   end
 
+  def old_install
+    FileUtils.mkdir_p(File.join(@root, ".maf/agents"))
+    File.write(File.join(@root, ".maf/agents/tester.md"), "old\n")
+    commit(@root, "old install")
+  end
+
+  def push_untrack(origin)
+    other = Dir.mktmpdir("coord-untrack-other")
+    git(other, "clone", "-q", origin, ".")
+    git(other, "rm", "-r", "-q", "--cached", ".maf")
+    git(other, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "untrack maf")
+    git(other, "push", "-q", "origin", "HEAD:main")
+    `git -C #{other} rev-parse HEAD`.strip
+  ensure
+    FileUtils.rm_rf(other)
+  end
+
+  def tracks_flow?(dir) = !`git -C #{dir} ls-files .maf`.strip.empty?
+
+  def test_reuse_discards_the_flow_files_that_origin_untracked
+    old_install
+    with_origin do |origin|
+      dir = worker_worktree
+      File.write(File.join(dir, ".maf/agents/tester.md"), "rewritten by maf\n")
+      upstream = push_untrack(origin)
+      coord("worktree", "tester", "1")
+
+      assert_equal [upstream, false], [head(dir), tracks_flow?(dir)]
+    end
+  end
+
+  def test_reuse_keeps_the_flow_files_that_origin_still_tracks
+    old_install
+    with_origin do |origin|
+      dir = worker_worktree
+      File.write(File.join(dir, ".maf/agents/tester.md"), "rewritten by maf\n")
+      before = head(dir)
+      push_upstream_commit(origin)
+      _out, err = capture_io { Dir.chdir(@root) { Coord::CLI.new(%w[worktree tester 1], env: @env).run } }
+
+      assert_equal [before, "rewritten by maf\n"], [head(dir), File.read(File.join(dir, ".maf/agents/tester.md"))]
+      assert_includes err, "the worktree has uncommitted changes"
+    end
+  end
+
+  def test_goal_migrate_syncs_a_goal_branch_that_still_tracks_the_flow
+    old_install
+    with_origin do |origin|
+      dir = goal_dir(uuid = add_goal)
+      File.write(File.join(dir, ".maf/agents/tester.md"), "rewritten by maf\n")
+      push_untrack(origin)
+      coord("goal", "migrate")
+
+      assert system("git", "-C", @root, "merge-base", "--is-ancestor", "origin/main", "goal/#{short(uuid)}")
+      refute tracks_flow?(dir)
+    end
+  end
+
+  def test_goal_migrate_leaves_a_goal_branch_alone_while_the_base_tracks_the_flow
+    old_install
+    with_origin do |origin|
+      uuid = add_goal
+      push_upstream_commit(origin)
+      coord("goal", "migrate")
+
+      refute system("git", "-C", @root, "merge-base", "--is-ancestor", "origin/main", "goal/#{short(uuid)}")
+    end
+  end
+
   def write_copy_list(list)
     File.write(File.join(@root, ".maf/config.json"), JSON.generate(copy_to_worktree: list))
   end

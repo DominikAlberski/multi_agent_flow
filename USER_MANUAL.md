@@ -1315,6 +1315,15 @@ A `CLAUDE.md` that an older maf moved into `AGENTS.md` stays in `AGENTS.md`.
 > branch and a merge of the untrack commit into it delete the files from the disk.
 > `maf restore` puts the config back (see [Back up the flow config](#back-up-the-flow-config)).
 
+Commit and push the untrack commit. Then maf moves the worker branches and the goal branches:
+
+- `maf start` fast-forwards a worker branch that has no own commits. If the only changes
+  in the worktree are in flow files that the base branch no longer tracks, maf discards
+  them first. The worktree setup then copies the runtime files back.
+- `maf update` runs `coord goal migrate`. It merges the base branch into each open goal
+  branch that still tracks the flow files. If a merge conflicts, maf stops the merge and
+  names the goal. An agent cannot do this merge: the sandbox protects the flow files.
+
 ## Back up the flow config
 
 `maf update` makes all files in `.maf/` again, except four: `config.json` (the agents,

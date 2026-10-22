@@ -118,7 +118,7 @@ module Maf
     def run_remove = Maf.flow(*AgentArgs.convert(@args, "--remove"))
     def run_update
       Maf.flow(*@args)
-      Untrack.warn_tracked(SetupAgent::Project.root)
+      Untrack.after_update(SetupAgent::Project.root)
     end
     def run_roles = Maf.flow("--list-roles")
 

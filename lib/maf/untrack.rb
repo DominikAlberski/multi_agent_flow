@@ -2,6 +2,7 @@
 
 # untrack.rb - move an install that git tracks to the local layout.
 require "json"
+require "rbconfig"
 require_relative "uninstall"
 
 module Maf
@@ -23,8 +24,19 @@ module Maf
 
     def self.warn_tracked(root) = (warn TRACKED unless new(root, []).tracked.empty?)
 
+    def self.after_update(root)
+      warn_tracked(root)
+      migrate_goals(root)
+    end
+
+    def self.migrate_goals(root)
+      coord = File.join(root, ".maf", "bin", "coord")
+      system(RbConfig.ruby, coord, "goal", "migrate", chdir: root) if File.exist?(coord)
+    end
+
     DONE = ["", "The flow left git. Review the change with `git status`, then commit it.",
             "A branch that still tracks the flow files can delete them in a checkout or a merge.",
+            "After you push the commit, maf start fast-forwards each worker, and maf update syncs each goal.",
             "maf keeps a backup of the flow config in .git/maf/backup. Run `maf restore` to put it back."].freeze
 
     def run
