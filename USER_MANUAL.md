@@ -741,8 +741,10 @@ Set `--cache-window` to your provider's cache time minus a margin. For a
 - **The VM** (`maf vm create`) runs the whole team in a Lima VM that sees only the project folder.
   Use it if the agents must not read your files.
 - **steward** runs a fixed list of host operations for the project manager and the architect: a
-  worker restart or retire, a worktree or goal sync, and `maf update`. An agent asks with
-  `coord op request OPERATION [ARGUMENT]`. `maf start` starts `steward`. Check it with
+  worker restart or retire, a worktree or goal sync, and `maf update`. A worker start, a model
+  change, and `bundle install` wait for you: run `maf op list`, then `maf op approve ID` or
+  `maf op deny ID`. An agent asks with `coord op request OPERATION [ARGUMENT...]`.
+  `maf start` starts `steward`. Check it with
   `.maf/bin/steward status`; its log is `.maf/coordination/steward.log`. See
   [Host operations](docs/sandbox.md#host-operations-steward).
 

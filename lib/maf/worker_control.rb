@@ -18,6 +18,8 @@ module Maf
   # only when the session is idle. maf then prints the start command.
   class WorkerControl
     ACTIONS = %w[status stop start restart].freeze
+    USAGE = "usage: maf worker list | #{ACTIONS.join("|")} ROLE[_WORKER] [--force] " \
+            "[--max-context N] [--max-session-runs N] [--cache-window S]".freeze
     MAF = File.expand_path("../../exe/maf", __dir__)
     IDLE = 60
     STUCK = "maf: %<worker>s did not stop after TERM. Its terminal may be closed. " \

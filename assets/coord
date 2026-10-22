@@ -99,8 +99,10 @@ module Coord
         coord lesson ID dead_end|corrected TEXT...
                                              save a lesson of a task to the graph memory: an approach that
                                              failed (dead_end), or the right way (corrected)
-        coord op request OPERATION [ARGUMENT]  ask steward for a host operation (worker-restart, worker-retire,
-                                             worktree-sync, goal-sync, runtime-restore); the result comes to your inbox
+        coord op request OPERATION [ARGUMENT...]  ask steward for a host operation; the result comes to your inbox.
+                                             auto: worker-restart W, worker-retire W, worktree-sync W, goal-sync ID,
+                                             runtime-restore. The user approves: worker-start W, worker-model W MODEL,
+                                             bundle-install
         coord msg [--from A] [--task ID] [--fyi] TO TEXT...
                                              TO is a role or a worker; a worker's mail goes to its role inbox.
                                              --task also saves the text as a note on the task.
@@ -2197,6 +2199,7 @@ end
     def shift = @argv.shift
     def first = @argv.first
     def empty? = @argv.empty?
+    def rest = @argv.shift(@argv.size)
     def join = @argv.join(" ")
 
     # Splits argv at the first literal "--" and returns the words after it,
@@ -2920,13 +2923,13 @@ end
 
   # OpCommands writes a request for steward. steward validates and runs it on the host.
   module OpCommands
-    OP_USAGE = "usage: coord op request OPERATION [ARGUMENT]"
+    OP_USAGE = "usage: coord op request OPERATION [ARGUMENT...]"
 
     def cmd_op
       abort OP_USAGE unless @args.shift == "request" && (op = @args.shift)
 
       id = "#{Time.now.utc.strftime("%Y%m%dT%H%M%SZ")}-#{format("%06x", rand(0xffffff))}"
-      write_op(id, "id" => id, "op" => op, "arg" => @args.shift, "role" => @role, "worker" => @worker)
+      write_op(id, "id" => id, "op" => op, "args" => @args.rest, "role" => @role, "worker" => @worker)
       puts "op #{id} requested. steward sends the result to the #{@role} inbox."
     end
 
@@ -2934,7 +2937,7 @@ end
       dir = File.join(paths.coord_dir, "ops", "requests")
       FileUtils.mkdir_p(dir)
       File.write(File.join(dir, "#{id}.json"), JSON.generate(request.merge("at" => Time.now.utc.iso8601)))
-      event_log.append("op-request", @worker, "#{request["op"]} #{request["arg"]}".strip)
+      event_log.append("op-request", @worker, [request["op"], *request["args"]].join(" "))
     end
   end
 

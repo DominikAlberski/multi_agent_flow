@@ -4,43 +4,17 @@
 # test/steward_test.rb - steward runs only the listed operations, with checked arguments.
 #
 # Run: ruby test/steward_test.rb
-require "minitest/autorun"
-require "tmpdir"
-require "json"
-require "fileutils"
-require_relative "board_guard"
-
-load File.expand_path("../assets/steward", __dir__)
-load File.expand_path("../assets/coord", __dir__)
+require_relative "steward_helper"
 
 class StewardTest < Minitest::Test
-  def setup
-    @dir = File.realpath(Dir.mktmpdir("steward-test"))
-    @home = Dir.pwd
-    Dir.chdir(@dir)
-    register_tester
-  end
-
-  def register_tester
-    FileUtils.mkdir_p([".maf/coordination", ".maf/worktrees/tester-bot"])
-    dir = File.join(@dir, ".maf/worktrees/tester-bot")
-    workers("tester-bot" => { "role" => "tester", "worker_id" => "bot", "dir" => dir })
-  end
-
-  def teardown
-    Dir.chdir(@home)
-    FileUtils.remove_entry(@dir)
-  end
-
-  def workers(data) = File.write(".maf/coordination/workers.json", JSON.generate(data))
-  def refused(name, arg = nil) = assert_raises(Steward::Refused) { Steward::Ops.argv(name, arg) }.message
+  include StewardHelpers
 
   def test_a_worker_restart_names_the_checked_worker
-    assert_equal %w[maf worker restart tester-bot], Steward::Ops.argv("worker-restart", "tester-bot")
+    assert_equal %w[maf worker restart tester-bot], Steward::Ops.argv("worker-restart", ["tester-bot"])
   end
 
   def test_a_worktree_sync_uses_the_role_and_the_id_of_the_registry
-    assert_equal %w[worktree tester bot], Steward::Ops.argv("worktree-sync", "tester-bot").last(3)
+    assert_equal %w[worktree tester bot], Steward::Ops.argv("worktree-sync", ["tester-bot"]).last(3)
   end
 
   def test_an_unknown_operation_is_refused
@@ -61,43 +35,20 @@ class StewardTest < Minitest::Test
   end
 
   def test_runtime_restore_takes_no_argument
-    assert_includes refused("runtime-restore", "--force"), "no argument"
+    assert_includes refused("runtime-restore", "--force"), "takes 0 argument(s)"
   end
 
-  def request(name, arg = nil)
-    path = ".maf/coordination/ops/done/1.json"
-    FileUtils.mkdir_p(File.dirname(path))
-    { "id" => "1", "op" => name, "arg" => arg, "role" => "", "path" => path }
+  def test_a_model_cannot_start_with_a_dash
+    assert_includes refused("worker-model", "tester-bot", "--dispatch"), "a model is"
   end
 
-  def handle(req, result: [true, "ok\n"], limit: Steward::Limit.new(File.join(@dir, "history.jsonl")))
-    calls = []
-    runner = ->(argv, _timeout) { (calls << argv) && result }
-    Steward::Handler.new(req, runner: runner, limit: limit).run
-    calls
+  def test_a_model_change_replaces_the_worker_with_the_new_model
+    argv = Steward::Ops.argv("worker-model", %w[tester-bot gpt-6.1-sol])
+    assert_equal %w[prepare tester_bot --model gpt-6.1-sol --replace tester_bot], argv.values_at(1, 3..7)
   end
 
-  def test_the_handler_runs_the_operation_and_records_the_result
-    calls = handle(request("worker-restart", "tester-bot"))
-
-    assert_equal [%w[maf worker restart tester-bot]], calls
-    assert JSON.parse(File.read(".maf/coordination/ops/done/1.json"))["ok"]
-    assert_includes File.read(".maf/coordination/events.log"), "worker-restart tester-bot: done"
-  end
-
-  def test_a_refused_request_runs_nothing
-    calls = handle(request("worker-restart", "nobody"))
-
-    assert_empty calls
-    assert_includes File.read(".maf/coordination/events.log"), "refused: no worker nobody"
-  end
-
-  def test_the_fourth_run_in_an_hour_is_refused
-    limit = Steward::Limit.new(File.join(@dir, "history.jsonl"))
-    3.times { handle(request("worker-restart", "tester-bot"), limit: limit) }
-
-    assert_empty handle(request("worker-restart", "tester-bot"), limit: limit)
-    assert_includes File.read(".maf/coordination/events.log"), "ran 3 times in the last hour"
+  def test_bundle_install_needs_a_lockfile
+    assert_includes refused("bundle-install"), "no Gemfile.lock"
   end
 
   def test_the_queue_moves_a_request_out_before_it_runs
@@ -120,10 +71,7 @@ class StewardTest < Minitest::Test
   end
 
   def test_steward_does_not_start_in_the_sandbox
-    ENV["MAF_SEATBELT"] = "1"
-    assert_raises(SystemExit) { capture_io { Steward::Daemon.start } }
-  ensure
-    ENV.delete("MAF_SEATBELT")
+    with_env("MAF_SEATBELT", "1") { assert_raises(SystemExit) { capture_io { Steward::Daemon.start } } }
   end
 
   def test_coord_op_request_writes_a_request_for_steward
@@ -132,6 +80,6 @@ class StewardTest < Minitest::Test
     capture_io { Coord::CLI.new(%w[op request worker-restart tester-bot], env: env).run }
     request = JSON.parse(File.read(Dir.glob(".maf/coordination/ops/requests/*.json").first))
 
-    assert_equal %w[worker-restart tester-bot architect], request.values_at("op", "arg", "role")
+    assert_equal ["worker-restart", ["tester-bot"], "architect"], request.values_at("op", "args", "role")
   end
 end

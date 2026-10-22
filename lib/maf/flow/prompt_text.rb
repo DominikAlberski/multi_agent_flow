@@ -155,7 +155,10 @@ module Maf
         `worktree-sync <worker>`: a worker branch behind the base branch, or flow files that block it.
         `goal-sync <goal-short-id>`: `coord goal sync` fails with "Operation not permitted".
         `runtime-restore`: the files of `.maf/` are missing in a worktree.
+        These wait for the user: `worker-start <worker>`, `worker-model <worker> <model>`,
+        `bundle-install` (gems are missing after a Gemfile.lock change).
         steward sends the result to your inbox. Tell the user only if steward refuses or the operation fails.
+        If an operation waits, tell the user the `maf op approve <id>` command once. Do not request it again.
     TEXT
 
     ARCHITECT_RULES = <<~TEXT.strip
