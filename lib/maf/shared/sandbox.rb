@@ -74,7 +74,7 @@ module Maf
 
       def self.paths(harness, policy, coord_dir)
         protect_policy
-        Paths.new([harness, *project_harnesses].uniq, Project.root, coord_dir, Array(policy["write"]))
+        Paths.new([harness, *project_harnesses].uniq, Project.root, coord_dir, policy)
       end
 
       def self.project_harnesses = Project.manifest.fetch("agents", []).filter_map { |a| Harness[a["harness"]] }

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Fix: in the macOS sandbox, headless Chrome aborted at start, and macOS showed a crash dialog
+  for each try. New `.maf/sandbox.json` key `launch_services` lists the apps that can use
+  LaunchServices. After each run, the dispatcher reports apps that the run started and that
+  crashed, and LaunchServices denials, once for each app to the project manager.
+- Fix: after Ctrl+C or SIGHUP, the dispatcher stopped, but the agent run continued in its own
+  session. The dispatcher now stops the process group of the agent first.
 - New: `steward`, a daemon outside the sandbox that runs a fixed list of host operations for the
   leads: `worker-restart`, `worker-retire`, `worktree-sync`, `goal-sync`, `runtime-restore`. An
   agent asks with `coord op request OPERATION [ARGUMENT]`. steward checks each argument, runs no
@@ -11,7 +17,6 @@
 - New: operations that wait for the user: `worker-start`, `worker-model WORKER MODEL`, and
   `bundle-install` (frozen to `Gemfile.lock`). `maf op list|approve ID|deny ID` handles them.
   `.maf/sandbox.json` key `ops` sets the level of each operation: `auto`, `approve`, or `off`.
-
 - After `maf untrack`, maf moves the old branches. `maf start` fast-forwards a worker branch
   also when the only changes are in flow files that the base branch no longer tracks: maf
   discards them first. `maf update` runs the new `coord goal migrate`, which merges the base

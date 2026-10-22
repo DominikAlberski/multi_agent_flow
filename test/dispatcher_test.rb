@@ -333,6 +333,28 @@ class SpawnTest < Minitest::Test
     assert_operator Time.now - started, :<, 10
   end
 
+  # Regression: Ctrl+C stopped the dispatcher, but the agent in its own
+  # session ran on and started a new test suite.
+  def test_an_interrupt_kills_the_process_group
+    dir = Dir.mktmpdir("spawn-interrupt-test")
+    pid_file = File.join(dir, "pid")
+    run = Thread.new { Dispatcher::Spawn.run(["sh", "-c", "sleep 30 & echo $! > #{pid_file}; wait"], env: {}, timeout: 60) }
+    sleep 0.1 until File.size?(pid_file)
+    run.raise(Interrupt)
+    assert_raises(Interrupt) { run.join }
+    assert stops?(File.read(pid_file).to_i)
+  ensure
+    FileUtils.remove_entry(dir) if dir
+  end
+
+  # A killed child can stay a zombie until its new parent reaps it.
+  def stops?(pid)
+    20.times { stopped?(pid) ? (return true) : sleep(0.1) }
+    false
+  end
+
+  def stopped?(pid) = `ps -o stat= -p #{pid}`.strip.then { |stat| stat.empty? || stat.start_with?("Z") }
+
   def test_missing_binary_is_a_failure
     result = Dispatcher::Spawn.run(["no-such-agent-binary"], env: {}, timeout: 5)
     refute result.success
@@ -1145,6 +1167,75 @@ class PollerTest < Minitest::Test
 
     assert_equal id, poller.claim_first([id])
     assert_nil other.claim_first([id])
+  end
+end
+
+# Regression: headless Chrome aborted 34 times in the macOS sandbox, and the
+# user saw only the crash dialogs of macOS.
+class SandboxCrashesTest < Minitest::Test
+  def setup
+    @reports = Dir.mktmpdir("sandbox-crashes-test")
+    Dispatcher::SandboxCrashes.instance_variable_set(:@seen, [])
+    @config = Dispatcher::Config.new(role: "architect", worker: "architect-bot")
+  end
+
+  def teardown = FileUtils.remove_entry(@reports)
+
+  def crash(name, launched)
+    body = { "procPath" => "/Applications/#{name}.app/Contents/MacOS/#{name}",
+             "procLaunch" => launched.strftime("%Y-%m-%d %H:%M:%S.%L %z") }
+    File.write(File.join(@reports, "#{name}-#{rand(1_000_000)}.ips"), "{}\n#{JSON.generate(body)}")
+  end
+
+  def watch(denied: [], &block)
+    calls = []
+    stub(Maf::Shared::Sandbox, :mode, "seatbelt") do
+      stub(Dispatcher::SandboxCrashes, :denials, denied) do
+        stub_coord(calls) { capture_io { Dispatcher::SandboxCrashes.watch(@config, {}, reports: @reports, &block) } }
+      end
+    end
+    calls
+  end
+
+  def stub(object, name, value)
+    original = object.method(name)
+    object.define_singleton_method(name) { |*| value }
+    yield
+  ensure
+    object.define_singleton_method(name, original)
+  end
+
+  def stub_coord(calls)
+    original = Dispatcher::CoordCall.method(:run)
+    Dispatcher::CoordCall.define_singleton_method(:run) { |_env, *args| calls << args }
+    yield
+  ensure
+    Dispatcher::CoordCall.define_singleton_method(:run, original)
+  end
+
+  def test_a_crash_of_a_program_that_the_run_started_escalates
+    calls = watch(denied: ["Google Chrome"]) { 2.times { crash("Google Chrome", Time.now) } }
+    assert_equal "escalate", calls.first.first
+    assert_includes calls.first.last, "/Applications/Google Chrome.app (2x)"
+    assert_includes calls.first.last, "refused LaunchServices to Google Chrome"
+    assert_includes calls.first.last, "launch_services"
+  end
+
+  def test_a_crash_of_an_older_process_is_not_from_the_run
+    assert_empty(watch { crash("Mail", Time.now - 3600) })
+  end
+
+  def test_each_app_is_reported_once
+    watch { crash("Google Chrome", Time.now) }
+    assert_empty(watch { crash("Google Chrome", Time.now) })
+  end
+
+  def test_no_check_outside_the_macos_sandbox
+    calls = []
+    stub(Maf::Shared::Sandbox, :mode, "off") do
+      stub_coord(calls) { Dispatcher::SandboxCrashes.watch(@config, {}, reports: @reports) { crash("Google Chrome", Time.now) } }
+    end
+    assert_empty calls
   end
 end
 

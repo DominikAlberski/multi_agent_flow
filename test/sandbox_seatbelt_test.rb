@@ -42,6 +42,36 @@ class SandboxSeatbeltTest < Minitest::Test
     end
   end
 
+  def test_a_launch_services_app_gets_only_launchservicesd
+    Dir.mktmpdir("maf-app-", Dir.home) do |outside|
+      rule = launch_services_rule(probe_app(outside))
+      assert_includes rule, '(global-name "com.apple.coreservices.launchservicesd")'
+      assert_includes rule, "(process-path \"#{File.realpath(outside)}/Probe.app/Contents/MacOS/Probe\")"
+    end
+  end
+
+  def launch_services_rule(app)
+    in_project("sandbox" => { "mode" => "seatbelt", "launch_services" => [app] }) do
+      wrapped("true")[2][/\(allow mach-lookup .*\z/m]
+    end
+  end
+
+  def test_open_stays_blocked_with_a_launch_services_app
+    Dir.mktmpdir("maf-open-", Dir.home) do |dir|
+      in_project("sandbox" => { "mode" => "seatbelt", "launch_services" => [File.join(dir, "Probe.app")] }) do
+        refute opens_app?(dir)
+      end
+    end
+  end
+
+  def test_a_launch_services_app_in_a_writable_folder_is_refused
+    in_project("sandbox" => { "mode" => "seatbelt" }) do |dir|
+      write(".maf/sandbox.json", JSON.generate("mode" => "seatbelt", "launch_services" => [probe_app(dir)]))
+      error = assert_raises(SystemExit) { capture_io { wrapped("true") } }
+      refute error.success?
+    end
+  end
+
   def opens_app?(dir)
     system(*Sandbox.wrap(["open", "-g", "-j", probe_app(dir)], harness("claude")), err: File::NULL)
     sleep 3

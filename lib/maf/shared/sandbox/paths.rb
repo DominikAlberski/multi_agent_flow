@@ -24,11 +24,12 @@ module Maf
 
         attr_reader :root
 
-        def initialize(harnesses, root, coord_dir, extra)
+        def initialize(harnesses, root, coord_dir, policy)
           @harness = HarnessFiles.new(harnesses, ->(paths) { real(paths) })
           @root = root
           @coord_dir = coord_dir || File.join(root, ".maf", "coordination")
-          @extra = extra.map { |path| File.expand_path(path, root) }
+          @extra = Array(policy["write"]).map { |path| File.expand_path(path, root) }
+          @app_paths = Array(policy["launch_services"]).map { |path| File.expand_path(path, root) }
         end
 
         def dirs = @dirs ||= real([@root, @coord_dir, *@extra, ENV.fetch("TMPDIR", nil), *COMMON])
@@ -45,6 +46,13 @@ module Maf
         end
 
         def existing = dirs.select { |dir| File.exist?(dir) }
+
+        def apps = @apps ||= real(@app_paths).select { |path| File.exist?(path) }.each { |path| fixed_app!(path) }
+
+        def fixed_app!(path)
+          writable?(path) && abort("maf: #{path} in launch_services is in a folder that the agent can change.")
+        end
+
         def sockets = real([@root, @coord_dir])
 
         def protected
