@@ -912,13 +912,19 @@ class SetupAgentTest < Minitest::Test
     skip "sandbox-exec is macOS only" unless File.executable?("/usr/bin/sandbox-exec")
     harness = Maf::Shared::Harness.fetch("claude")
     relayed = []
-    launcher = Maf::SetupAgent::Launcher.singleton_class
-    original = Maf::SetupAgent::Launcher.method(:relay_or_die)
-    launcher.define_method(:relay_or_die) { |cmd| (relayed << cmd) && 0 }
-    in_policy("mode" => "seatbelt", "scope" => "all") do
-      capture_io { assert_raises(SystemExit) { Maf::SetupAgent::Launcher.launch(harness, "tester", "m") } }
+    with_relay_stub(->(cmd) { (relayed << cmd) && 0 }) do
+      in_policy("mode" => "seatbelt", "scope" => "all") do
+        capture_io { assert_raises(SystemExit) { Maf::SetupAgent::Launcher.launch(harness, "tester", "m") } }
+      end
     end
     assert_equal "/usr/bin/sandbox-exec", relayed.first&.first
+  end
+
+  def with_relay_stub(stub)
+    launcher = Maf::SetupAgent::Launcher.singleton_class
+    original = Maf::SetupAgent::Launcher.method(:relay_or_die)
+    launcher.define_method(:relay_or_die) { |cmd| stub.call(cmd) }
+    yield
   ensure
     launcher.define_method(:relay_or_die, original)
   end
