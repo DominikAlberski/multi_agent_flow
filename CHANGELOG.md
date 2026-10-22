@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-22
+
 - Fix: in the macOS sandbox, headless Chrome aborted at start, and macOS showed a crash dialog
   for each try. New `.maf/sandbox.json` key `launch_services` lists the apps that can use
   LaunchServices. After each run, the dispatcher reports apps that the run started and that
