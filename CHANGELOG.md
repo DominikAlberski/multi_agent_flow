@@ -8,6 +8,25 @@
   crashed, and LaunchServices denials, once for each app to the project manager.
 - Fix: after Ctrl+C or SIGHUP, the dispatcher stopped, but the agent run continued in its own
   session. The dispatcher now stops the process group of the agent first.
+- New: `steward`, a daemon outside the sandbox that runs a fixed list of host operations for the
+  leads: `worker-restart`, `worker-retire`, `worktree-sync`, `goal-sync`, `runtime-restore`. An
+  agent asks with `coord op request OPERATION [ARGUMENT]`. steward checks each argument, runs no
+  shell, allows 3 runs per hour for one argument, and sends the result to the inbox of the role
+  that asked. `maf start` starts steward. The project manager and the architect prompts list the
+  operations. `maf update` installs `.maf/bin/steward`.
+- New: operations that wait for the user: `worker-start`, `worker-model WORKER MODEL`, and
+  `bundle-install` (frozen to `Gemfile.lock`). `maf op list|approve ID|deny ID` handles them.
+  `.maf/sandbox.json` key `ops` sets the level of each operation: `auto`, `approve`, or `off`.
+- After `maf untrack`, maf moves the old branches. `maf start` fast-forwards a worker branch
+  also when the only changes are in flow files that the base branch no longer tracks: maf
+  discards them first. `maf update` runs the new `coord goal migrate`, which merges the base
+  branch into each goal branch that still tracks the flow files. Before, the user did these
+  steps by hand, because the sandbox blocks an agent from deleting the flow files.
+- Fix: `maf worker stop` did nothing for a session that `maf worker list` showed as running.
+  `stop` read only the presence file, and that file can name an older session. `stop`, `start`,
+  and `status` now find the session from the records of `maf start`, as `list` does.
+- `maf worker stop` reports a session that does not stop after TERM, and prints the `kill -9`
+  command. A session in a closed terminal can ignore TERM.
 
 ## [0.4.0] - 2026-10-21
 

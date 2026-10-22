@@ -274,7 +274,7 @@ module MafProject
     FileUtils.mkdir_p(bin)
     File.write(File.join(bin, "opencode"), format(MOCK, ruby: RbConfig.ruby))
     FileUtils.chmod("+x", File.join(bin, "opencode"))
-    @env = { "VAULT_SKIP" => "1", "MOCK_LOG" => @log, "PATH" => "#{bin}:#{ENV.fetch("PATH")}" }
+    @env = { "VAULT_SKIP" => "1", "STEWARD_SKIP" => "1", "MOCK_LOG" => @log, "PATH" => "#{bin}:#{ENV.fetch("PATH")}" }
   end
 
   def install_project
@@ -617,6 +617,13 @@ class MafTeamTest < Minitest::Test
 
     assert_equal 0, status
     assert workers.key?("tester-2")
+  end
+
+  def test_an_agent_cannot_approve_a_host_operation
+    out, status = as_agent { maf("op", "approve", "20261021T120000Z-a1b2c3") }
+
+    refute_equal 0, status
+    assert_includes out, "only the user approves"
   end
 
   def test_an_agent_cannot_set_the_budget

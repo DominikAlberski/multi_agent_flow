@@ -740,6 +740,13 @@ Set `--cache-window` to your provider's cache time minus a margin. For a
   bubblewrap 0.10 or later on Linux. The agent can still read all files and use the network.
 - **The VM** (`maf vm create`) runs the whole team in a Lima VM that sees only the project folder.
   Use it if the agents must not read your files.
+- **steward** runs a fixed list of host operations for the project manager and the architect: a
+  worker restart or retire, a worktree or goal sync, and `maf update`. A worker start, a model
+  change, and `bundle install` wait for you: run `maf op list`, then `maf op approve ID` or
+  `maf op deny ID`. An agent asks with `coord op request OPERATION [ARGUMENT...]`.
+  `maf start` starts `steward`. Check it with
+  `.maf/bin/steward status`; its log is `.maf/coordination/steward.log`. See
+  [Host operations](docs/sandbox.md#host-operations-steward).
 
 ## Give the team work
 
@@ -1314,6 +1321,15 @@ A `CLAUDE.md` that an older maf moved into `AGENTS.md` stays in `AGENTS.md`.
 > **Warning:** another branch can still track the flow files. A checkout of that
 > branch and a merge of the untrack commit into it delete the files from the disk.
 > `maf restore` puts the config back (see [Back up the flow config](#back-up-the-flow-config)).
+
+Commit and push the untrack commit. Then maf moves the worker branches and the goal branches:
+
+- `maf start` fast-forwards a worker branch that has no own commits. If the only changes
+  in the worktree are in flow files that the base branch no longer tracks, maf discards
+  them first. The worktree setup then copies the runtime files back.
+- `maf update` runs `coord goal migrate`. It merges the base branch into each open goal
+  branch that still tracks the flow files. If a merge conflicts, maf stops the merge and
+  names the goal. An agent cannot do this merge: the sandbox protects the flow files.
 
 ## Back up the flow config
 

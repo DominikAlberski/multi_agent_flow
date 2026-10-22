@@ -25,6 +25,7 @@ begin
   require_relative "../lib/maf/shared/git_exclude"
   require_relative "../lib/maf/shared/git_identity"
   require_relative "../lib/maf/shared/harness"
+  require_relative "../lib/maf/shared/flow_files"
 rescue LoadError
   abort "coord: the maf shared library is missing. Run maf update."
 end
@@ -72,6 +73,7 @@ module Coord
         coord goal list                      list open goals
         coord goal show ID                   show a goal and its tasks
         coord goal sync ID                   merge the base branch into the goal branch
+        coord goal migrate                   sync each goal branch that still tracks the flow files (after maf untrack)
         coord goal done ID                   close a goal (refused while a task is open or the goal lacks the base head)
         coord goal pr ID                     push the goal branch as the GitHub bot and open or update its pull request
         coord review-watch [--once] [--interval S]
@@ -97,6 +99,10 @@ module Coord
         coord lesson ID dead_end|corrected TEXT...
                                              save a lesson of a task to the graph memory: an approach that
                                              failed (dead_end), or the right way (corrected)
+        coord op request OPERATION [ARGUMENT...]  ask steward for a host operation; the result comes to your inbox.
+                                             auto: worker-restart W, worker-retire W, worktree-sync W, goal-sync ID,
+                                             runtime-restore. The user approves: worker-start W, worker-model W MODEL,
+                                             bundle-install
         coord msg [--from A] [--task ID] [--fyi] TO TEXT...
                                              TO is a role or a worker; a worker's mail goes to its role inbox.
                                              --task also saves the text as a note on the task.
@@ -134,7 +140,7 @@ module Coord
     "land" => :cmd_land, "gc" => :cmd_gc, "reap" => :cmd_reap, "review-watch" => :cmd_review_watch,
     "show" => :cmd_show, "escalate" => :cmd_escalate,
     "status" => :cmd_status, "board" => :cmd_board, "export" => :cmd_export,
-    "who" => :cmd_who, "help" => :cmd_help
+    "who" => :cmd_who, "op" => :cmd_op, "help" => :cmd_help
   }.freeze
 
   ADD_OPTS = { "--role" => :role, "--scope" => :scope, "--ref" => :ref,
@@ -1260,8 +1266,10 @@ end
       goal
     end
 
+    def open = @tasks.pending.select { |task| task["role"] == ROLE }
+
     def list
-      goals = @tasks.pending.select { |task| task["role"] == ROLE }
+      goals = open
       return puts("no open goals") if goals.empty?
 
       goals.each { |goal| puts goal_line(goal) }
@@ -1332,7 +1340,7 @@ end
       paths = Git.changed(@dir)
       return if paths.empty?
 
-      flow = paths.all? { |path| path.start_with?(".maf/") || Worktree::RUNTIME_FILES.include?(path) }
+      flow = paths.all? { |path| Maf::Shared::FlowFiles.path?(path) || Worktree::RUNTIME_FILES.include?(path) }
       raise Error, ["uncommitted changes in #{@dir}: #{paths.first(5).join(", ")}#{" ..." if paths.size > 5}.",
                     flow ? FLOW_FILES : "Commit or stash them first."].join(" ")
     end
@@ -1496,17 +1504,21 @@ end
 
     # A missing base ref has no head to lack.
     def behind? = Git.run(@root, "rev-parse", "-q", "--verify", ref) && !Git.ancestor?(@root, ref, @branch)
+    def untracked_upstream? = Dir.exist?(@dir) && Maf::Shared::FlowFiles.tracked?(@dir) && !flow_in_ref?
+    def flow_in_ref? = !Git.out(@root, "ls-tree", "--name-only", ref, "--", ".maf").empty?
     def ref = @ref ||= Git.base_ref(@root, @base)
 
     def run
       return puts("#{@branch} already contains #{ref}") unless behind?
-      raise Error, "uncommitted changes in #{@dir}. Commit or stash them first." unless Git.clean?(@dir)
+      raise Error, "uncommitted changes in #{@dir}. Commit or stash them first." unless clean?
 
       merge
       puts "merged #{ref} into #{@branch}"
     end
 
     private
+
+    def clean? = Maf::Shared::FlowFiles.discard(@dir, ref) && Git.clean?(@dir)
 
     def merge
       return if Git.run(@dir, "merge", "-q", "--no-edit", ref)
@@ -1945,13 +1957,17 @@ end
 
     private
 
-    def checks
+    # The flow files are discarded last, only when the fast-forward can run.
+    def checks = ready_checks + [[-> { clean? }, "the worktree has uncommitted changes"]]
+
+    def ready_checks
       [[-> { head == @branch }, "#{@branch} is not checked out"],
-       [-> { Git.clean?(@dir) }, "the worktree has uncommitted changes"],
        [-> { Git.run(@dir, "fetch", "-q", "origin", @base) }, "git fetch origin #{@base} failed"],
        [-> { Git.run(@dir, "merge-base", "--is-ancestor", "HEAD", target) },
         "#{@branch} has commits that #{target} lacks"]]
     end
+
+    def clean? = Maf::Shared::FlowFiles.discard(@dir, target) && Git.clean?(@dir)
 
     def merge
       return if rev("HEAD") == rev(target)
@@ -2183,6 +2199,7 @@ end
     def shift = @argv.shift
     def first = @argv.first
     def empty? = @argv.empty?
+    def rest = @argv.shift(@argv.size)
     def join = @argv.join(" ")
 
     # Splits argv at the first literal "--" and returns the words after it,
@@ -2669,11 +2686,11 @@ end
   # Goal commands create, sync, land, and close goals.
   module GoalCommands
     GOAL_COMMANDS = { "add" => :goal_add, "list" => :goal_list, "show" => :goal_show, "done" => :goal_done,
-                      "sync" => :goal_sync, "pr" => :goal_pr }.freeze
+                      "sync" => :goal_sync, "migrate" => :goal_migrate, "pr" => :goal_pr }.freeze
 
     def cmd_goal
       sub = @args.shift
-      abort "usage: coord goal add|list|show|sync|pr|done" unless GOAL_COMMANDS.key?(sub)
+      abort "usage: coord goal add|list|show|sync|migrate|pr|done" unless GOAL_COMMANDS.key?(sub)
 
       send(GOAL_COMMANDS[sub])
     end
@@ -2711,6 +2728,20 @@ end
       goal = goals.find!(@args.require_arg("goal sync", "ID"))
       goal_sync_for(goal).run
       event_log.append("goal-sync", @worker, goal["description"])
+    end
+
+    def goal_migrate = goals.open.each { |goal| migrate_goal(goal) }
+
+    def migrate_goal(goal)
+      sync = goal_sync_for(goal)
+      sync.untracked_upstream? && run_migration(sync, goal)
+    end
+
+    def run_migration(sync, goal)
+      sync.run
+      event_log.append("goal-sync", @worker, goal["description"])
+    rescue Error => e
+      warn "coord: #{e.message}"
     end
 
     def goal_sync_for(goal) = GoalSync.new(main_root, goal["uuid"], Git.base_branch(main_root, manifest))
@@ -2890,6 +2921,26 @@ end
     end
   end
 
+  # OpCommands writes a request for steward. steward validates and runs it on the host.
+  module OpCommands
+    OP_USAGE = "usage: coord op request OPERATION [ARGUMENT...]"
+
+    def cmd_op
+      abort OP_USAGE unless @args.shift == "request" && (op = @args.shift)
+
+      id = "#{Time.now.utc.strftime("%Y%m%dT%H%M%SZ")}-#{format("%06x", rand(0xffffff))}"
+      write_op(id, "id" => id, "op" => op, "args" => @args.rest, "role" => @role, "worker" => @worker)
+      puts "op #{id} requested. steward sends the result to the #{@role} inbox."
+    end
+
+    def write_op(id, request)
+      dir = File.join(paths.coord_dir, "ops", "requests")
+      FileUtils.mkdir_p(dir)
+      File.write(File.join(dir, "#{id}.json"), JSON.generate(request.merge("at" => Time.now.utc.iso8601)))
+      event_log.append("op-request", @worker, [request["op"], *request["args"]].join(" "))
+    end
+  end
+
   # Upkeep commands handle locks, the event log, worktrees, and cleanup.
   module UpkeepCommands
     def cmd_lock
@@ -3029,6 +3080,7 @@ end
     include GoalCommands
     include ReviewCommands
     include UpkeepCommands
+    include OpCommands
     include CommandHelpers
     include Wiring
 

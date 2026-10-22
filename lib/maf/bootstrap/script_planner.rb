@@ -46,6 +46,10 @@ module Maf
         script("vault", VAULT_SIGNATURE)
       end
 
+      def steward
+        script("steward", STEWARD_SIGNATURE)
+      end
+
       # env.sh puts .maf/bin on PATH. A worker runs `source .maf/env.sh`.
       def env
         script("env.sh", ENV_SIGNATURE, @project.path(MAF_DIR, "env.sh"))

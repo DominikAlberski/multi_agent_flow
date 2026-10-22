@@ -149,6 +149,18 @@ module Maf
          A goal pull request uses a merge commit, never a squash.
     TEXT
 
+    HOST_OPS_RULE = <<~TEXT.strip
+      - The sandbox blocks some repairs. Request them from steward: `coord op request <operation> [<argument>]`.
+        `worker-restart <worker>`, `worker-retire <worker>`: a worker that is stuck or not seen.
+        `worktree-sync <worker>`: a worker branch behind the base branch, or flow files that block it.
+        `goal-sync <goal-short-id>`: `coord goal sync` fails with "Operation not permitted".
+        `runtime-restore`: the files of `.maf/` are missing in a worktree.
+        These wait for the user: `worker-start <worker>`, `worker-model <worker> <model>`,
+        `bundle-install` (gems are missing after a Gemfile.lock change).
+        steward sends the result to your inbox. Tell the user only if steward refuses or the operation fails.
+        If an operation waits, tell the user the `maf op approve <id>` command once. Do not request it again.
+    TEXT
+
     ARCHITECT_RULES = <<~TEXT.strip
       - Never edit files directly. Dispatch work.
       - Change a goal branch only with `coord land` and `coord goal sync`. Never run `git merge` or `git commit` on it.
@@ -164,6 +176,7 @@ module Maf
       - Before you revise an artifact that a reviewer read, copy it to `<name>.r<round>.md`. Name both files
         in the review task. The reviewer reads `diff -u` of the two files and checks the open findings only.
       #{GRAPH_RULE}
+      #{HOST_OPS_RULE}
     TEXT
 
     # The architect takes goals from the project manager when that role exists,
@@ -259,6 +272,7 @@ module Maf
       - Do not read the project docs in full. Each file that you read stays in your context for the whole session.
         Ask the architect, or start one subagent that returns a summary of at most 300 words.
       - If no report has arrived yet, tell the user and check again with `coord inbox project-manager`.
+      #{HOST_OPS_RULE}
       #{STE_RULE}
       #{SUBAGENT_RULE}
     LOOP

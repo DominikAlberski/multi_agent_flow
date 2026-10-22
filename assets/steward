@@ -1,0 +1,398 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# steward - run the host operations that the leads request.
+#
+# Usage: steward [start|stop|status|daemon]
+#   steward          # start the daemon; no-op if it already runs
+#   steward stop
+#   steward status
+#
+# An agent runs `coord op request OPERATION [ARGUMENT]`. coord writes the
+# request to .maf/coordination/ops/requests/. The daemon runs only the
+# operations in Steward::Ops::TABLE, outside the sandbox, and sends the
+# result to the inbox of the role that asked.
+require "json"
+require "fileutils"
+require "rbconfig"
+require "time"
+begin
+  require_relative "../lib/maf/shared/project"
+  require_relative "../lib/maf/shared/processes"
+  require_relative "../lib/maf/shared/sandbox"
+rescue LoadError
+  abort "steward: the maf shared library is missing. Run maf update."
+end
+
+# Steward runs the operations of Steward::Ops::TABLE for the leads.
+module Steward
+  COORD_DIR = File.join(".maf", "coordination")
+  OPS_DIR = File.join(COORD_DIR, "ops")
+  PID_FILE = File.join(COORD_DIR, "steward.pid")
+  LOG_FILE = File.join(COORD_DIR, "steward.log")
+  POLL = 3
+
+  COMMANDS = { "stop" => :stop, "status" => :status, "daemon" => :loop_forever }.freeze
+
+  def self.run(argv)
+    Dir.chdir(Maf::Shared::Project.root)
+    return Approvals.run(argv) if Approvals::COMMANDS.include?(argv.first)
+
+    Daemon.public_send(COMMANDS.fetch(argv.first, :start))
+  end
+
+  def self.coord = [RbConfig.ruby, File.join(".maf", "bin", "coord")]
+
+  # Daemon starts, stops, and runs the poll loop. It exits when the pid file is gone.
+  module Daemon
+    NESTED = "steward: this process runs in the sandbox. Start steward from a terminal."
+    LOG = { out: LOG_FILE, err: LOG_FILE, pgroup: true }.freeze
+
+    def self.start
+      abort NESTED if inside_sandbox?
+      return puts("steward: already running (pid #{Pid.read})") if Pid.running?
+
+      spawn_daemon
+    end
+
+    def self.inside_sandbox? = Maf::Shared::Sandbox::Seatbelt.inside? || ENV["MAF_BWRAP"] == "1"
+
+    def self.spawn_daemon
+      FileUtils.mkdir_p(COORD_DIR)
+      pid = Process.spawn(RbConfig.ruby, File.expand_path(__FILE__), "daemon", **LOG)
+      Process.detach(pid) && Pid.write(pid)
+      puts "steward: started (pid #{pid}), log at #{LOG_FILE}"
+    end
+
+    def self.stop
+      return puts("steward: not running") unless Pid.running?
+
+      Process.kill("TERM", Pid.read)
+      Pid.clear
+      puts "steward: stopped"
+    end
+
+    def self.status = puts(Pid.running? ? "steward: running (pid #{Pid.read})" : "steward: not running")
+
+    def self.loop_forever
+      Pid.write(Process.pid)
+      Signal.trap("TERM") { exit }
+      tick while File.exist?(PID_FILE)
+    end
+
+    def self.tick
+      Queue.new(OPS_DIR).each_request { |request| Handler.new(request).run }
+      sleep POLL
+    end
+  end
+
+  # Pid reads and writes the pid file. A non-positive pid is not a process.
+  module Pid
+    def self.running? = read.positive? && Maf::Shared::Processes.alive?(read)
+    def self.read = File.exist?(PID_FILE) ? File.read(PID_FILE).to_i : 0
+    def self.write(pid) = File.write(PID_FILE, pid)
+    def self.clear = FileUtils.rm_f(PID_FILE)
+  end
+
+  # Queue moves each request file to done/ before the handler runs it, so a
+  # restart of the daemon never runs a request twice.
+  class Queue
+    def initialize(dir)
+      @dir = dir
+    end
+
+    def each_request
+      Dir.glob(File.join(@dir, "requests", "*.json")).each do |path|
+        request = take(path)
+        yield request if request
+      end
+    end
+
+    private
+
+    def take(path)
+      done = done_path(path)
+      File.rename(path, done)
+      JSON.parse(File.read(done)).merge("path" => done)
+    rescue JSON::ParserError, SystemCallError
+      nil
+    end
+
+    def done_path(path)
+      File.join(@dir, "done", File.basename(path)).tap { |done| FileUtils.mkdir_p(File.dirname(done)) }
+    end
+  end
+
+  # Ops holds the fixed list of operations. Each one maps validated
+  # arguments to an argument list. No request text reaches a shell.
+  module Ops
+    TABLE = {
+      "worker-restart" => { args: %i[worker], level: "auto", argv: ->(w) { ["maf", "worker", "restart", w["id"]] } },
+      "worker-retire" => { args: %i[worker], level: "auto", argv: ->(w) { ["maf", "retire", w["id"]] } },
+      "worktree-sync" => { args: %i[worker], level: "auto",
+                           argv: ->(w) { [*Steward.coord, "worktree", w["role"], w["worker_id"]] } },
+      "goal-sync" => { args: %i[goal], level: "auto", argv: ->(g) { [*Steward.coord, "goal", "sync", g] } },
+      "runtime-restore" => { args: [], level: "auto", argv: -> { %w[maf update] } },
+      "worker-start" => { args: %i[worker], level: "approve", argv: ->(w) { ["maf", "worker", "start", w["id"]] } },
+      "worker-model" => { args: %i[worker model], level: "approve", argv: ->(w, m) { Ops.replace(w, m) } },
+      "bundle-install" => { args: [], level: "approve",
+                            argv: -> { Validate.lockfile && [{ "BUNDLE_FROZEN" => "true" }, "bundle", "install"] } }
+    }.freeze
+
+    def self.spec(name) = TABLE.fetch(name) { raise Refused, "unknown operation #{name}. Known: #{known}" }
+    def self.known = TABLE.keys.join(" ")
+    def self.level(name) = Levels.read.fetch(name, spec(name)[:level])
+
+    def self.argv(name, args)
+      kinds = spec(name)[:args]
+      raise Refused, "#{name} takes #{kinds.size} argument(s): #{kinds.join(" ")}" unless args.size == kinds.size
+
+      spec(name)[:argv].call(*kinds.zip(args).map { |kind, arg| Validate.public_send(kind, arg) })
+    end
+
+    def self.replace(worker, model)
+      id = "#{worker["role"]}_#{worker["worker_id"]}"
+      ["maf", "prepare", worker["harness"], id, "--model", model, "--replace", id,
+       worker["dispatch"] ? "--dispatch" : "--interactive"]
+    end
+  end
+
+  # Levels reads the key ops of .maf/sandbox.json. The sandbox protects that file.
+  module Levels
+    VALUES = %w[auto approve off].freeze
+
+    def self.read
+      data = JSON.parse(File.read(File.join(".maf", "sandbox.json"))).fetch("ops", {})
+      data.is_a?(Hash) ? data.select { |_, level| VALUES.include?(level) } : {}
+    rescue JSON::ParserError, SystemCallError, TypeError, NoMethodError
+      {}
+    end
+  end
+
+  class Refused < StandardError; end
+
+  # Validate checks each argument against the project state, not against the request.
+  module Validate
+    WORKTREES = File.join(".maf", "worktrees")
+
+    def self.model(arg)
+      return arg if arg.to_s.match?(%r{\A[A-Za-z0-9][A-Za-z0-9._:/@-]{0,99}\z})
+
+      raise Refused, "a model is letters, digits, and . _ : / @ -"
+    end
+
+    def self.lockfile = File.exist?("Gemfile.lock") || raise(Refused, "the project has no Gemfile.lock")
+
+    def self.worker(arg)
+      entry = workers.fetch(arg.to_s) { raise Refused, "no worker #{arg}" }
+      raise Refused, "worker #{arg} is outside #{WORKTREES}" unless inside_worktrees?(entry["dir"].to_s)
+
+      entry.merge("id" => arg.to_s)
+    end
+
+    def self.goal(arg)
+      raise Refused, "a goal id is 8 hex characters" unless arg.to_s.match?(/\A\h{8}\z/)
+      raise Refused, "no goal branch goal/#{arg}" unless system("git", "rev-parse", "-q", "--verify",
+                                                                "refs/heads/goal/#{arg}", out: File::NULL)
+
+      arg
+    end
+
+    def self.workers
+      JSON.parse(File.read(File.join(COORD_DIR, "workers.json")))
+    rescue JSON::ParserError, SystemCallError
+      {}
+    end
+
+    def self.inside_worktrees?(dir)
+      root = File.realpath(WORKTREES)
+      File.realpath(dir).start_with?("#{root}/")
+    rescue SystemCallError
+      false
+    end
+  end
+
+  # Limit allows each operation 3 runs per hour for one argument. A loop of
+  # restarts then stops, and the project manager hears about it.
+  class Limit
+    MAX = 3
+    WINDOW = 3600
+
+    def initialize(path) = @path = path
+
+    def allow?(key) = recent.count(key) < MAX
+    def record(key) = File.open(@path, "a") { |file| file.puts(JSON.generate("at" => Time.now.to_i, "key" => key)) }
+
+    private
+
+    def recent
+      return [] unless File.exist?(@path)
+
+      File.readlines(@path).filter_map { |line| entry(line) }
+    end
+
+    def entry(line)
+      data = JSON.parse(line)
+      data["key"] if Time.now.to_i - data["at"].to_i < WINDOW
+    rescue JSON::ParserError
+      nil
+    end
+  end
+
+  # Handler runs one request and reports the result to the role that asked.
+  class Handler
+    TIMEOUT = 2000
+
+    def initialize(request, runner: Runner, limit: Limit.new(File.join(OPS_DIR, "history.jsonl")), approved: false)
+      @request = request
+      @runner = runner
+      @limit = limit
+      @approved = approved
+    end
+
+    def run
+      route(Ops.argv(name, args), Ops.level(name))
+    rescue Refused => e
+      report(false, "refused: #{e.message}")
+    end
+
+    def route(argv, level)
+      raise Refused, "#{name} is off in .maf/sandbox.json" if level == "off"
+      return park if level == "approve" && !@approved
+
+      execute(argv)
+    end
+
+    def execute(argv)
+      return over_limit unless @limit.allow?(key)
+
+      @limit.record(key)
+      report(*@runner.call(argv, TIMEOUT))
+    end
+
+    private
+
+    def name = @request["op"].to_s
+    def args = Array(@request["args"]).map(&:to_s)
+    def key = [name, *args].join(" ")
+
+    def park
+      File.rename(@request["path"], Approvals.pending_path(@request["id"]))
+      text = "op #{@request["id"]} #{key}: waits for the user. The user runs: maf op approve #{@request["id"]}"
+      Reply.event(text)
+      [@request["role"].to_s, "project-manager"].uniq.each { |role| Reply.deliver(role, text) }
+    end
+
+    def over_limit
+      report(false, "refused: #{key} ran #{Limit::MAX} times in the last hour")
+      Reply.deliver("project-manager", "ESCALATION from steward: #{key} ran #{Limit::MAX} times in an hour. " \
+                                       "Check the cause before a new request.")
+    end
+
+    def report(success, output)
+      text = "op #{@request["id"]} #{key}: #{success ? "done" : "failed"}. #{output.to_s.lines.last(5).join.strip}"
+      File.write(@request["path"], JSON.generate(@request.merge("ok" => success, "output" => output.to_s)))
+      Reply.event(text)
+      Reply.deliver(@request["role"].to_s, text)
+    end
+  end
+
+  # Approvals lists, approves, and denies the waiting requests. The user runs
+  # them through maf op, outside the sandbox.
+  module Approvals
+    COMMANDS = %w[list approve deny].freeze
+    ID = /\A\d{8}T\d{6}Z-\h{6}\z/
+    REFUSED = "steward: only the user approves, from a terminal outside the sandbox."
+
+    def self.run(argv)
+      abort REFUSED if Daemon.inside_sandbox? || !ENV["COORD_ROLE"].to_s.empty?
+      argv.first == "list" ? list : public_send(argv.first, argv[1].to_s)
+    rescue Refused => e
+      abort "steward: #{e.message}"
+    end
+
+    def self.list
+      files = Dir.glob(File.join(OPS_DIR, "pending", "*.json"))
+      puts "No request waits." if files.empty?
+      files.each { |path| puts line(JSON.parse(File.read(path))) }
+    end
+
+    def self.line(req) = [req["id"], [req["op"], *req["args"]].join(" "), "from #{req["worker"]}"].join("  ")
+
+    def self.approve(id)
+      done = File.join(OPS_DIR, "done", "#{id}.json")
+      File.rename(waiting(id), done)
+      Handler.new(JSON.parse(File.read(done)).merge("path" => done), approved: true).run
+      puts File.read(done)
+    end
+
+    def self.deny(id)
+      request = JSON.parse(File.read(waiting(id)))
+      File.delete(waiting(id))
+      notify(request, "op #{id} #{[request["op"], *request["args"]].join(" ")}: denied by the user.")
+    end
+
+    def self.notify(request, text)
+      Reply.event(text)
+      Reply.deliver(request["role"].to_s, text)
+      puts text
+    end
+
+    def self.waiting(id) = pending_path(id).tap { |path| File.exist?(path) || raise(Refused, "no request #{id}") }
+
+    def self.pending_path(id)
+      raise Refused, "a request id looks like 20261021T120000Z-a1b2c3" unless id.to_s.match?(ID)
+
+      File.join(OPS_DIR, "pending", "#{id}.json").tap { |path| FileUtils.mkdir_p(File.dirname(path)) }
+    end
+  end
+
+  # Runner runs an argument list without a shell and stops it at the timeout.
+  module Runner
+    def self.call(argv, timeout)
+      reader, writer = IO.pipe
+      pid = start(argv, writer)
+      writer.close
+      pid ? collect(pid, reader, timeout) : [false, "cannot start #{argv.first}"]
+    end
+
+    def self.start(argv, writer)
+      Process.spawn(*argv, out: writer, err: writer, pgroup: true)
+    rescue SystemCallError
+      nil
+    end
+
+    def self.collect(pid, reader, timeout)
+      output = Thread.new { reader.read }
+      [succeeded?(pid, timeout), output.value]
+    end
+
+    def self.succeeded?(pid, timeout)
+      deadline = Time.now + timeout
+      sleep 0.2 until (status = Process.waitpid2(pid, Process::WNOHANG)&.last) || Time.now > deadline
+      kill(pid) unless status
+      status&.success? || false
+    end
+
+    def self.kill(pid)
+      Process.kill("KILL", -pid)
+      Process.wait(pid)
+    end
+  end
+
+  # Reply writes the event log line and the inbox message.
+  module Reply
+    def self.event(text)
+      line = [Time.now.utc.iso8601, "op", "steward", text.tr("\t\n", "  ")].join("\t")
+      File.open(File.join(COORD_DIR, "events.log"), "a") { |file| file.puts(line) }
+    end
+
+    def self.deliver(role, text)
+      return if role.empty?
+
+      system(*Steward.coord, "msg", "--from", "steward", role, text, out: File::NULL, err: File::NULL)
+    end
+  end
+end
+
+Steward.run(ARGV) if __FILE__ == $PROGRAM_NAME
