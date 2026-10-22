@@ -17,6 +17,8 @@ module Maf
     module Sandbox
       BACKENDS = { "seatbelt" => Seatbelt, "bwrap" => Bwrap }.freeze
       MODES = ["off", "auto", *BACKENDS.keys].freeze
+      # dispatch: only the runs of a dispatcher and the analyst. all: also the interactive sessions.
+      SCOPES = %w[dispatch all].freeze
       POLICY = File.join(".maf", "sandbox.json")
       NESTED = "maf: this process runs in the macOS sandbox, and macOS cannot start a second sandbox in it. " \
                "Start the worker from your terminal: cd <worktree> && maf start"
@@ -38,6 +40,18 @@ module Maf
       end
 
       def self.native = RUBY_PLATFORM.include?("darwin") ? "seatbelt" : "bwrap"
+
+      def self.scope(policy = self.policy)
+        scope = policy["scope"] || "dispatch"
+        abort "maf: unknown sandbox scope '#{scope}' (use #{SCOPES.join(", ")})" unless SCOPES.include?(scope)
+        scope
+      end
+
+      # An interactive session runs in the sandbox only with scope "all".
+      def self.interactive_mode
+        policy = self.policy
+        scope(policy) == "all" ? mode(policy) : "off"
+      end
 
       def self.wrap(cmd, harness, coord_dir: ENV.fetch("COORD_DIR", nil))
         policy = self.policy

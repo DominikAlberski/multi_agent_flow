@@ -16,7 +16,10 @@ module Maf
                   '(regex #"^/dev/tty") (regex #"^/dev/fd/") (regex #"^/dev/ptmx")'
         DNS = '(path-literal "/private/var/run/mDNSResponder")'
         TMP_PREFIX = "maf-sandbox-"
+        # The map database of LaunchServices only reads: it turns a type name into a type.
+        # Without it, pbcopy writes the text with a type that no app reads.
         SERVICES = "(deny mach-lookup (global-name-regex #\"^com\\.apple\\.(coreservices|lsd)\\.\"))\n" \
+                   "(allow mach-lookup (global-name \"com.apple.lsd.mapdb\"))\n" \
                    "(deny appleevent-send)\n"
         LAUNCH_SERVICES = "com.apple.coreservices.launchservicesd"
 

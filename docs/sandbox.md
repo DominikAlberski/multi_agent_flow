@@ -130,6 +130,7 @@ The policy is in `.maf/sandbox.json`:
 | Key | Value | Default |
 |---|---|---|
 | `mode` | `off`, `auto`, `seatbelt`, or `bwrap` | `off` |
+| `scope` | `dispatch`: only the dispatched runs and the analyst. `all`: also the interactive sessions. See [Interactive sessions](#interactive-sessions). | `dispatch` |
 | `write` | more folders or files that the agent can change. `~` is your home folder. | `[]` |
 | `launch_services` | macOS apps that can use LaunchServices in the sandbox. See [Apps (macOS)](#apps-macos). | `[]` |
 
@@ -154,13 +155,13 @@ Rules for the policy file:
 
 ```sh
 MAF_SANDBOX=auto maf start codex backend-developer --dispatch
-MAF_SANDBOX=off  maf start claude architect
+MAF_SANDBOX=off  maf start claude reviewer --dispatch
 ```
 
 ### Check the sandbox
 
 - A dispatcher writes `sandbox: <mode>, writes to <paths>` in its first log lines.
-- An interactive `maf start` writes `maf: sandbox: <mode>, writes to <paths>` before the harness starts.
+- With `"scope": "all"`, an interactive `maf start` writes `maf: sandbox: <mode>, writes to <paths>` before the harness starts.
 - If the log shows `sandbox: off`, or `maf start` writes no sandbox line, the sandbox is off.
 
 ## 5. What the agent can do in the sandbox
@@ -280,6 +281,9 @@ job from the sandbox. Thus these tools do not work in the sandbox:
   so log in to the harness on the host.
 - `osascript` that sends an Apple Event to an app
 
+The sandbox allows `com.apple.lsd.mapdb`. That service only reads the type names of LaunchServices.
+Without it, `pbcopy` writes the text with a type that no app reads, and a copy does not paste.
+
 Some apps register with LaunchServices when they start, or they abort. Headless
 Chrome does this, for example in Rails system tests. macOS then shows the
 "quit unexpectedly" dialog for each crash. To let an app start, add it to
@@ -314,9 +318,28 @@ escalates once for each app to the project manager.
 maf start claude architect
 ```
 
-maf starts the harness in the sandbox. The harness works as before: you see its screen, and you type.
+By default (`"scope": "dispatch"`), an interactive session runs on the host, also when the
+sandbox is on. You attend the session, and the harness asks you before it runs a command or
+writes a file. Only a dispatched run skips these approvals.
 
-The harness gets its own terminal. maf copies the input and the output between that
+Set `"scope": "all"` to start interactive sessions in the sandbox too:
+
+```json
+{ "mode": "auto", "scope": "all" }
+```
+
+| | `dispatch` (default) | `all` |
+|---|---|---|
+| A command that you approve by mistake | runs on the host | can write only the project and the state paths |
+| A session in auto-accept or bypass mode | runs on the host | stays in the sandbox |
+| A lead edits `.maf/sandbox.json` | possible, after your approval | refused: the file is protected |
+| The project manager starts a dispatcher on macOS | yes | no: maf prints the commands for you |
+| `open`, `osascript`, apps that need LaunchServices | work | blocked (see [Apps (macOS)](#apps-macos)) |
+| Codex | keeps its own sandbox | starts with `--sandbox danger-full-access` |
+
+Use `all` if you often approve without reading, or if the session reads untrusted text.
+
+With `all`, the harness gets its own terminal. maf copies the input and the output between that
 terminal and your terminal. A process can push text into its terminal as if you typed it.
 Without its own terminal, an agent could push a command into the input of your shell.
 Your shell would run the command outside the sandbox after the harness stops.
@@ -349,7 +372,8 @@ harness of the command, for example `~/.claude` for `claude`.
 ### Workers that a lead starts
 
 The project manager can start workers with `maf prepare ... --dispatch`.
-Such a worker starts inside the sandbox of the lead:
+A lead in an interactive session with `"scope": "dispatch"` runs on the host, so its dispatcher
+starts as from your terminal. A worker that a lead in the sandbox starts starts inside the sandbox of the lead:
 
 | Platform | What happens |
 |---|---|
@@ -419,7 +443,7 @@ Some repairs need the host: a restart of a worker, a merge that deletes protecte
 | Harness | Folders of the harness | Notes |
 |---|---|---|
 | claude | `~/.claude` (or `CLAUDE_CONFIG_DIR`) and `~/.claude.json` | Turn off the sandbox of Claude Code itself for the project. A second sandbox can fail. |
-| codex | `~/.codex` (or `CODEX_HOME`) | An interactive session starts with `--sandbox danger-full-access`. The maf sandbox replaces the Codex sandbox. The Codex sandbox blocks the network, but the maf sandbox does not. Codex saves the trust of the project hooks in `config.toml`, which is protected. So trust the hooks once in a session on the host, in the project root. A worktree uses the hooks and the trust of the main checkout. |
+| codex | `~/.codex` (or `CODEX_HOME`) | A codex command in the maf sandbox without `--dangerously-bypass-approvals-and-sandbox` (for example the analyst command) starts with `--sandbox danger-full-access`. The maf sandbox replaces the Codex sandbox. An interactive session starts with `--sandbox danger-full-access` only with `"scope": "all"`. Otherwise it keeps the Codex sandbox. The Codex sandbox blocks the network, but the maf sandbox does not. Codex saves the trust of the project hooks in `config.toml`, which is protected. So trust the hooks once in a session on the host, in the project root. A worktree uses the hooks and the trust of the main checkout. |
 | opencode | `~/.local/share/opencode`, `~/.local/state/opencode`, `~/.config/opencode` | |
 | cursor | `~/.cursor` and `~/.config/cursor` | |
 | hermes | `~/.hermes` | |
@@ -685,6 +709,8 @@ The project, the board, and the worktrees are on the host, so they stay.
 | `maf: sandbox mode bwrap needs bubblewrap 0.10 or later.` | bubblewrap is missing or too old | install bubblewrap 0.10 or later |
 | `maf: sandbox mode seatbelt needs sandbox-exec (macOS only).` | `seatbelt` on Linux | use `auto` or `bwrap` |
 | `maf: unknown sandbox mode 'X'` | a wrong `mode` or `MAF_SANDBOX` | use `off`, `auto`, `seatbelt`, or `bwrap` |
+| `maf: unknown sandbox scope 'X'` | a wrong `scope` | use `dispatch` or `all` |
+| A copy in an old sandboxed session does not paste | `pbcopy` could not reach `com.apple.lsd.mapdb` | run `maf update`, then start the session again |
 | The agent cannot change `.maf/sandbox.json`, `.git/hooks`, `.maf/bin`, or the settings of its harness | these files are protected | change them on the host |
 | `open` or `osascript` fails in the sandbox (macOS) | the sandbox blocks LaunchServices and Apple Events | run the command on the host |
 | An app aborts and macOS shows "quit unexpectedly" many times (macOS) | the app needs LaunchServices | add the app to `launch_services`. For Chrome, also use `--no-sandbox` |

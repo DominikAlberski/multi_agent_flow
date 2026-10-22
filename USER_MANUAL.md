@@ -325,8 +325,8 @@ Then the project manager adds workers itself, for example
 Without a budget, `maf prepare` refuses when an agent runs it. The project manager
 then gives you the command.
 
-In the macOS sandbox, the project manager cannot start a dispatcher: macOS cannot
-start a sandbox inside a sandbox. `maf prepare --dispatch` then prepares the worker
+A project manager in the macOS sandbox (a dispatched one, or an interactive one with
+`"scope": "all"`) cannot start a dispatcher: macOS cannot start a sandbox inside a sandbox. `maf prepare --dispatch` then prepares the worker
 and prints `cd <worktree>` and `maf start`. Run them in a terminal.
 `maf prepare` dispatches the architect by default: the architect never talks to you,
 and a dispatched session stays small. Add `--interactive` for an architect in a terminal.
@@ -736,7 +736,8 @@ Set `--cache-window` to your provider's cache time minus a margin. For a
 **[docs/sandbox.md](docs/sandbox.md)** is the full manual. In short:
 
 - **Sandbox mode** limits where an agent can write: the project, the board, and the folders of the harnesses.
-  Turn it on with `{ "mode": "auto" }` in `.maf/sandbox.json`. It uses `sandbox-exec` on macOS and
+  Turn it on with `{ "mode": "auto" }` in `.maf/sandbox.json`. It covers the dispatched runs;
+  add `"scope": "all"` to cover the interactive sessions too. It uses `sandbox-exec` on macOS and
   bubblewrap 0.10 or later on Linux. The agent can still read all files and use the network.
 - **The VM** (`maf vm create`) runs the whole team in a Lima VM that sees only the project folder.
   Use it if the agents must not read your files.

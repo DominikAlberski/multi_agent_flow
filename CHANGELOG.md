@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+- New: `.maf/sandbox.json` key `scope`. `dispatch` (the default) runs only the dispatched runs
+  and the analyst in the sandbox. `all` also runs the interactive sessions in it, as before.
+  An interactive session has approvals, so it now runs on the host by default. Set
+  `"scope": "all"` to keep the old behavior. A project manager in an interactive session with
+  `dispatch` can start a dispatcher on macOS.
+- Fix: in the macOS sandbox, a copy did not paste. `pbcopy` could not reach
+  `com.apple.lsd.mapdb`, so it wrote the text with a type that no app reads. The sandbox now
+  allows this service. It only reads type names; `open` and Apple Events stay blocked.
+
 ## [0.5.0] - 2026-10-22
 
 - Fix: in the macOS sandbox, headless Chrome aborted at start, and macOS showed a crash dialog

@@ -897,6 +897,45 @@ class SetupAgentTest < Minitest::Test
     with_exec_stub(->(cmd) { calls << cmd }) { Maf::SetupAgent::Launcher.launch(harness, "tester", "m", "high") }
     assert_equal harness.launch("tester", "m", "high"), calls.first
   end
+
+  # Without "scope": "all", an interactive session runs on the host also when the sandbox is on.
+  def test_the_launcher_does_not_sandbox_an_interactive_session
+    harness = Maf::Shared::Harness.fetch("claude")
+    calls = []
+    in_policy("mode" => "seatbelt") do
+      with_exec_stub(->(cmd) { calls << cmd }) { Maf::SetupAgent::Launcher.launch(harness, "tester", "m") }
+    end
+    assert_equal harness.launch("tester", "m"), calls.first
+  end
+
+  def test_the_scope_all_puts_an_interactive_session_in_the_sandbox
+    skip "sandbox-exec is macOS only" unless File.executable?("/usr/bin/sandbox-exec")
+    harness = Maf::Shared::Harness.fetch("claude")
+    relayed = []
+    with_relay_stub(->(cmd) { (relayed << cmd) && 0 }) do
+      in_policy("mode" => "seatbelt", "scope" => "all") do
+        capture_io { assert_raises(SystemExit) { Maf::SetupAgent::Launcher.launch(harness, "tester", "m") } }
+      end
+    end
+    assert_equal "/usr/bin/sandbox-exec", relayed.first&.first
+  end
+
+  def with_relay_stub(stub)
+    launcher = Maf::SetupAgent::Launcher.singleton_class
+    original = Maf::SetupAgent::Launcher.method(:relay_or_die)
+    launcher.define_method(:relay_or_die) { |cmd| stub.call(cmd) }
+    yield
+  ensure
+    launcher.define_method(:relay_or_die, original)
+  end
+
+  def in_policy(policy, &block)
+    Dir.mktmpdir do |dir|
+      FileUtils.mkdir_p(File.join(dir, ".maf"))
+      File.write(File.join(dir, ".maf", "sandbox.json"), JSON.generate(policy))
+      Dir.chdir(dir, &block)
+    end
+  end
 end
 
 # HermesHook answers the two questions the installer must not guess: is the
