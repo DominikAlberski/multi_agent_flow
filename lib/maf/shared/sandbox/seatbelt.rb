@@ -18,6 +18,7 @@ module Maf
         TMP_PREFIX = "maf-sandbox-"
         SERVICES = "(deny mach-lookup (global-name-regex #\"^com\\.apple\\.(coreservices|lsd)\\.\"))\n" \
                    "(deny appleevent-send)\n"
+        LAUNCH_SERVICES = "com.apple.coreservices.launchservicesd"
 
         def self.wrap(cmd, paths)
           tmp = private_tmp(paths.root)
@@ -52,7 +53,23 @@ module Maf
 
         def self.profile(paths, tmp)
           "(version 1)\n(allow default)\n(deny file-write*)\n#{writes(paths)}#{protects(paths)}" \
-            "#{sockets([*paths.sockets, tmp])}#{SERVICES}"
+            "#{sockets([*paths.sockets, tmp])}#{SERVICES}#{launch_services(paths.apps)}"
+        end
+
+        # A later rule wins, so this exception comes after the denial.
+        def self.launch_services(apps)
+          programs = apps.flat_map { |app| programs(app) }.uniq
+          return "" if programs.empty?
+
+          filters = programs.map { |path| "(process-path #{quote(path)})" }
+          "(allow mach-lookup (require-all (global-name \"#{LAUNCH_SERVICES}\")\n  " \
+            "(require-any #{filters.join("\n    ")})))\n"
+        end
+
+        def self.programs(app)
+          return [app] unless File.directory?(app)
+
+          Dir.glob(File.join(app, "**", "Contents", "MacOS", "*")).select { |path| File.file?(path) }
         end
 
         def self.writes(paths)

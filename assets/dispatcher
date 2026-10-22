@@ -137,6 +137,7 @@ require "fileutils"
 require "optparse"
 require "rbconfig"
 require "shellwords"
+require "time"
 begin
   require_relative "../lib/maf/shared/processes"
   require_relative "../lib/maf/shared/project"
@@ -690,8 +691,10 @@ module Dispatcher
 
   # Spawn runs a command in its own process group. Any end reason except a
   # normal exit kills the whole group (TERM, then KILL), which also stops the
-  # children of an `sh -c` template. A completion signal is success even when
-  # the process must be killed. An abort signal is failure.
+  # children of an `sh -c` template. An exception in the dispatcher (Ctrl+C,
+  # SIGHUP) also kills the group, so no agent run outlives the dispatcher.
+  # A completion signal is success even when the process must be killed.
+  # An abort signal is failure.
   module Spawn
     GRACE = 5
     TIMEOUTS = %i[timeout idle].freeze
@@ -724,6 +727,8 @@ module Dispatcher
       reason = watch.wait(waiter, stream)
       stop(pid, waiter) unless reason == :exit
       result(stream.close(watch.grace), waiter, watch, reason)
+    ensure
+      stop(pid, waiter) if waiter&.alive?
     end
 
     def self.result(output, waiter, watch, reason)
@@ -738,6 +743,71 @@ module Dispatcher
       true
     rescue Errno::ESRCH
       true
+    end
+  end
+
+  # SandboxCrashes reports, once per app, a program that a run started in the
+  # macOS sandbox and that crashed, or that the sandbox refused LaunchServices.
+  # macOS shows a crash dialog for each crash, so the user must learn the cause.
+  module SandboxCrashes
+    REPORTS = File.expand_path("~/Library/Logs/DiagnosticReports")
+    DENIAL = /Sandbox: (.+?)\(\d+\) deny\(\d+\) mach-lookup com\.apple\.coreservices\.launchservicesd/
+    PREDICATE = 'sender == "Sandbox" AND eventMessage CONTAINS "com.apple.coreservices.launchservicesd"'
+    NOTICE = "Dispatcher of %<worker>s: in the macOS sandbox, %<found>s. If the project needs the app, " \
+             "the user adds it to \"launch_services\" in .maf/sandbox.json. Then the app can start other " \
+             "apps outside the sandbox. An app with its own sandbox (Chrome) also needs it off (--no-sandbox), " \
+             "because macOS cannot start a sandbox in a sandbox. Tell the user."
+
+    @seen = []
+
+    def self.guard(harness, config, env, &block)
+      Maf::Shared::Sandbox.keeping_links(harness, coord_dir: config.coord_dir) { watch(config, env, &block) }
+    end
+
+    def self.watch(config, env, reports: REPORTS)
+      return yield unless Maf::Shared::Sandbox.mode == "seatbelt"
+
+      start = Time.now
+      yield.tap { report(config, env, crashes(start, reports), denials(start)) }
+    end
+
+    def self.report(config, env, crashes, denied)
+      crashes = crashes.except(*@seen)
+      denied -= @seen
+      return if crashes.empty? && denied.empty?
+
+      @seen.concat(crashes.keys, denied)
+      text = format(NOTICE, worker: config.worker, found: found(crashes, denied))
+      Log.line(text)
+      CoordCall.run(env, "escalate", text)
+    end
+
+    def self.found(crashes, denied)
+      parts = []
+      parts << "these apps crashed: #{crashes.map { |app, count| "#{app} (#{count}x)" }.join(", ")}" if crashes.any?
+      parts << "the sandbox refused LaunchServices to #{denied.join(", ")}" if denied.any?
+      parts.join("; ")
+    end
+
+    def self.crashes(start, reports)
+      files = Dir.glob(File.join(reports, "*.ips")).select { |path| File.mtime(path) >= start }
+      files.filter_map { |path| crashed_app(path, start) }.tally
+    end
+
+    def self.crashed_app(path, start)
+      body = JSON.parse(File.read(path).split("\n", 2).last.to_s)
+      return unless body["procPath"] && Time.parse(body["procLaunch"].to_s) >= start - 1
+
+      body["procPath"][%r{\A.*?\.app(?=/)}] || body["procPath"]
+    rescue SystemCallError, JSON::ParserError, ArgumentError
+      nil
+    end
+
+    def self.denials(start)
+      args = ["show", "--start", start.strftime("%Y-%m-%d %H:%M:%S"), "--style", "compact", "--predicate", PREDICATE]
+      IO.popen(["/usr/bin/log", *args], err: File::NULL, &:read).scan(DENIAL).flatten.uniq
+    rescue SystemCallError
+      []
     end
   end
 
@@ -893,9 +963,8 @@ module Dispatcher
       command = Project.manifest["verify"].to_s
       return true if command.empty? || LEADS.include?(config.role)
 
-      sandbox = Maf::Shared::Sandbox
       run = -> { Spawn.run(sandboxed(command, config), env: env, timeout: config.timeout) }
-      check(sandbox.keeping_links(Harness::Generic, coord_dir: config.coord_dir, &run), command)
+      check(SandboxCrashes.guard(Harness::Generic, config, env, &run), command)
     end
 
     def self.sandboxed(command, config)
@@ -1096,7 +1165,7 @@ module Dispatcher
     end
 
     def sandboxed(cmd) = Maf::Shared::Sandbox.wrap(cmd, @harness, coord_dir: @config.coord_dir)
-    def keeping_links(&block) = Maf::Shared::Sandbox.keeping_links(@harness, coord_dir: @config.coord_dir, &block)
+    def keeping_links(&block) = SandboxCrashes.guard(@harness, @config, @env, &block)
 
     def session_label(id) = id ? "#{id}, idle #{(@session.idle_seconds / 60).round}m" : "new"
 

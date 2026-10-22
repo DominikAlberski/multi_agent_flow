@@ -66,7 +66,7 @@ class DispatcherSandboxTest < Minitest::Test
 
   def test_the_sandbox_takes_the_generic_harness
     Dir.mktmpdir do |dir|
-      paths = Sandbox::Paths.new([Dispatcher::Harness::Generic], dir, nil, [])
+      paths = Sandbox::Paths.new([Dispatcher::Harness::Generic], dir, nil, {})
       assert_equal [[], []], [paths.placeholders, paths.state]
       assert_kind_of Array, paths.protected
     end

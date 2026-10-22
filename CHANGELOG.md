@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Fix: in the macOS sandbox, headless Chrome aborted at start, and macOS showed a crash dialog
+  for each try. New `.maf/sandbox.json` key `launch_services` lists the apps that can use
+  LaunchServices. After each run, the dispatcher reports apps that the run started and that
+  crashed, and LaunchServices denials, once for each app to the project manager.
+- Fix: after Ctrl+C or SIGHUP, the dispatcher stopped, but the agent run continued in its own
+  session. The dispatcher now stops the process group of the agent first.
+
 ## [0.4.0] - 2026-10-21
 
 - Fix: in the macOS sandbox, a worker that the project manager started failed on each run with

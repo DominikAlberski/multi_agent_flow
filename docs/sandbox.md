@@ -131,6 +131,7 @@ The policy is in `.maf/sandbox.json`:
 |---|---|---|
 | `mode` | `off`, `auto`, `seatbelt`, or `bwrap` | `off` |
 | `write` | more folders or files that the agent can change. `~` is your home folder. | `[]` |
+| `launch_services` | macOS apps that can use LaunchServices in the sandbox. See [Apps (macOS)](#apps-macos). | `[]` |
 
 | Mode | Meaning |
 |---|---|
@@ -279,6 +280,32 @@ job from the sandbox. Thus these tools do not work in the sandbox:
   so log in to the harness on the host.
 - `osascript` that sends an Apple Event to an app
 
+Some apps register with LaunchServices when they start, or they abort. Headless
+Chrome does this, for example in Rails system tests. macOS then shows the
+"quit unexpectedly" dialog for each crash. To let an app start, add it to
+`launch_services`:
+
+```json
+{
+  "mode": "auto",
+  "launch_services": ["/Applications/Google Chrome.app"]
+}
+```
+
+- maf allows only the service `com.apple.coreservices.launchservicesd`, and only
+  for the programs in each listed app (`Contents/MacOS/*`, also in the helper apps).
+  `open` and `osascript` stay blocked.
+- Risk: a listed app can start other apps, and these apps run outside the
+  sandbox. Add only an app that the project needs.
+- An app in a folder that the agent can change is refused, because the agent
+  could replace the app.
+- Chrome also has its own sandbox, and macOS cannot start a sandbox in a sandbox.
+  Start Chrome with `--no-sandbox` when `MAF_SEATBELT=1`.
+
+After each run, the dispatcher looks for apps that the run started and that
+crashed, and for LaunchServices denials. It writes the result to its log and
+escalates once for each app to the project manager.
+
 ## 6. Run agents in the sandbox
 
 ### Interactive sessions
@@ -393,6 +420,7 @@ Do these steps on the host.
   owns the folder or others can open it, maf stops.
 - The agent can connect to the DNS resolver (`mDNSResponder`), so host names resolve.
 - The profile denies LaunchServices (`com.apple.coreservices.*`, `com.apple.lsd.*`) and Apple Events.
+  For each program in a `launch_services` app, a later rule allows `com.apple.coreservices.launchservicesd`.
 - In a test, `launchctl submit` and `launchctl bootstrap` did not start a process outside the sandbox.
 
 ## 9. Linux details
@@ -614,6 +642,7 @@ The project, the board, and the worktrees are on the host, so they stay.
 | `maf: unknown sandbox mode 'X'` | a wrong `mode` or `MAF_SANDBOX` | use `off`, `auto`, `seatbelt`, or `bwrap` |
 | The agent cannot change `.maf/sandbox.json`, `.git/hooks`, `.maf/bin`, or the settings of its harness | these files are protected | change them on the host |
 | `open` or `osascript` fails in the sandbox (macOS) | the sandbox blocks LaunchServices and Apple Events | run the command on the host |
+| An app aborts and macOS shows "quit unexpectedly" many times (macOS) | the app needs LaunchServices | add the app to `launch_services`. For Chrome, also use `--no-sandbox` |
 | `coord: cannot write .../.maf/env.sh` in the sandbox | `coord worktree` must change the protected `.maf/env.sh` of a worktree | run `coord worktree` on the host |
 | `coord gc --yes` cannot remove a worktree in the sandbox | the worktree existed when the run started, so it is protected | run `coord gc --yes` on the host |
 | `docker`, `git push` with an SSH agent, or tmux fails in the sandbox | the sandbox blocks the sockets of host services | run the command on the host |
