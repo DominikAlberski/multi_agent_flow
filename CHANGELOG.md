@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-22
+
 - New: `.maf/sandbox.json` key `scope`. `dispatch` (the default) runs only the dispatched runs
   and the analyst in the sandbox. `all` also runs the interactive sessions in it, as before.
   An interactive session has approvals, so it now runs on the host by default. Set
