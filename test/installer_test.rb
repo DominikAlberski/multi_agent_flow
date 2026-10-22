@@ -909,6 +909,7 @@ class SetupAgentTest < Minitest::Test
   end
 
   def test_the_scope_all_puts_an_interactive_session_in_the_sandbox
+    skip "sandbox-exec is macOS only" unless File.executable?("/usr/bin/sandbox-exec")
     harness = Maf::Shared::Harness.fetch("claude")
     relayed = []
     launcher = Maf::SetupAgent::Launcher.singleton_class
