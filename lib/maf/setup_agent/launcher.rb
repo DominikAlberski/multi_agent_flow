@@ -7,10 +7,11 @@ module Maf
   module SetupAgent
     # Launcher replaces this process with the interactive session of a harness.
     # The harness file builds the command (Maf::Shared::Harnesses).
+    # The session runs in the sandbox only when .maf/sandbox.json sets "scope": "all".
     module Launcher
       def self.launch(harness, role, model, effort = nil)
         ENV.update(harness.launch_env)
-        return exec_or_die(harness.launch(role, model, effort)) if Maf::Shared::Sandbox.mode == "off"
+        return exec_or_die(harness.launch(role, model, effort)) if Maf::Shared::Sandbox.interactive_mode == "off"
 
         warn "maf: sandbox: #{Maf::Shared::Sandbox.describe(harness)}"
         exit Maf::Shared::Sandbox.keeping_links(harness) { relay_or_die(sandboxed(harness, role, model, effort)) }

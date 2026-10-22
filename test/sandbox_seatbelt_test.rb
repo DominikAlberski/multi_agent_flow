@@ -95,6 +95,16 @@ class SandboxSeatbeltTest < Minitest::Test
           "<key>CFBundleIdentifier</key><string>maf.test.probe</string>" \
           "<key>CFBundlePackageType</key><string>APPL</string></dict></plist>"
 
+  # The ruler pasteboard keeps the clipboard of the user. Without the map database of
+  # LaunchServices, pbcopy wrote the text with a type that pbpaste does not read.
+  def test_a_copy_in_the_sandbox_pastes
+    in_project("sandbox" => { "mode" => "seatbelt" }) do
+      text = "maf-#{Process.pid}"
+      assert sandboxed("printf #{text} | pbcopy -pboard ruler")
+      assert_equal text, IO.popen(%w[pbpaste -pboard ruler], &:read)
+    end
+  end
+
   def test_a_sandboxed_command_sees_the_marker
     in_project("sandbox" => { "mode" => "seatbelt" }) { assert sandboxed('test "$MAF_SEATBELT" = 1') }
   end
