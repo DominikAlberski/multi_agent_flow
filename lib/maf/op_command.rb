@@ -22,7 +22,7 @@ module Maf
       abort AGENT if Team.agent?
       abort USAGE unless %w[list approve deny].include?(@argv.first)
 
-      exec(RbConfig.ruby, File.join(@root, ".maf", "bin", "steward"), *@argv)
+      exec(RbConfig.ruby, File.join(@root, ".maf", "bin", "steward"), @argv.first, *@argv[1..])
     end
   end
 end

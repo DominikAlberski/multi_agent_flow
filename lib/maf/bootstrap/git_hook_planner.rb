@@ -59,8 +59,7 @@ module Maf
       end
 
       def git_hooks_dir
-        cmd = ["git", "-C", @project.target, "rev-parse", "--git-path", "hooks"]
-        path = IO.popen(cmd, err: File::NULL, &:read).strip
+        path = IO.popen(["git", "-C", @project.target, "rev-parse", "--git-path", "hooks"], err: File::NULL, &:read).strip
         $?.success? && !path.empty? ? File.expand_path(path, @project.target) : nil
       end
     end

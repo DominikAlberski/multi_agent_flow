@@ -40,7 +40,7 @@ module Maf
       def not_running = "maf: cannot write to the VM #{@name}. Run: maf vm start"
 
       def written?(dest, text)
-        command = [LIMACTL, "shell", "--workdir", "/", @name, "sh", "-c", WRITE, "sh", dest]
+        command = [LIMACTL, "shell", "--workdir", "/", @name, "sh", "-c", WRITE, "sh", "--", dest]
         Open3.capture2e(*command, stdin_data: text).last.success?
       end
 

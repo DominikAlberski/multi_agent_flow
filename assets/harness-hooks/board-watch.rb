@@ -120,8 +120,8 @@ module BoardWatch
 
     private
 
-    def command(pid) = File.basename(`ps -o comm= -p #{pid}`.strip)
-    def parent(pid) = `ps -o ppid= -p #{pid}`.strip.to_i
+    def command(pid) = File.basename(IO.popen(["ps", "-o", "comm=", "-p", pid.to_s], err: File::NULL, &:read).strip)
+    def parent(pid) = IO.popen(["ps", "-o", "ppid=", "-p", pid.to_s], err: File::NULL, &:read).strip.to_i
   end
 
   # Lock makes sure only one watcher runs per worker. A lock whose process
