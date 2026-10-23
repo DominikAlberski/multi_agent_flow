@@ -58,8 +58,8 @@ If the team runs without your attention, or the agents read untrusted text, use 
 
 | Level | Command | What the agent can change | Cost |
 |---|---|---|---|
-| None | the default | each file of your user | none |
-| Sandbox | `.maf/sandbox.json` | the project, the board, and the state paths of the harnesses | none: the agents run on the host |
+| None | `maf add --sandbox off` | each file of your user | none |
+| Sandbox | the default of a new install (`.maf/sandbox.json`) | the project, the board, and the state paths of the harnesses | none: the agents run on the host |
 | VM | `maf vm create` | only the VM and the project folder | about 10 minutes to create, 4 GiB of memory and up to 20 GiB of disk by default |
 | VM and sandbox | both | as the sandbox, but inside the VM | as the VM |
 
@@ -71,6 +71,20 @@ reads (see [10. Limits of the sandbox](#10-limits-of-the-sandbox)). The VM sees 
 Use both if you want a second wall inside the VM.
 
 ## 3. Quick start
+
+`maf add` turns the sandbox on at the first install: it writes
+`{ "mode": "auto", "scope": "dispatch" }` to `.maf/sandbox.json`. To choose a different
+policy, give a flag to `maf add`:
+
+```sh
+maf add claude:architect                       # default: the dispatched runs only
+maf add claude:architect --sandbox-scope all   # also the interactive sessions
+maf add claude:architect --sandbox off         # no sandbox
+```
+
+A later `maf add` keeps the file. It changes the `mode` or the `scope` only for a flag.
+A project that an older maf installed has no policy file, so the sandbox stays off.
+Turn it on with `maf add --sandbox auto`.
 
 ### macOS
 
@@ -129,7 +143,7 @@ The policy is in `.maf/sandbox.json`:
 
 | Key | Value | Default |
 |---|---|---|
-| `mode` | `off`, `auto`, `seatbelt`, or `bwrap` | `off` |
+| `mode` | `off`, `auto`, `seatbelt`, or `bwrap` | `off` if the file has no `mode`. A new install writes `auto`. |
 | `scope` | `dispatch`: only the dispatched runs and the analyst. `all`: also the interactive sessions. See [Interactive sessions](#interactive-sessions). | `dispatch` |
 | `write` | more folders or files that the agent can change. `~` is your home folder. | `[]` |
 | `launch_services` | macOS apps that can use LaunchServices in the sandbox. See [Apps (macOS)](#apps-macos). | `[]` |
@@ -143,7 +157,8 @@ The policy is in `.maf/sandbox.json`:
 
 Rules for the policy file:
 
-- Change the file on the host, in your own terminal. An agent in the sandbox cannot change it.
+- Change the file on the host, in your own terminal, or with `maf add --sandbox MODE --sandbox-scope SCOPE`.
+  An agent in the sandbox cannot change it.
 - If the file is missing, the first sandboxed run creates it as `{}`. Then an agent cannot create its own policy.
 - If the file is not a valid JSON object, maf stops with an error. A typo does not turn the sandbox off.
 - A relative path in `write` starts at the project root.

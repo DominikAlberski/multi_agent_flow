@@ -141,10 +141,33 @@ If the workflow is `panel`, propose a different model family for each of
 `reviewer`, `skeptic`, and `auditor`. Example: Claude, GPT, and Gemini.
 Different models miss different defects. The user makes the final choice.
 
+## Step 4b - Ask the user for the sandbox
+
+A dispatched agent runs without approval prompts. The sandbox limits its writes to the
+project, the board, and the state paths of its harness. See `FLOW/docs/sandbox.md`.
+
+Ask: "Which sandbox do you want? Choose one."
+
+| Choice | Flags for Step 5 | Effect |
+|---|---|---|
+| Dispatched runs only (default) | none | The dispatched runs and the analyst run in the sandbox. Interactive sessions run on the host, with approvals. |
+| Dispatched runs and interactive sessions | `--sandbox-scope all` | Each agent runs in the sandbox. |
+| Off | `--sandbox off` | No agent runs in the sandbox. |
+
+Recommend the default. If the user chooses `Off`, tell the user that a dispatched
+agent can then change each file of the user.
+
+On Linux, the sandbox needs bubblewrap 0.10 or later. Run `bwrap --version`.
+If it is missing or older, tell the user to install it, or to choose `Off`.
+On macOS, the sandbox needs nothing.
+
+`maf add` writes the choice to `.maf/sandbox.json` at the first install.
+A later `maf add` changes the file only with a `--sandbox` or `--sandbox-scope` flag.
+
 ## Step 5 - Add the agents
 
 Give one `HARNESS:ROLE` argument per role. Add one `--model ROLE=MODEL` flag
-per chosen model.
+per chosen model. Add the sandbox flags from Step 4b.
 
 Preview first. This writes nothing.
 
@@ -164,6 +187,7 @@ Then run the same command without `--check`.
 1. Sets up the coordination layer.
 2. Writes a role file for each role, in the format of its harness.
 3. Writes a manifest at `$PROJECT/.maf/config.json`.
+   At the first install, also writes the sandbox policy at `$PROJECT/.maf/sandbox.json`.
 4. Writes the graphify MCP server into `.maf/mcp/` for Claude Code and opencode.
    `maf start` passes the file to the harness. The project's `.mcp.json` and `opencode.json` stay as they are.
    For Codex and Hermes, `maf add` prints a command. Run it to add the server.
@@ -251,7 +275,7 @@ If `git ls-files .maf` lists files, an older maf version committed them. Run
 
 ## Step 7 - Report to the user
 
-Report the generated files. Then print one `maf start` command for each worker.
+Report the generated files and the sandbox line of `maf add`. Then print one `maf start` command for each worker.
 Use the number of workers from Step 3b. A worker role with N workers gets the
 names `ROLE_1` to `ROLE_N`. A role with one worker may use the bare role name.
 Then give the user these instructions.
