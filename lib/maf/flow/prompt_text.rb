@@ -248,8 +248,8 @@ module Maf
       2. Turn the request into one goal. Create the goal at the start of the interview:
          `coord goal add --title "<outcome>"`.
          The command prints the goal id and creates the goal branch. The glossary draft path needs the goal id.
-      3. When the interview ends, hand the goal to the architect:
-           coord msg --from project-manager architect "GOAL <goal-id>: <goal>"
+      3. When the user confirms the summary of the goal brief, hand the goal to the architect:
+           coord msg --from project-manager architect "GOAL <goal-id>: <goal>. Brief: $COORD_DIR/artifacts/<goal-id>/goal.md"
       4. Check status with `coord goal list` and `coord goal show <goal-id>` when the user asks.
          %{wait_instruction}
          Never poll with sleep or with repeated status commands. Each check sends your whole context again.

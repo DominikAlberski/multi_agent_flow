@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+- Changed: the project manager interviews the user until no decision stays silently assumed. It asks
+  about the what only and gives no recommended option unless the user asks for one. It keeps a goal
+  brief in `$COORD_DIR/artifacts/<goal>/goal.md` and hands the goal to the architect only after the
+  user confirms a summary of the brief. Its default effort is now `high`.
+- Changed: the architect plans the how from the goal brief and sends open what-questions to the
+  project manager. It cuts tasks as vertical slices and does wide renames as expand, migrate, contract.
+- Changed: the tester ranks three to five hypotheses before it looks for the cause of a bug, and
+  the reviewer checks the diff against the task spec and the goal brief in a separate section.
+
 ## [0.6.0] - 2026-10-22
 
 - New: `.maf/sandbox.json` key `scope`. `dispatch` (the default) runs only the dispatched runs
