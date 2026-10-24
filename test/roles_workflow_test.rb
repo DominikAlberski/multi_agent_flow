@@ -273,10 +273,26 @@ class DomainDocsPromptTest < RolesWorkflowTestCase
   def test_the_project_manager_runs_a_round_based_interview
     text = role_file("project-manager")
 
-    assert_includes text, "Interview the user in rounds"
+    assert_includes text, "Interview the user relentlessly, in rounds"
     assert_includes text, "Ask the whole frontier in one round"
-    assert_includes text, "The interview ends when the frontier is empty."
+    assert_includes text, "nothing stays silently assumed"
+    refute_includes text, "recommended answer"
     refute_includes text, "If two readings of the request lead to different work, ask the user first."
+  end
+
+  def test_the_project_manager_hands_off_a_confirmed_goal_brief
+    text = role_file("project-manager")
+
+    assert_includes text, "$COORD_DIR/artifacts/<goal>/goal.md"
+    assert_includes text, "Hand the goal to the architect only after the user confirms."
+    assert_includes text, "Brief: $COORD_DIR/artifacts/<goal-id>/goal.md"
+  end
+
+  def test_the_architect_plans_the_how_from_the_goal_brief
+    text = role_file("architect")
+
+    assert_includes text, "Read the goal brief `$COORD_DIR/artifacts/<goal>/goal.md` before you plan."
+    assert_includes text, "Do not change a decision in the brief."
   end
 
   def test_the_project_manager_writes_terms_to_the_draft_and_never_commits
