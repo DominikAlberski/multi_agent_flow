@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-24
+
 - Changed: the project manager interviews the user until no decision stays silently assumed. It asks
   about the what only and gives no recommended option unless the user asks for one. It keeps a goal
   brief in `$COORD_DIR/artifacts/<goal>/goal.md` and hands the goal to the architect only after the
