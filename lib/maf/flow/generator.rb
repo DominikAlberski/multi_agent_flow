@@ -39,8 +39,10 @@ module Maf
 
       def finish(results)
         pending = @options.check? ? false : HookInstaller.new(@options.agents, @options.project).install.any?
+        sandbox = SandboxPolicy.new(@options).tap(&:write)
         manifest.write
         Report.new(@options.project, @roles, pending).print(results)
+        sandbox.report
       end
 
       def manifest = Manifest.new(@options, @roles)

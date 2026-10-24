@@ -19,6 +19,7 @@ module Maf
 
       # A removal may leave no agents. Only a run that removes nothing needs one.
       def run
+        SandboxPolicy.validate!(@options.sandbox)
         @options.agents = Roster.new(@options.project).merge(@options.agents, @options.removed)
         abort "flow: no agents. Add one with --agent HARNESS:ROLE" if @options.agents.empty? && @options.removed.empty?
 

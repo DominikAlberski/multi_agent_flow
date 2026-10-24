@@ -10,6 +10,12 @@
   project manager. It cuts tasks as vertical slices and does wide renames as expand, migrate, contract.
 - Changed: the tester ranks three to five hypotheses before it looks for the cause of a bug, and
   the reviewer checks the diff against the task spec and the goal brief in a separate section.
+- New: a new install turns the sandbox on for the dispatched runs. At the first install,
+  `maf add` writes `{ "mode": "auto", "scope": "dispatch" }` to `.maf/sandbox.json`. New flags
+  `--sandbox off|auto|seatbelt|bwrap` and `--sandbox-scope dispatch|all` choose a different
+  policy, at the install or later. The interactive `maf add` asks for the sandbox at the first
+  install. `install.md` has a new step that asks the user. An existing install keeps its policy:
+  with no file, the sandbox stays off. Turn it on with `maf add --sandbox auto`.
 
 ## [0.6.0] - 2026-10-22
 
