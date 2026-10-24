@@ -2088,6 +2088,19 @@ class GoalPrTest < GoalTest
       assert_includes coord("inbox", "architect"), "was merged"
     end
   end
+
+  def test_review_watch_keeps_the_branch_of_a_merged_goal_with_open_tasks
+    with_origin do
+      uuid = goal_with_pr
+      coord("add", "--role", "tester", "--scope", "test/**", "--goal", uuid, "--title", "Check prices")
+      git(@root, "merge", "-q", "--no-ff", "--no-edit", "goal/#{short(uuid)}")
+      git(@root, "push", "-q", "origin", "main")
+      answer("view.json", state: "MERGED", comments: [], reviews: [])
+      coord("review-watch", "--once")
+
+      assert branch?("goal/#{short(uuid)}")
+    end
+  end
 end
 
 # WorkMemoryTest checks the graphify memory notes of coord done and coord

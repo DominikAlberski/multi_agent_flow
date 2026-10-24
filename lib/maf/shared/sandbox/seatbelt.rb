@@ -15,6 +15,7 @@ module Maf
         DEVICES = '(literal "/dev/null") (literal "/dev/zero") (literal "/dev/dtracehelper") ' \
                   '(regex #"^/dev/tty") (regex #"^/dev/fd/") (regex #"^/dev/ptmx")'
         DNS = '(path-literal "/private/var/run/mDNSResponder")'
+        POSTGRES = '(regex #"^/private/tmp/\\.s\\.PGSQL\\.[0-9]+$")'
         TMP_PREFIX = "maf-sandbox-"
         # The map database of LaunchServices only reads: it turns a type name into a type.
         # Without it, pbcopy writes the text with a type that no app reads.
@@ -98,7 +99,7 @@ module Maf
         end
 
         def self.sockets(dirs)
-          allowed = [DNS, *dirs.map { |dir| "(subpath #{quote(dir)})" }]
+          allowed = [DNS, POSTGRES, *dirs.map { |dir| "(subpath #{quote(dir)})" }]
           rules = allowed.map { |path| "(allow network-outbound (remote unix-socket #{path}))\n" }
           "(deny network-outbound (remote unix-socket))\n#{rules.join}"
         end
