@@ -306,7 +306,7 @@ module MafProject
                       "COORD_DIR" => File.join(@project, ".maf/coordination"),
                       "COORD_ROLE" => nil, "COORD_WORKER" => nil)
     git("init", "-q")
-    maf("add", "opencode:architect")
+    maf("add", "opencode:architect", "--sandbox", "off")
     git("add", "-A")
     git("commit", "-q", "--allow-empty", "-m", "install")
   end
