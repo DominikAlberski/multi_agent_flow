@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "prompt"
+require_relative "sandbox_choice"
 
 module Maf
   # Menu is the interactive mode of maf. It runs the same steps as the
@@ -28,7 +29,7 @@ module Maf
       return if roles.empty?
 
       models = show_models(harness)
-      Maf.flow(*roles.flat_map { |role| agent_args(harness, role, models) })
+      Maf.flow(*roles.flat_map { |role| agent_args(harness, role, models) }, *SandboxChoice.new(@prompt).args)
     end
 
     private

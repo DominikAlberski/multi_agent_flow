@@ -736,8 +736,9 @@ Set `--cache-window` to your provider's cache time minus a margin. For a
 **[docs/sandbox.md](docs/sandbox.md)** is the full manual. In short:
 
 - **Sandbox mode** limits where an agent can write: the project, the board, and the folders of the harnesses.
-  Turn it on with `{ "mode": "auto" }` in `.maf/sandbox.json`. It covers the dispatched runs;
-  add `"scope": "all"` to cover the interactive sessions too. It uses `sandbox-exec` on macOS and
+  A new install turns it on: `maf add` writes `{ "mode": "auto", "scope": "dispatch" }` to
+  `.maf/sandbox.json`. It covers the dispatched runs; `--sandbox-scope all` also covers the
+  interactive sessions, and `--sandbox off` turns it off. It uses `sandbox-exec` on macOS and
   bubblewrap 0.10 or later on Linux. The agent can still read all files and use the network.
 - **The VM** (`maf vm create`) runs the whole team in a Lima VM that sees only the project folder.
   Use it if the agents must not read your files.

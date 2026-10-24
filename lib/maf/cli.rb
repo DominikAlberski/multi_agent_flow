@@ -42,8 +42,8 @@ module Maf
 
   class CLI
     COMMANDS = {
-      "add" => "[HARNESS:ROLE[:MODEL] ...] [--model ROLE=MODEL] [--effort ROLE=LEVEL]  add agents and install " \
-               "the flow; without arguments it asks",
+      "add" => "[HARNESS:ROLE[:MODEL] ...] [--model ROLE=MODEL] [--effort ROLE=LEVEL] [--sandbox MODE] " \
+               "[--sandbox-scope dispatch|all]  add agents and install the flow; without arguments it asks",
       "remove" => "HARNESS:ROLE ...                        remove agents",
       "update" => "                                        regenerate the files of the current agents",
       "agents" => "                                        list the current agents",

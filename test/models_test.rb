@@ -45,9 +45,12 @@ class MenuAddTest < Minitest::Test
     object.define_singleton_method(name, &block)
   end
 
+  SANDBOX = ["--sandbox", "auto", "--sandbox-scope", "dispatch"].freeze
+
+  # A folder without .maf/config.json: the menu asks for the sandbox of a new install.
   def add(input)
     out = StringIO.new
-    Maf::Menu.new(Maf::Prompt.new(StringIO.new(input), out)).add
+    Dir.mktmpdir { |dir| Dir.chdir(dir) { Maf::Menu.new(Maf::Prompt.new(StringIO.new(input), out)).add } }
     out.string
   end
 
@@ -56,21 +59,21 @@ class MenuAddTest < Minitest::Test
 
     assert_includes out, "1) claude"
     assert_includes out, "1) gpt-a  (effort: low, high)"
-    assert_equal [["--agent", "codex:architect:gpt-b", "--agent", "codex:tester:gpt-a", "--effort", "tester=high"]],
-                 @flows
+    assert_equal [["--agent", "codex:architect:gpt-b", "--agent", "codex:tester:gpt-a", "--effort", "tester=high",
+                   *SANDBOX]], @flows
   end
 
   def test_an_unlisted_name_needs_a_confirmation
     add("2\n2\ngpt-typo\nn\ngpt-a\nultra\nn\n\n")
 
-    assert_equal [["--agent", "codex:tester:gpt-a"]], @flows
+    assert_equal [["--agent", "codex:tester:gpt-a", *SANDBOX]], @flows
   end
 
   def test_a_harness_without_a_list_takes_a_typed_name
     out = add("1\n2\nclaude-sonnet-5-5\nhigh\n")
 
     assert_includes out, "Enter = claude-opus-5-5"
-    assert_equal [["--agent", "claude:tester:claude-sonnet-5-5", "--effort", "tester=high"]], @flows
+    assert_equal [["--agent", "claude:tester:claude-sonnet-5-5", "--effort", "tester=high", *SANDBOX]], @flows
   end
 
   # Enter keeps the effort of the role. maf add applies it.
@@ -78,6 +81,12 @@ class MenuAddTest < Minitest::Test
     out = add("2\n2\n1\n\n")
 
     assert_includes out, "Enter = low"
-    assert_equal [["--agent", "codex:tester:gpt-a"]], @flows
+    assert_equal [["--agent", "codex:tester:gpt-a", *SANDBOX]], @flows
+  end
+
+  def test_the_sandbox_can_be_turned_off
+    add("2\n2\n1\n\n3\n")
+
+    assert_equal [["--agent", "codex:tester:gpt-a", "--sandbox", "off", "--sandbox-scope", "dispatch"]], @flows
   end
 end

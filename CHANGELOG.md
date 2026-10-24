@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- New: a new install turns the sandbox on for the dispatched runs. At the first install,
+  `maf add` writes `{ "mode": "auto", "scope": "dispatch" }` to `.maf/sandbox.json`. New flags
+  `--sandbox off|auto|seatbelt|bwrap` and `--sandbox-scope dispatch|all` choose a different
+  policy, at the install or later. The interactive `maf add` asks for the sandbox at the first
+  install. `install.md` has a new step that asks the user. An existing install keeps its policy:
+  with no file, the sandbox stays off. Turn it on with `maf add --sandbox auto`.
+
 ## [0.6.0] - 2026-10-22
 
 - New: `.maf/sandbox.json` key `scope`. `dispatch` (the default) runs only the dispatched runs

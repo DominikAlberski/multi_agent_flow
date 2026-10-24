@@ -180,6 +180,28 @@ class MafTest < Minitest::Test
     assert_equal %w[claude:architect claude:tester], agent_specs
   end
 
+  def sandbox_policy = JSON.parse(File.read(File.join(@dir, ".maf/sandbox.json")))
+
+  def test_menu_asks_for_the_sandbox_of_a_new_install
+    input = ["1", "1", role_number("architect"), "", "", "2", "q"].join("\n")
+
+    out, status = menu("#{input}\n")
+
+    assert_equal 0, status, out
+    assert_equal({ "mode" => "auto", "scope" => "all" }, sandbox_policy)
+  end
+
+  def test_menu_does_not_ask_for_the_sandbox_of_an_existing_install
+    maf("add", "opencode:architect", "--no-bootstrap", "--sandbox", "off")
+    input = ["1", "1", role_number("tester"), "", "", "q"].join("\n")
+
+    out, status = menu("#{input}\n")
+
+    assert_equal 0, status, out
+    refute_includes out, "Sandbox (number"
+    assert_equal "off", sandbox_policy["mode"]
+  end
+
   def test_menu_removes_an_agent_after_confirmation
     maf("add", "opencode:backend-developer", "opencode:architect", "--no-bootstrap")
 
@@ -284,7 +306,7 @@ module MafProject
                       "COORD_DIR" => File.join(@project, ".maf/coordination"),
                       "COORD_ROLE" => nil, "COORD_WORKER" => nil)
     git("init", "-q")
-    maf("add", "opencode:architect")
+    maf("add", "opencode:architect", "--sandbox", "off")
     git("add", "-A")
     git("commit", "-q", "--allow-empty", "-m", "install")
   end

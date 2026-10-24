@@ -679,6 +679,65 @@ class FlowTest < InstallerTestCase
     assert File.exist?(File.join(@dir, ".maf/coordination/harness-hooks/session-guard.rb"))
   end
 
+  def sandbox_policy = JSON.parse(File.read(File.join(@dir, ".maf/sandbox.json")))
+
+  def test_a_new_install_sandboxes_the_dispatched_runs
+    out, status = flow("--agent", "opencode:architect")
+
+    assert_equal 0, status, out
+    assert_equal({ "mode" => "auto", "scope" => "dispatch" }, sandbox_policy)
+    assert_includes out, "Sandbox: auto, scope dispatch"
+  end
+
+  def test_the_sandbox_flags_choose_the_policy_of_a_new_install
+    out, status = flow("--agent", "opencode:architect", "--sandbox", "off")
+
+    assert_equal 0, status, out
+    assert_equal({ "mode" => "off", "scope" => "dispatch" }, sandbox_policy)
+  end
+
+  def test_a_new_install_keeps_the_keys_of_an_existing_policy
+    FileUtils.mkdir_p(File.join(@dir, ".maf"))
+    File.write(File.join(@dir, ".maf/sandbox.json"), '{ "mode": "seatbelt", "write": ["~/.npm"] }')
+
+    flow("--agent", "opencode:architect")
+
+    assert_equal({ "mode" => "seatbelt", "scope" => "dispatch", "write" => ["~/.npm"] }, sandbox_policy)
+  end
+
+  def test_a_later_run_keeps_the_policy_without_a_sandbox_flag
+    flow("--agent", "opencode:architect", "--sandbox-scope", "all")
+    File.delete(File.join(@dir, ".maf/sandbox.json"))
+
+    out, status = flow("--agent", "opencode:backend-developer")
+
+    assert_equal 0, status, out
+    refute File.exist?(File.join(@dir, ".maf/sandbox.json"))
+  end
+
+  def test_a_later_sandbox_flag_changes_only_its_key
+    flow("--agent", "opencode:architect", "--sandbox-scope", "all")
+
+    out, status = flow("--sandbox", "off")
+
+    assert_equal 0, status, out
+    assert_equal({ "mode" => "off", "scope" => "all" }, sandbox_policy)
+  end
+
+  def test_an_unknown_sandbox_mode_stops_the_run
+    out, status = flow("--agent", "opencode:architect", "--sandbox", "on")
+
+    refute_equal 0, status
+    assert_includes out, "unknown sandbox mode 'on'"
+    refute File.exist?(File.join(@dir, ".maf/config.json"))
+  end
+
+  def test_check_writes_no_sandbox_policy
+    flow("--agent", "opencode:architect", "--check")
+
+    refute File.exist?(File.join(@dir, ".maf/sandbox.json"))
+  end
+
   # Keep harness settings in a separate test home.
   def flow_with_home(*args)
     env = { "VAULT_SKIP" => "1", "HOME" => File.join(@dir, "home") }

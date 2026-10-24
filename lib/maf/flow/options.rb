@@ -5,7 +5,7 @@ module Maf
     # Options parses the command line and holds the settings of one run.
     class Options
       attr_accessor :project, :agents, :role_efforts
-      attr_reader :removed, :models, :efforts, :hermes_dir, :list_roles
+      attr_reader :removed, :models, :efforts, :hermes_dir, :list_roles, :sandbox
 
       # Each flag: the OptionParser arguments, and a block that runs in the
       # Options instance with the flag value.
@@ -15,6 +15,8 @@ module Maf
         [["--remove SPEC", "HARNESS:ROLE"], ->(v) { @removed << parse_agent(v) }],
         [["--model PAIR", "ROLE=MODEL"], ->(v) { @models.store(*v.split("=", 2)) }],
         [["--effort PAIR", "ROLE=LEVEL"], ->(v) { @efforts.store(*v.split("=", 2)) }],
+        [["--sandbox MODE", "off, auto, seatbelt, or bwrap"], ->(v) { @sandbox["mode"] = v }],
+        [["--sandbox-scope SCOPE", "dispatch or all"], ->(v) { @sandbox["scope"] = v }],
         [["--hermes-dir DIR"], ->(v) { @hermes_dir = File.expand_path(v) }],
         [["--check"], ->(_) { @check = true }],
         [["--force"], ->(_) { @force = true }],
@@ -24,7 +26,7 @@ module Maf
 
       def initialize(argv)
         @argv, @agents, @removed, @models, @efforts = argv, [], [], {}, {}
-        @role_efforts = {}
+        @role_efforts, @sandbox = {}, {}
         @check = @force = @list_roles = false
         @bootstrap = true
       end
