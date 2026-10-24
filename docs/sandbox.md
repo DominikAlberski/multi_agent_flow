@@ -277,7 +277,7 @@ The service listens on a Unix socket, so the sandbox controls the sockets:
 
 | Platform | The agent can connect to |
 |---|---|
-| macOS | the sockets in the project, in the board folder, and in the private temporary folder of the project, and the DNS resolver |
+| macOS | the sockets in the project, in the board folder, and in the private temporary folder of the project, the PostgreSQL socket in `/tmp` (`/tmp/.s.PGSQL.<port>`), and the DNS resolver |
 | Linux | each socket in a path that the sandbox does not hide. `/tmp` is private, `/run/user` and `/run/dbus` are empty, and the Docker, Podman, and containerd sockets are hidden. |
 
 Thus these tools do not work in the sandbox:

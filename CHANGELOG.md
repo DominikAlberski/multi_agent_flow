@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Fixed: the macOS sandbox lets an agent connect to the PostgreSQL socket in `/tmp`
+  (`/tmp/.s.PGSQL.<port>`). Before, a Rails test that used the socket got `Operation not permitted`.
+- Fixed: when the pull request of a goal merges, coord keeps the goal branch while a task of the
+  goal is still open. Before, `coord gc` deleted it and the open task could not land.
+
 ## [0.7.0] - 2026-10-24
 
 - Changed: the project manager interviews the user until no decision stays silently assumed. It asks

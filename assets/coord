@@ -1577,6 +1577,7 @@ end
     def goal_reason(name)
       goal = @tasks.find_short(name.delete_prefix("goal/"))
       return "goal is not done" unless goal["status"] == "completed"
+      return "goal has open tasks" if @tasks.for_goal(goal["uuid"]).any?
 
       Git.ancestor?(@root, name, ref) ? nil : "not merged into #{ref}"
     end
