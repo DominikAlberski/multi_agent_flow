@@ -1221,6 +1221,20 @@ class SandboxCrashesTest < Minitest::Test
     assert_includes calls.first.last, "launch_services"
   end
 
+  def test_a_macos_service_does_not_escalate
+    assert_empty(watch(denied: ["intelligencecontextd"]) { crash("MTLCompilerService", Time.now) })
+  end
+
+  def test_a_system_program_does_not_escalate
+    assert_empty(watch(denied: ["/System/Library/CoreServices/Probe"]) { nil })
+  end
+
+  def test_an_app_next_to_a_macos_service_still_escalates
+    calls = watch(denied: ["intelligencecontextd", "chromedriver"]) { nil }
+    assert_includes calls.first.last, "refused LaunchServices to chromedriver"
+    refute_includes calls.first.last, "intelligencecontextd"
+  end
+
   def test_a_crash_of_an_older_process_is_not_from_the_run
     assert_empty(watch { crash("Mail", Time.now - 3600) })
   end

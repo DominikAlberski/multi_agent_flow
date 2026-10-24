@@ -323,7 +323,10 @@ Chrome does this, for example in Rails system tests. macOS then shows the
 
 After each run, the dispatcher looks for apps that the run started and that
 crashed, and for LaunchServices denials. It writes the result to its log and
-escalates once for each app to the project manager.
+escalates once for each app to the project manager. It does not escalate a
+macOS service: a program in `/System/`, `MTLCompilerService`, or
+`intelligencecontextd`. A project does not need these services, so the log line
+is sufficient.
 
 ## 6. Run agents in the sandbox
 
