@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-29
+
 - Changed: the dispatcher no longer escalates a crash or a LaunchServices denial of a macOS
   service (a program in `/System/`, `MTLCompilerService`, `intelligencecontextd`). It writes a log
   line only. Before, each one reached the project manager as an `ESCALATION` that needed no action.
