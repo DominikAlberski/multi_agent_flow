@@ -758,6 +758,10 @@ module Dispatcher
              "apps outside the sandbox. An app with its own sandbox (Chrome) also needs it off (--no-sandbox), " \
              "because macOS cannot start a sandbox in a sandbox. Tell the user."
 
+    SYSTEM = %w[MTLCompilerService intelligencecontextd].freeze
+    IGNORED = "Dispatcher of %<worker>s: in the macOS sandbox, these macOS services crashed or were refused " \
+              "LaunchServices: %<apps>s. maf ignores them."
+
     @seen = []
 
     def self.guard(harness, config, env, &block)
@@ -774,9 +778,21 @@ module Dispatcher
     def self.report(config, env, crashes, denied)
       crashes = crashes.except(*@seen)
       denied -= @seen
+      @seen.concat(crashes.keys, denied)
+      ignore(config, crashes.keys + denied)
+      escalate(config, env, crashes.reject { |app, _| system?(app) }, denied.reject { |app| system?(app) })
+    end
+
+    def self.system?(app) = app.start_with?("/System/") || SYSTEM.include?(File.basename(app, ".*"))
+
+    def self.ignore(config, apps)
+      ignored = apps.select { |app| system?(app) }.uniq
+      Log.line(format(IGNORED, worker: config.worker, apps: ignored.join(", "))) if ignored.any?
+    end
+
+    def self.escalate(config, env, crashes, denied)
       return if crashes.empty? && denied.empty?
 
-      @seen.concat(crashes.keys, denied)
       text = format(NOTICE, worker: config.worker, found: found(crashes, denied))
       Log.line(text)
       CoordCall.run(env, "escalate", text)

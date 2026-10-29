@@ -277,7 +277,7 @@ The service listens on a Unix socket, so the sandbox controls the sockets:
 
 | Platform | The agent can connect to |
 |---|---|
-| macOS | the sockets in the project, in the board folder, and in the private temporary folder of the project, and the DNS resolver |
+| macOS | the sockets in the project, in the board folder, and in the private temporary folder of the project, the PostgreSQL socket in `/tmp` (`/tmp/.s.PGSQL.<port>`), and the DNS resolver |
 | Linux | each socket in a path that the sandbox does not hide. `/tmp` is private, `/run/user` and `/run/dbus` are empty, and the Docker, Podman, and containerd sockets are hidden. |
 
 Thus these tools do not work in the sandbox:
@@ -323,7 +323,10 @@ Chrome does this, for example in Rails system tests. macOS then shows the
 
 After each run, the dispatcher looks for apps that the run started and that
 crashed, and for LaunchServices denials. It writes the result to its log and
-escalates once for each app to the project manager.
+escalates once for each app to the project manager. It does not escalate a
+macOS service: a program in `/System/`, `MTLCompilerService`, or
+`intelligencecontextd`. A project does not need these services, so the log line
+is sufficient.
 
 ## 6. Run agents in the sandbox
 
