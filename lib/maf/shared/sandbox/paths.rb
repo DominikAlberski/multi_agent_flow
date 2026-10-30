@@ -29,7 +29,7 @@ module Maf
           @root = root
           @coord_dir = coord_dir || File.join(root, ".maf", "coordination")
           @extra = Array(policy["write"]).map { |path| File.expand_path(path, root) }
-          @app_paths = Array(policy["launch_services"]).map { |path| File.expand_path(path, root) }
+          @app_paths = Array(policy["launch_services"]).flat_map { |path| expand(File.expand_path(path, root)) }
         end
 
         def dirs = @dirs ||= real([@root, @coord_dir, *@extra, ENV.fetch("TMPDIR", nil), *COMMON])
@@ -111,6 +111,7 @@ module Maf
           dirs.any? { |dir| real_path.start_with?("#{dir}/") }
         end
 
+        def expand(path) = path.match?(/[*?\[{]/) ? Dir.glob(path) : [path]
         def ancestors(path) = (dir = File.dirname(path)) == path ? [] : [dir, *ancestors(dir)]
         def real(paths) = paths.compact.reject(&:empty?).map { |path| resolve(File.expand_path(path)) }.uniq
 

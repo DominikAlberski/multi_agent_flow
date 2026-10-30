@@ -13,6 +13,7 @@ module Maf
       module ResultEvent
         def result_event(output) = Events.last(output) { |event| result_event?(event) }
         def result_event?(event) = event["type"] == "result"
+        def final_event?(event) = result_event?(event)
         def result_text(output) = result_event(output)["result"]
         def session_id(output) = present(result_event(output)["session_id"])
         def usage(output) = Usage.normalize(result_event(output)["usage"])

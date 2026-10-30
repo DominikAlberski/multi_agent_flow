@@ -598,25 +598,29 @@ module Dispatcher
 
   # Limits are the run limits besides the hard --timeout. idle: seconds
   # without output before the run fails (0 means off). grace: seconds to
-  # wait after a completion signal, and for a child that holds stdout.
-  # complete and abort: signal strings in the output (nil means off).
-  Limits = Struct.new(:idle, :grace, :complete, :abort) do
-    def self.from(config)
-      new(config.idle_timeout || 0, config.grace || Spawn::GRACE, config.completion_signal, config.abort_signal)
+  # wait after a completion signal or the final event, and for a child that
+  # holds stdout. complete and abort: signal strings in the output (nil means
+  # off). final: true for an output line with the final event of the harness.
+  Limits = Struct.new(:idle, :grace, :complete, :abort, :final) do
+    def self.from(config, harness = nil)
+      final = harness && ->(line) { Events.parse(line)&.then { |event| harness.final_event?(event) } }
+      new(config.idle_timeout || 0, config.grace || Spawn::GRACE, config.completion_signal, config.abort_signal, final)
     end
   end
 
   # Stream reads the output of a child in a thread and records the time of
-  # the last output.
+  # the last output. With a final check, it also marks the first output line
+  # that holds the final event of the harness.
   class Stream
-    def initialize(reader)
-      @reader = reader
-      @lock, @text, @last_at = Mutex.new, String.new, Time.now
+    def initialize(reader, final = nil)
+      @reader, @final = reader, final
+      @lock, @text, @line, @last_at = Mutex.new, String.new, String.new, Time.now
       @thread = Thread.new { pump }
     end
 
     def idle_seconds = Time.now - @last_at
     def include?(signal) = @lock.synchronize { @text.include?(signal.b) }
+    def final? = @lock.synchronize { @final_seen == true }
 
     # A background grandchild can hold the pipe open after the agent exits.
     # Then the reader thread is still blocked: kill it before closing the pipe,
@@ -636,13 +640,25 @@ module Dispatcher
       nil
     end
 
-    def append(chunk) = @lock.synchronize { (@text << chunk.b) && (@last_at = Time.now) }
+    def append(chunk)
+      @lock.synchronize { (@text << chunk.b) && (@last_at = Time.now) }
+      scan(chunk) if @final
+    end
+
+    def scan(chunk)
+      *lines, @line = (@line << chunk.b).split("\n", -1)
+      return unless lines.any? { |line| @final.call(line.force_encoding(Encoding::UTF_8)) }
+
+      @lock.synchronize { @final_seen = true }
+    end
   end
 
   # Watch decides why a run ends. :exit means the process exited. :complete
-  # and :abort mean a signal string appeared in the output. :idle means no
-  # output for limits.idle seconds. :timeout means the hard --timeout passed.
-  # After a completion signal, the process gets limits.grace seconds to exit.
+  # and :abort mean a signal string appeared in the output. :final means the
+  # harness printed its final event, but the process did not exit (a
+  # background job can keep it alive). :idle means no output for limits.idle
+  # seconds. :timeout means the hard --timeout passed. After a completion
+  # signal or the final event, the process gets limits.grace seconds to exit.
   class Watch
     TICK = 0.2
 
@@ -655,7 +671,7 @@ module Dispatcher
 
     def wait(waiter, stream)
       loop do
-        reason = signal(stream) || (waiter.join(TICK) ? :exit : limit(stream))
+        reason = signal(stream) || final_event(stream) || (waiter.join(TICK) ? :exit : limit(stream))
         return settle(reason, waiter) if reason
       end
     end
@@ -670,9 +686,13 @@ module Dispatcher
     private
 
     def settle(reason, waiter)
-      waiter.join(grace) if reason == :complete
-      reason
+      return reason unless %i[complete final].include?(reason)
+
+      exited = waiter.join(grace)
+      exited && reason == :final ? :exit : reason
     end
+
+    def final_event(stream) = (:final if stream.final?)
 
     def signal(text)
       return :abort if seen?(text, @limits.abort)
@@ -698,11 +718,13 @@ module Dispatcher
   module Spawn
     GRACE = 5
     TIMEOUTS = %i[timeout idle].freeze
+    LINGERED = "the agent sent its final result but did not exit within %<seconds>ss " \
+               "(a background job?). The dispatcher stopped its process group."
 
     def self.run(cmd, env:, timeout:, limits: Limits.new(0, GRACE))
       reader, writer = IO.pipe
       pid = start(env, cmd, writer)
-      collect(pid, Stream.new(reader.tap { writer.close }), Watch.new(timeout, limits))
+      collect(pid, Stream.new(reader.tap { writer.close }, limits.final), Watch.new(timeout, limits))
     end
 
     def self.start(env, cmd, writer)
@@ -732,8 +754,9 @@ module Dispatcher
     end
 
     def self.result(output, waiter, watch, reason)
+      Log.line(format(LINGERED, seconds: watch.grace)) if reason == :final
       reason = watch.final(reason, output)
-      success = reason == :complete || (reason == :exit && waiter.value.success?)
+      success = %i[complete final].include?(reason) || (reason == :exit && waiter.value.success?)
       Result.new(output, success, TIMEOUTS.include?(reason), reason)
     end
 
@@ -749,20 +772,24 @@ module Dispatcher
   # SandboxCrashes reports, once per app, a program that a run started in the
   # macOS sandbox and that crashed, or that the sandbox refused LaunchServices.
   # macOS shows a crash dialog for each crash, so the user must learn the cause.
+  # All dispatchers of the project share one list of reported apps. A change
+  # of .maf/sandbox.json starts a new list, so a fix that fails is reported.
   module SandboxCrashes
     REPORTS = File.expand_path("~/Library/Logs/DiagnosticReports")
     DENIAL = /Sandbox: (.+?)\(\d+\) deny\(\d+\) mach-lookup com\.apple\.coreservices\.launchservicesd/
-    PREDICATE = 'sender == "Sandbox" AND eventMessage CONTAINS "com.apple.coreservices.launchservicesd"'
+    PREDICATE = 'sender == "Sandbox" AND eventMessage CONTAINS "com.apple.coreservices.launchservicesd" ' \
+                'AND eventMessage CONTAINS "%<tag>s"'
+    SEEN = "sandbox-reported"
     NOTICE = "Dispatcher of %<worker>s: in the macOS sandbox, %<found>s. If the project needs the app, " \
-             "the user adds it to \"launch_services\" in .maf/sandbox.json. Then the app can start other " \
-             "apps outside the sandbox. An app with its own sandbox (Chrome) also needs it off (--no-sandbox), " \
-             "because macOS cannot start a sandbox in a sandbox. Tell the user."
+             "the user adds it to \"launch_services\" in .maf/sandbox.json. An entry is the full path of a " \
+             "program, an app, or a folder, or a glob (~/.cache/selenium/chromedriver/**). The next run reads " \
+             "the file, so no worker needs a restart. Then the app can start other apps outside the sandbox. " \
+             "An app with its own sandbox (Chrome) also needs it off (--no-sandbox), because macOS cannot start " \
+             "a sandbox in a sandbox. maf reports each app once until the file changes. Tell the user."
 
-    SYSTEM = %w[MTLCompilerService intelligencecontextd].freeze
+    SYSTEM = %w[MTLCompilerService intelligencecontextd amsengagementd].freeze
     IGNORED = "Dispatcher of %<worker>s: in the macOS sandbox, these macOS services crashed or were refused " \
               "LaunchServices: %<apps>s. maf ignores them."
-
-    @seen = []
 
     def self.guard(harness, config, env, &block)
       Maf::Shared::Sandbox.keeping_links(harness, coord_dir: config.coord_dir) { watch(config, env, &block) }
@@ -776,11 +803,32 @@ module Dispatcher
     end
 
     def self.report(config, env, crashes, denied)
-      crashes = crashes.except(*@seen)
-      denied -= @seen
-      @seen.concat(crashes.keys, denied)
+      seen = seen(config)
+      crashes = crashes.except(*seen)
+      denied -= seen
+      remember(config, crashes.keys + denied)
       ignore(config, crashes.keys + denied)
       escalate(config, env, crashes.reject { |app, _| system?(app) }, denied.reject { |app| system?(app) })
+    end
+
+    def self.seen(config)
+      path = File.join(config.coord_dir, SEEN)
+      prefix = "#{policy_digest} "
+      File.exist?(path) ? File.readlines(path, chomp: true).filter_map { |line| line.delete_prefix!(prefix) } : []
+    end
+
+    def self.remember(config, apps)
+      return if apps.empty?
+
+      FileUtils.mkdir_p(config.coord_dir)
+      File.write(File.join(config.coord_dir, SEEN), apps.map { |app| "#{policy_digest} #{app}\n" }.join, mode: "a")
+    rescue SystemCallError => e
+      Log.line("reported sandbox apps not saved: #{e.message}")
+    end
+
+    def self.policy_digest
+      path = File.join(Project.root, Maf::Shared::Sandbox::POLICY)
+      Digest::SHA256.hexdigest(File.exist?(path) ? File.read(path) : "")[0, 12]
     end
 
     def self.system?(app) = app.start_with?("/System/") || SYSTEM.include?(File.basename(app, ".*"))
@@ -820,7 +868,8 @@ module Dispatcher
     end
 
     def self.denials(start)
-      args = ["show", "--start", start.strftime("%Y-%m-%d %H:%M:%S"), "--style", "compact", "--predicate", PREDICATE]
+      predicate = format(PREDICATE, tag: Maf::Shared::Sandbox::Seatbelt.tag(Project.root))
+      args = ["show", "--start", start.strftime("%Y-%m-%d %H:%M:%S"), "--style", "compact", "--predicate", predicate]
       IO.popen(["/usr/bin/log", *args], err: File::NULL, &:read).scan(DENIAL).flatten.uniq
     rescue SystemCallError
       []
@@ -1186,7 +1235,7 @@ module Dispatcher
     def session_label(id) = id ? "#{id}, idle #{(@session.idle_seconds / 60).round}m" : "new"
 
     def spawn(cmd)
-      limits = Limits.from(@config)
+      limits = Limits.from(@config, @harness)
       result = keeping_links { Spawn.run(sandboxed(cmd), env: @env, timeout: @config.timeout, limits: limits) }
       record(@harness.usage(result.output), result.output)
       @model = @harness.model(result.output) || @model
@@ -1269,6 +1318,7 @@ module Dispatcher
     ONE_SHOT = <<~TEXT
       You run as role %<role>s in one-shot mode. Follow your role instructions. They hold the coordination rules.
       Do not use --wait: nobody is waiting on this session.
+      Run each command in the foreground. The run ends at your final reply and stops each background job.
       No person reads this run. Skip session-start skills such as caveman. Read a skill file only if the work needs it.
     TEXT
 
