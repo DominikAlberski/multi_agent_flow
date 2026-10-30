@@ -19,7 +19,8 @@ module Maf
         TMP_PREFIX = "maf-sandbox-"
         # The map database of LaunchServices only reads: it turns a type name into a type.
         # Without it, pbcopy writes the text with a type that no app reads.
-        SERVICES = "(deny mach-lookup (global-name-regex #\"^com\\.apple\\.(coreservices|lsd)\\.\"))\n" \
+        SERVICES = "(deny mach-lookup (global-name-regex #\"^com\\.apple\\.(coreservices|lsd)\\.\") " \
+                   "(with message \"%<tag>s\"))\n" \
                    "(allow mach-lookup (global-name \"com.apple.lsd.mapdb\"))\n" \
                    "(deny appleevent-send)\n"
         LAUNCH_SERVICES = "com.apple.coreservices.launchservicesd"
@@ -27,8 +28,10 @@ module Maf
         def self.wrap(cmd, paths)
           tmp = private_tmp(paths.root)
           [COMMAND, "-p", profile(paths, tmp), "env", "#{MARKER}=1", "TMPDIR=#{tmp}/", "XDG_CACHE_HOME=#{tmp}/cache",
-           *cmd]
+           "PGGSSENCMODE=#{ENV.fetch("PGGSSENCMODE", "disable")}", *cmd]
         end
+
+        def self.tag(root) = "maf-sandbox #{Digest::SHA256.hexdigest(root)[0, 12]}"
 
         def self.inside? = ENV[MARKER] == "1"
 
@@ -57,23 +60,17 @@ module Maf
 
         def self.profile(paths, tmp)
           "(version 1)\n(allow default)\n(deny file-write*)\n#{writes(paths)}#{protects(paths)}" \
-            "#{sockets([*paths.sockets, tmp])}#{SERVICES}#{launch_services(paths.apps)}"
+            "#{sockets([*paths.sockets, tmp])}#{format(SERVICES, tag: tag(paths.root))}" \
+            "#{launch_services(paths.programs)}"
         end
 
         # A later rule wins, so this exception comes after the denial.
-        def self.launch_services(apps)
-          programs = apps.flat_map { |app| programs(app) }.uniq
+        def self.launch_services(programs)
           return "" if programs.empty?
 
           filters = programs.map { |path| "(process-path #{quote(path)})" }
           "(allow mach-lookup (require-all (global-name \"#{LAUNCH_SERVICES}\")\n  " \
             "(require-any #{filters.join("\n    ")})))\n"
-        end
-
-        def self.programs(app)
-          return [app] unless File.directory?(app)
-
-          Dir.glob(File.join(app, "**", "Contents", "MacOS", "*")).select { |path| File.file?(path) }
         end
 
         def self.writes(paths)

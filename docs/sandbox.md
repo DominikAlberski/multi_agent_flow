@@ -199,6 +199,11 @@ The agent can create, change, and remove files only in these paths:
 
 Tools of the host load code from `~/.cache` and `~/Library/Caches`, so the agent cannot write there.
 On macOS, maf sets `XDG_CACHE_HOME` to the private temporary folder of the project.
+
+On macOS, maf also sets `PGGSSENCMODE=disable`, unless you set it. On a TCP connection,
+libpq first tries GSSAPI encryption, and the Kerberos framework of macOS crashes in a
+forked process. Parallel Rails tests fork, so each test process crashed in `PG::Connection.connect_start`
+(segmentation fault). The connection through the socket in `/tmp` does not try GSSAPI.
 On Linux, a write to `~/.cache` succeeds, but the file is gone after the run.
 
 Each other write fails. On macOS, the error is `Operation not permitted`.
@@ -311,22 +316,41 @@ Chrome does this, for example in Rails system tests. macOS then shows the
 }
 ```
 
+- An entry is the full path of an app, a program, or a folder, or a glob. `~` is
+  your home folder. A relative path starts at the project root.
+  - An app (`*.app`) allows the programs in the app (`Contents/MacOS/*`, also in the helper apps).
+  - A folder allows each program in it and in its subfolders.
+  - A glob allows each path that it matches. A path that exists is not a glob,
+    so `Foo [Beta].app` is a path. A tool that keeps one folder for each version
+    needs a glob or a folder, for example `"~/.cache/selenium/chromedriver/**"`.
+  - maf reads the entries at the start of each run. A worker needs no restart.
 - maf allows only the service `com.apple.coreservices.launchservicesd`, and only
-  for the programs in each listed app (`Contents/MacOS/*`, also in the helper apps).
-  `open` and `osascript` stay blocked.
+  for the programs of the entries. `open` and `osascript` stay blocked.
 - Risk: a listed app can start other apps, and these apps run outside the
   sandbox. Add only an app that the project needs.
 - An app in a folder that the agent can change is refused, because the agent
-  could replace the app.
+  could replace the app. maf also refuses an entry that holds such a folder (for
+  example `~` or the parent of the project), and each program of an entry that is
+  in such a folder, also through a symbolic link.
 - Chrome also has its own sandbox, and macOS cannot start a sandbox in a sandbox.
   Start Chrome with `--no-sandbox` when `MAF_SEATBELT=1`.
 
 After each run, the dispatcher looks for apps that the run started and that
 crashed, and for LaunchServices denials. It writes the result to its log and
 escalates once for each app to the project manager. It does not escalate a
-macOS service: a program in `/System/`, `MTLCompilerService`, or
-`intelligencecontextd`. A project does not need these services, so the log line
-is sufficient.
+macOS service: a program in `/System/`, `MTLCompilerService`,
+`intelligencecontextd`, or `amsengagementd`. A project does not need these
+services, so the log line is sufficient.
+
+- The profile tags each denial with `maf-sandbox <hash of the project root>`. The
+  dispatcher reads only the denials with the tag of its project. Before, it also
+  read the denials of the own sandbox of each macOS service.
+- All dispatchers of a project share the list of reported apps
+  (`$COORD_DIR/sandbox-reported`), with a file lock. A change to `.maf/sandbox.json`
+  starts a new list, so the dispatcher reports an app again if a fix did not work.
+  An app goes on the list only after the escalation succeeds.
+- The log names the refused program, not its path. Find the path with `which <name>`,
+  or in the cache folder of the tool that downloaded it.
 
 ## 6. Run agents in the sandbox
 
@@ -507,7 +531,8 @@ Do these steps on the host.
   owns the folder or others can open it, maf stops.
 - The agent can connect to the DNS resolver (`mDNSResponder`), so host names resolve.
 - The profile denies LaunchServices (`com.apple.coreservices.*`, `com.apple.lsd.*`) and Apple Events.
-  For each program in a `launch_services` app, a later rule allows `com.apple.coreservices.launchservicesd`.
+  The denial has the message `maf-sandbox <hash>`, so the log line shows the project.
+  For each program of a `launch_services` entry, a later rule allows `com.apple.coreservices.launchservicesd`.
 - In a test, `launchctl submit` and `launchctl bootstrap` did not start a process outside the sandbox.
 
 ## 9. Linux details

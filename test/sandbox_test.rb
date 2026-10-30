@@ -18,7 +18,7 @@ class SandboxTest < Minitest::Test
     in_project("sandbox" => { "mode" => "seatbelt" }) do
       cmd = Sandbox.wrap(CMD, harness("claude"))
       assert_equal ["/usr/bin/sandbox-exec", "-p", "env"], cmd.values_at(0, 1, 3)
-      assert_equal CMD, cmd.drop(7)
+      assert_equal CMD, cmd.drop(8)
     end
   end
 
@@ -118,7 +118,7 @@ class SandboxTest < Minitest::Test
   def test_an_interactive_codex_session_turns_off_its_own_sandbox
     in_project("sandbox" => { "mode" => "seatbelt" }) do
       cmd = Sandbox.wrap(%w[codex --add-dir x prompt], harness("codex"))
-      assert_equal %w[codex --sandbox danger-full-access --add-dir x prompt], cmd.drop(7)
+      assert_equal %w[codex --sandbox danger-full-access --add-dir x prompt], cmd.drop(8)
     end
   end
 

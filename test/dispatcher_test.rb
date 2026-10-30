@@ -282,7 +282,61 @@ class SpawnTest < Minitest::Test
   end
 
   def limits(**values) = Dispatcher::Limits.new(values.fetch(:idle, 0), values.fetch(:grace, 1),
-                                                 values[:complete], values[:abort])
+                                                 values[:complete], values[:abort], values[:final])
+
+  FINAL = Dispatcher::Limits.final(Maf::Shared::Harness["claude"])
+
+  # Regression: the agent started the test suite in the background and replied.
+  # The dispatcher waited for the agent to exit until the hard timeout.
+  def test_the_final_event_ends_an_agent_that_does_not_exit
+    started = Time.now
+    script = %(sleep 30 & echo '{"type":"result","result":"ok"}'; wait)
+    result = Dispatcher::Spawn.run(["sh", "-c", script], env: {}, timeout: 20, limits: limits(final: FINAL))
+    assert result.success
+    assert_equal :final, result.reason
+    assert_operator Time.now - started, :<, 10
+  end
+
+  def test_a_final_event_with_an_error_is_a_failure
+    script = %(sleep 30 & echo '{"type":"result","is_error":true}'; wait)
+    result = Dispatcher::Spawn.run(["sh", "-c", script], env: {}, timeout: 20, limits: limits(final: FINAL))
+    refute result.success
+    assert_equal :final_error, result.reason
+  end
+
+  # The final event can come after stderr text without a newline, or end without a newline.
+  def test_the_final_event_needs_no_line_of_its_own
+    script = %(printf 'warning: x {"type":"result","result":"ok"}'; sleep 30)
+    result = Dispatcher::Spawn.run(["sh", "-c", script], env: {}, timeout: 20, limits: limits(final: FINAL))
+    assert_equal :final, result.reason
+  end
+
+  def test_a_normal_exit_stops_a_background_job
+    Dir.mktmpdir("spawn-background-test") do |dir|
+      pid_file = File.join(dir, "pid")
+      result = Dispatcher::Spawn.run(["sh", "-c", "sleep 30 > /dev/null 2>&1 & echo $! > #{pid_file}"], env: {}, timeout: 5)
+      assert result.success
+      assert stops?(File.read(pid_file).to_i)
+    end
+  end
+
+  def test_after_the_final_event_the_exit_status_decides
+    script = %(echo '{"type":"result","result":"error"}'; exit 3)
+    result = Dispatcher::Spawn.run(["sh", "-c", script], env: {}, timeout: 5, limits: limits(final: FINAL))
+    refute result.success
+    assert_equal :exit, result.reason
+  end
+
+  def test_the_final_event_of_the_harness
+    claude = Dispatcher::Limits.from(Dispatcher::Config.new, Maf::Shared::Harness["claude"]).final
+    codex = Dispatcher::Limits.from(Dispatcher::Config.new, Maf::Shared::Harness["codex"]).final
+    assert_equal :final, claude.call('{"type":"result","result":"ok"}')
+    assert_equal :final_error, claude.call('{"type":"result","is_error":true}')
+    assert_nil claude.call('{"type":"system"}')
+    assert_nil claude.call('{"jsonrpc":"2.0","id":3,"result":{}}')
+    assert_equal :final, codex.call('{"type":"turn.completed","usage":{}}')
+    assert_nil codex.call("plain text")
+  end
 
   # The agent prints the signal but a child keeps it alive: the run succeeds.
   def test_completion_signal_succeeds_and_stops_a_hanging_agent
@@ -988,12 +1042,12 @@ class OptionsTest < Minitest::Test
   def test_timeout_split_flags
     config = parse("reviewer", "--idle-timeout", "90", "--grace", "2", "--completion-signal", "OK!",
                    "--abort-signal", "NO!")
-    assert_equal [90, 2, "OK!", "NO!"], Dispatcher::Limits.from(config).to_a
+    assert_equal [90, 2, "OK!", "NO!", nil], Dispatcher::Limits.from(config).to_a
     assert_equal 1500, config.timeout
   end
 
   def test_idle_timeout_is_off_by_default
-    assert_equal [0, Dispatcher::Spawn::GRACE, nil, nil], Dispatcher::Limits.from(parse("reviewer")).to_a
+    assert_equal [0, Dispatcher::Spawn::GRACE, nil, nil, nil], Dispatcher::Limits.from(parse("reviewer")).to_a
   end
 
   def test_rejects_a_negative_idle_timeout
@@ -1175,11 +1229,11 @@ end
 class SandboxCrashesTest < Minitest::Test
   def setup
     @reports = Dir.mktmpdir("sandbox-crashes-test")
-    Dispatcher::SandboxCrashes.instance_variable_set(:@seen, [])
-    @config = Dispatcher::Config.new(role: "architect", worker: "architect-bot")
+    @board = Dir.mktmpdir("sandbox-crashes-board")
+    @config = Dispatcher::Config.new(role: "architect", worker: "architect-bot", coord_dir: @board)
   end
 
-  def teardown = FileUtils.remove_entry(@reports)
+  def teardown = [@reports, @board].each { |dir| FileUtils.remove_entry(dir) }
 
   def crash(name, launched)
     body = { "procPath" => "/Applications/#{name}.app/Contents/MacOS/#{name}",
@@ -1222,7 +1276,7 @@ class SandboxCrashesTest < Minitest::Test
   end
 
   def test_a_macos_service_does_not_escalate
-    assert_empty(watch(denied: ["intelligencecontextd"]) { crash("MTLCompilerService", Time.now) })
+    assert_empty(watch(denied: %w[intelligencecontextd amsengagementd]) { crash("MTLCompilerService", Time.now) })
   end
 
   def test_a_system_program_does_not_escalate
@@ -1242,6 +1296,42 @@ class SandboxCrashesTest < Minitest::Test
   def test_each_app_is_reported_once
     watch { crash("Google Chrome", Time.now) }
     assert_empty(watch { crash("Google Chrome", Time.now) })
+  end
+
+  # Regression: four dispatchers sent 15 messages about the same three apps.
+  def test_the_dispatchers_of_a_project_report_an_app_once
+    watch(denied: ["chromedriver"]) { nil }
+    @config = Dispatcher::Config.new(role: "reviewer", worker: "reviewer-bot", coord_dir: @board)
+    assert_empty(watch(denied: ["chromedriver"]) { nil })
+  end
+
+  def test_a_failed_escalation_is_reported_again
+    stub(Dispatcher::CoordCall, :run, false) do
+      stub(Maf::Shared::Sandbox, :mode, "seatbelt") do
+        stub(Dispatcher::SandboxCrashes, :denials, ["chromedriver"]) do
+          capture_io { Dispatcher::SandboxCrashes.watch(@config, {}, reports: @reports) { nil } }
+        end
+      end
+    end
+    refute_empty(watch(denied: ["chromedriver"]) { nil })
+  end
+
+  # A fix of .maf/sandbox.json that does not work must not stay silent.
+  def test_a_change_of_the_policy_reports_the_app_again
+    watch(denied: ["chromedriver"]) { nil }
+    stub(Dispatcher::SandboxCrashes, :policy_digest, "changed") do
+      refute_empty(watch(denied: ["chromedriver"]) { nil })
+    end
+  end
+
+  def test_only_denials_of_the_maf_sandbox_count
+    predicate = nil
+    original = IO.method(:popen)
+    IO.define_singleton_method(:popen) { |args, **, &_| (predicate = args.last) && "" }
+    Dispatcher::SandboxCrashes.denials(Time.now)
+    assert_includes predicate, Maf::Shared::Sandbox::Seatbelt.tag(Dispatcher::Project.root)
+  ensure
+    IO.define_singleton_method(:popen, original)
   end
 
   def test_no_check_outside_the_macos_sandbox

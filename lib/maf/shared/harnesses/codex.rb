@@ -118,6 +118,7 @@ module Maf
 
         def lean_flags = CodexLean.flags(home)
         def stale_session?(output) = output.include?("no rollout found for thread id")
+        def final_event?(event) = event["type"] == "turn.completed"
 
         def result_text(output)
           Harness::Events.last(output) { |event| event.dig("item", "type") == "agent_message" }.dig("item", "text")

@@ -29,7 +29,7 @@ module Maf
           @root = root
           @coord_dir = coord_dir || File.join(root, ".maf", "coordination")
           @extra = Array(policy["write"]).map { |path| File.expand_path(path, root) }
-          @app_paths = Array(policy["launch_services"]).map { |path| File.expand_path(path, root) }
+          @app_paths = Array(policy["launch_services"]).flat_map { |path| expand(File.expand_path(path, root)) }
         end
 
         def dirs = @dirs ||= real([@root, @coord_dir, *@extra, ENV.fetch("TMPDIR", nil), *COMMON])
@@ -49,8 +49,20 @@ module Maf
 
         def apps = @apps ||= real(@app_paths).select { |path| File.exist?(path) }.each { |path| fixed_app!(path) }
 
+        def programs = @programs ||= apps.flat_map { |app| programs_of(app) }.uniq.each { |path| fixed_app!(path) }
+
         def fixed_app!(path)
-          writable?(path) && abort("maf: #{path} in launch_services is in a folder that the agent can change.")
+          writable?(path, dirs + harness_dirs) &&
+            abort("maf: #{path} in launch_services is in a folder that the agent can change.")
+          holds_writable?(path) && abort("maf: #{path} in launch_services holds a folder that the agent can change.")
+        end
+
+        def programs_of(app)
+          return [app] unless File.directory?(app)
+
+          pattern = File.join(*(File.extname(app) == ".app" ? %w[** Contents MacOS *] : %w[** *]))
+          paths = Dir.glob(pattern, base: app).map { |path| File.join(app, path) }
+          real(paths).select { |path| File.file?(path) && File.executable?(path) }
         end
 
         def sockets = real([@root, @coord_dir])
@@ -106,11 +118,14 @@ module Maf
           top ? ancestors(path).take_while { |dir| dir.size >= top.size } : []
         end
 
-        def writable?(path)
+        def writable?(path, within = dirs)
           real_path = real([path]).first
-          dirs.any? { |dir| real_path.start_with?("#{dir}/") }
+          within.any? { |dir| real_path.start_with?("#{dir}/") }
         end
 
+        def holds_writable?(path) = (dirs + harness_dirs).any? { |dir| "#{dir}/".start_with?("#{real([path]).first}/") }
+
+        def expand(path) = File.exist?(path) ? [path] : Dir.glob(path)
         def ancestors(path) = (dir = File.dirname(path)) == path ? [] : [dir, *ancestors(dir)]
         def real(paths) = paths.compact.reject(&:empty?).map { |path| resolve(File.expand_path(path)) }.uniq
 
