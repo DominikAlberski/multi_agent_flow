@@ -132,6 +132,7 @@ module Maf
         def model(_output) = nil
         # The output event after which the run has nothing left to do.
         def final_event?(_event) = false
+        def error_event?(_event) = false
 
         # A file of the flow in .maf/ of the main checkout. The dispatcher finds
         # .maf/ next to its coordination folder, which COORD_DIR can move.

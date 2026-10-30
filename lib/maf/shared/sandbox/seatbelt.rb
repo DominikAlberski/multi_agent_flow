@@ -60,24 +60,17 @@ module Maf
 
         def self.profile(paths, tmp)
           "(version 1)\n(allow default)\n(deny file-write*)\n#{writes(paths)}#{protects(paths)}" \
-            "#{sockets([*paths.sockets, tmp])}#{format(SERVICES, tag: tag(paths.root))}#{launch_services(paths.apps)}"
+            "#{sockets([*paths.sockets, tmp])}#{format(SERVICES, tag: tag(paths.root))}" \
+            "#{launch_services(paths.programs)}"
         end
 
         # A later rule wins, so this exception comes after the denial.
-        def self.launch_services(apps)
-          programs = apps.flat_map { |app| programs(app) }.uniq
+        def self.launch_services(programs)
           return "" if programs.empty?
 
           filters = programs.map { |path| "(process-path #{quote(path)})" }
           "(allow mach-lookup (require-all (global-name \"#{LAUNCH_SERVICES}\")\n  " \
             "(require-any #{filters.join("\n    ")})))\n"
-        end
-
-        def self.programs(app)
-          return [app] unless File.directory?(app)
-
-          pattern = File.extname(app) == ".app" ? %w[** Contents MacOS *] : %w[** *]
-          Dir.glob(File.join(app, *pattern)).select { |path| File.file?(path) && File.executable?(path) }
         end
 
         def self.writes(paths)

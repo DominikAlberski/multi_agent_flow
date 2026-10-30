@@ -284,7 +284,7 @@ class SpawnTest < Minitest::Test
   def limits(**values) = Dispatcher::Limits.new(values.fetch(:idle, 0), values.fetch(:grace, 1),
                                                  values[:complete], values[:abort], values[:final])
 
-  FINAL = ->(line) { line.start_with?('{"type":"result"') }
+  FINAL = Dispatcher::Limits.final(Maf::Shared::Harness["claude"])
 
   # Regression: the agent started the test suite in the background and replied.
   # The dispatcher waited for the agent to exit until the hard timeout.
@@ -297,6 +297,29 @@ class SpawnTest < Minitest::Test
     assert_operator Time.now - started, :<, 10
   end
 
+  def test_a_final_event_with_an_error_is_a_failure
+    script = %(sleep 30 & echo '{"type":"result","is_error":true}'; wait)
+    result = Dispatcher::Spawn.run(["sh", "-c", script], env: {}, timeout: 20, limits: limits(final: FINAL))
+    refute result.success
+    assert_equal :final_error, result.reason
+  end
+
+  # The final event can come after stderr text without a newline, or end without a newline.
+  def test_the_final_event_needs_no_line_of_its_own
+    script = %(printf 'warning: x {"type":"result","result":"ok"}'; sleep 30)
+    result = Dispatcher::Spawn.run(["sh", "-c", script], env: {}, timeout: 20, limits: limits(final: FINAL))
+    assert_equal :final, result.reason
+  end
+
+  def test_a_normal_exit_stops_a_background_job
+    Dir.mktmpdir("spawn-background-test") do |dir|
+      pid_file = File.join(dir, "pid")
+      result = Dispatcher::Spawn.run(["sh", "-c", "sleep 30 > /dev/null 2>&1 & echo $! > #{pid_file}"], env: {}, timeout: 5)
+      assert result.success
+      assert stops?(File.read(pid_file).to_i)
+    end
+  end
+
   def test_after_the_final_event_the_exit_status_decides
     script = %(echo '{"type":"result","result":"error"}'; exit 3)
     result = Dispatcher::Spawn.run(["sh", "-c", script], env: {}, timeout: 5, limits: limits(final: FINAL))
@@ -307,10 +330,12 @@ class SpawnTest < Minitest::Test
   def test_the_final_event_of_the_harness
     claude = Dispatcher::Limits.from(Dispatcher::Config.new, Maf::Shared::Harness["claude"]).final
     codex = Dispatcher::Limits.from(Dispatcher::Config.new, Maf::Shared::Harness["codex"]).final
-    assert claude.call('{"type":"result","result":"ok"}')
-    refute claude.call('{"type":"system"}')
-    assert codex.call('{"type":"turn.completed","usage":{}}')
-    refute codex.call("plain text")
+    assert_equal :final, claude.call('{"type":"result","result":"ok"}')
+    assert_equal :final_error, claude.call('{"type":"result","is_error":true}')
+    assert_nil claude.call('{"type":"system"}')
+    assert_nil claude.call('{"jsonrpc":"2.0","id":3,"result":{}}')
+    assert_equal :final, codex.call('{"type":"turn.completed","usage":{}}')
+    assert_nil codex.call("plain text")
   end
 
   # The agent prints the signal but a child keeps it alive: the run succeeds.
@@ -1278,6 +1303,17 @@ class SandboxCrashesTest < Minitest::Test
     watch(denied: ["chromedriver"]) { nil }
     @config = Dispatcher::Config.new(role: "reviewer", worker: "reviewer-bot", coord_dir: @board)
     assert_empty(watch(denied: ["chromedriver"]) { nil })
+  end
+
+  def test_a_failed_escalation_is_reported_again
+    stub(Dispatcher::CoordCall, :run, false) do
+      stub(Maf::Shared::Sandbox, :mode, "seatbelt") do
+        stub(Dispatcher::SandboxCrashes, :denials, ["chromedriver"]) do
+          capture_io { Dispatcher::SandboxCrashes.watch(@config, {}, reports: @reports) { nil } }
+        end
+      end
+    end
+    refute_empty(watch(denied: ["chromedriver"]) { nil })
   end
 
   # A fix of .maf/sandbox.json that does not work must not stay silent.

@@ -8,9 +8,10 @@
   unless the user set it.
 - Fixed: a dispatched run ended only when the agent process exited. An agent that left a background
   job (a test suite) running kept the run open until the hard timeout, and the run failed. Now the
-  final event of the harness (Claude Code, Cursor, Hermes: `result`; Codex: `turn.completed`) ends
-  the run after the grace window, and the dispatcher stops the process group. The one-shot prompt
-  tells the agent to run each command in the foreground.
+  final event of the harness (Claude Code, Cursor, Hermes: `"type":"result"`; Codex: `turn.completed`)
+  ends the run after the grace window, and the dispatcher stops the process group. A final event with
+  `"is_error": true` is a failure. After a normal exit, the process group gets TERM, so no background
+  job outlives the run. The one-shot prompt tells the agent to run each command in the foreground.
 - Fixed: the dispatcher escalated LaunchServices denials of other sandboxes, for example of macOS
   services. The maf profile now tags its denials with the project, and the dispatcher reads only these.
 - Changed: all dispatchers of a project report a sandbox app once, until `.maf/sandbox.json` changes.
@@ -18,7 +19,8 @@
   needs a restart.
 - New: a `launch_services` entry can be a folder or a glob, for example
   `~/.cache/selenium/chromedriver/**`. A folder allows each program in it. Before, a folder that
-  was not an app allowed no program.
+  was not an app allowed no program. maf refuses an entry that holds a folder that the agent can
+  change, and each program in such a folder.
 
 ## [0.7.1] - 2026-10-29
 

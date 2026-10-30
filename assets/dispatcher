@@ -600,17 +600,28 @@ module Dispatcher
   # without output before the run fails (0 means off). grace: seconds to
   # wait after a completion signal or the final event, and for a child that
   # holds stdout. complete and abort: signal strings in the output (nil means
-  # off). final: true for an output line with the final event of the harness.
+  # off). final: for an output line with the final event of the harness,
+  # :final, or :final_error if the event reports an error; else nil.
   Limits = Struct.new(:idle, :grace, :complete, :abort, :final) do
     def self.from(config, harness = nil)
-      final = harness && ->(line) { Events.parse(line)&.then { |event| harness.final_event?(event) } }
-      new(config.idle_timeout || 0, config.grace || Spawn::GRACE, config.completion_signal, config.abort_signal, final)
+      new(config.idle_timeout || 0, config.grace || Spawn::GRACE, config.completion_signal, config.abort_signal,
+          harness && final(harness))
+    end
+
+    def self.final(harness)
+      lambda do |line|
+        event = (start = line.index('{"type"')) && Events.parse(line[start..])
+        next unless event && harness.final_event?(event)
+
+        harness.error_event?(event) ? :final_error : :final
+      end
     end
   end
 
   # Stream reads the output of a child in a thread and records the time of
-  # the last output. With a final check, it also marks the first output line
-  # that holds the final event of the harness.
+  # the last output. With a final check, it also keeps the result of the first
+  # output line that holds the final event of the harness. A last line without
+  # a newline is checked once each time it changes.
   class Stream
     def initialize(reader, final = nil)
       @reader, @final = reader, final
@@ -620,7 +631,7 @@ module Dispatcher
 
     def idle_seconds = Time.now - @last_at
     def include?(signal) = @lock.synchronize { @text.include?(signal.b) }
-    def final? = @lock.synchronize { @final_seen == true }
+    def final_reason = @lock.synchronize { @final_reason ||= open_line_final }
 
     # A background grandchild can hold the pipe open after the agent exits.
     # Then the reader thread is still blocked: kill it before closing the pipe,
@@ -641,23 +652,34 @@ module Dispatcher
     end
 
     def append(chunk)
-      @lock.synchronize { (@text << chunk.b) && (@last_at = Time.now) }
-      scan(chunk) if @final
+      @lock.synchronize do
+        (@text << chunk.b) && (@last_at = Time.now)
+        scan(chunk.b) if @final && !@final_reason
+      end
     end
 
     def scan(chunk)
-      *lines, @line = (@line << chunk.b).split("\n", -1)
-      return unless lines.any? { |line| @final.call(line.force_encoding(Encoding::UTF_8)) }
-
-      @lock.synchronize { @final_seen = true }
+      first, *rest = chunk.split("\n", -1)
+      lines = [@line << first.to_s, *rest]
+      @line, @line_checked = String.new(lines.pop.to_s), false
+      @final_reason = lines.lazy.filter_map { |line| check(line) }.first
     end
+
+    def open_line_final
+      return if @final.nil? || @line_checked || !@line.end_with?("}")
+
+      @line_checked = true
+      check(@line)
+    end
+
+    def check(line) = @final.call(line.dup.force_encoding(Encoding::UTF_8))
   end
 
   # Watch decides why a run ends. :exit means the process exited. :complete
-  # and :abort mean a signal string appeared in the output. :final means the
-  # harness printed its final event, but the process did not exit (a
-  # background job can keep it alive). :idle means no output for limits.idle
-  # seconds. :timeout means the hard --timeout passed. After a completion
+  # and :abort mean a signal string appeared in the output. :final and
+  # :final_error mean the harness printed its final event, but the process
+  # did not exit (a background job can keep it alive). :idle means no output
+  # for limits.idle seconds. :timeout means the hard --timeout passed. After a completion
   # signal or the final event, the process gets limits.grace seconds to exit.
   class Watch
     TICK = 0.2
@@ -686,13 +708,15 @@ module Dispatcher
     private
 
     def settle(reason, waiter)
-      return reason unless %i[complete final].include?(reason)
+      return reason unless SETTLE.include?(reason)
 
       exited = waiter.join(grace)
-      exited && reason == :final ? :exit : reason
+      exited && reason != :complete ? :exit : reason
     end
 
-    def final_event(stream) = (:final if stream.final?)
+    SETTLE = %i[complete final final_error].freeze
+
+    def final_event(stream) = stream.final_reason
 
     def signal(text)
       return :abort if seen?(text, @limits.abort)
@@ -711,10 +735,11 @@ module Dispatcher
 
   # Spawn runs a command in its own process group. Any end reason except a
   # normal exit kills the whole group (TERM, then KILL), which also stops the
-  # children of an `sh -c` template. An exception in the dispatcher (Ctrl+C,
-  # SIGHUP) also kills the group, so no agent run outlives the dispatcher.
-  # A completion signal is success even when the process must be killed.
-  # An abort signal is failure.
+  # children of an `sh -c` template. After a normal exit, the group gets TERM,
+  # which stops a background job of the agent. An exception in the dispatcher
+  # (Ctrl+C, SIGHUP) also kills the group, so no agent run outlives the
+  # dispatcher. A completion signal, or a final event without an error, is
+  # success even when the process must be killed. An abort signal is failure.
   module Spawn
     GRACE = 5
     TIMEOUTS = %i[timeout idle].freeze
@@ -747,17 +772,23 @@ module Dispatcher
     def self.collect(pid, stream, watch)
       waiter = Process.detach(pid)
       reason = watch.wait(waiter, stream)
-      stop(pid, waiter) unless reason == :exit
+      reason == :exit ? end_group(pid) : stop(pid, waiter)
       result(stream.close(watch.grace), waiter, watch, reason)
     ensure
       stop(pid, waiter) if waiter&.alive?
     end
 
     def self.result(output, waiter, watch, reason)
-      Log.line(format(LINGERED, seconds: watch.grace)) if reason == :final
+      Log.line(format(LINGERED, seconds: watch.grace)) if %i[final final_error].include?(reason)
       reason = watch.final(reason, output)
       success = %i[complete final].include?(reason) || (reason == :exit && waiter.value.success?)
       Result.new(output, success, TIMEOUTS.include?(reason), reason)
+    end
+
+    def self.end_group(pid)
+      Process.kill("TERM", -pid)
+    rescue Errno::ESRCH, Errno::EPERM
+      nil
     end
 
     def self.stop(pid, waiter)
@@ -803,27 +834,37 @@ module Dispatcher
     end
 
     def self.report(config, env, crashes, denied)
-      seen = seen(config)
-      crashes = crashes.except(*seen)
-      denied -= seen
-      remember(config, crashes.keys + denied)
-      ignore(config, crashes.keys + denied)
-      escalate(config, env, crashes.reject { |app, _| system?(app) }, denied.reject { |app| system?(app) })
+      Seen.open(config.coord_dir) do |seen|
+        crashes = crashes.except(*seen.apps)
+        denied -= seen.apps
+        apps = crashes.keys + denied
+        ignore(config, apps)
+        seen.add(escalate(config, env, crashes, denied) ? apps : apps.select { |app| system?(app) })
+      end
     end
 
-    def self.seen(config)
-      path = File.join(config.coord_dir, SEEN)
-      prefix = "#{policy_digest} "
-      File.exist?(path) ? File.readlines(path, chomp: true).filter_map { |line| line.delete_prefix!(prefix) } : []
-    end
+    # Seen is the list of reported apps in $COORD_DIR/sandbox-reported, one
+    # "<policy digest> <app>" line each. A lock keeps the read and the append
+    # of one dispatcher apart from another dispatcher.
+    class Seen
+      attr_reader :apps
 
-    def self.remember(config, apps)
-      return if apps.empty?
+      def self.open(dir)
+        FileUtils.mkdir_p(dir)
+        File.open(File.join(dir, SEEN), File::RDWR | File::CREAT, 0o644) do |file|
+          file.flock(File::LOCK_EX)
+          yield new(file, SandboxCrashes.policy_digest)
+        end
+      rescue SystemCallError => e
+        Log.line("sandbox apps not reported: #{e.message}")
+      end
 
-      FileUtils.mkdir_p(config.coord_dir)
-      File.write(File.join(config.coord_dir, SEEN), apps.map { |app| "#{policy_digest} #{app}\n" }.join, mode: "a")
-    rescue SystemCallError => e
-      Log.line("reported sandbox apps not saved: #{e.message}")
+      def initialize(file, digest)
+        @file, @prefix = file, "#{digest} "
+        @apps = file.read.lines(chomp: true).filter_map { |line| line.delete_prefix!(@prefix) }
+      end
+
+      def add(apps) = apps.empty? || @file.write(apps.map { |app| "#{@prefix}#{app}\n" }.join)
     end
 
     def self.policy_digest
@@ -839,7 +880,9 @@ module Dispatcher
     end
 
     def self.escalate(config, env, crashes, denied)
-      return if crashes.empty? && denied.empty?
+      crashes = crashes.reject { |app, _| system?(app) }
+      denied = denied.reject { |app| system?(app) }
+      return true if crashes.empty? && denied.empty?
 
       text = format(NOTICE, worker: config.worker, found: found(crashes, denied))
       Log.line(text)

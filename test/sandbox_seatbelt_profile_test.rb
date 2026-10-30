@@ -33,6 +33,23 @@ class SandboxSeatbeltProfileTest < Minitest::Test
     end
   end
 
+  # Regression: a folder entry above the project allowed the programs that the agent can change.
+  def test_a_launch_services_folder_that_holds_the_project_is_refused
+    in_project("sandbox" => { "mode" => "seatbelt" }) do |dir|
+      write(".maf/sandbox.json", JSON.generate("mode" => "seatbelt", "launch_services" => [File.dirname(dir)]))
+      error = assert_raises(SystemExit) { capture_io { wrapped("true") } }
+      refute error.success?
+    end
+  end
+
+  def test_a_launch_services_path_with_brackets_is_no_glob
+    Dir.mktmpdir("maf-app-", Dir.home) do |outside|
+      driver = File.join(outside, "Foo [Beta]", "chromedriver")
+      write_file(driver, "#!/bin/sh\n", 0o755)
+      assert_includes launch_services_rule(File.dirname(driver)), process_rule(driver)
+    end
+  end
+
   def in_drivers(versions)
     Dir.mktmpdir("maf-app-", Dir.home) do |outside|
       drivers = versions.map { |version| File.join(outside, version, "chromedriver") }
