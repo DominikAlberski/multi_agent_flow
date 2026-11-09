@@ -14,7 +14,7 @@ class BudgetTest < Minitest::Test
 
   # Regression: a bare harness entry gave the harness name as the model.
   def test_a_bare_harness_entry_gives_no_model
-    assert_nil default_model(["codex", "claude"], "codex")
+    assert_nil default_model(%w[codex claude], "codex")
   end
 
   def test_a_bare_entry_and_a_model_entry_give_no_model
