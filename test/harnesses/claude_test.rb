@@ -10,7 +10,7 @@ class ClaudeHarnessTest < Minitest::Test
 
   def test_a_fresh_run_names_the_agent_and_the_model
     fresh = harness.build_command(config(model: "haiku"), "go", nil)
-    assert_equal %w[claude -p --output-format json], fresh.first(4)
+    assert_equal %w[claude -p --output-format stream-json --verbose], fresh.first(5)
     assert_includes pairs(fresh), ["--agent", "backend-developer"]
     assert_includes pairs(fresh), ["--model", "haiku"]
     refute_includes fresh, "--resume"

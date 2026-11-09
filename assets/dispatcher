@@ -610,7 +610,7 @@ module Dispatcher
 
     def self.final(harness)
       lambda do |line|
-        event = (start = line.index('{"type"')) && Events.parse(line[start..])
+        event = (start = line.index("{")) && Events.parse(line[start..])
         next unless event && harness.final_event?(event)
 
         harness.error_event?(event) ? :final_error : :final
@@ -693,6 +693,7 @@ module Dispatcher
 
     def wait(waiter, stream)
       loop do
+        yield if block_given?
         reason = signal(stream) || final_event(stream) || (waiter.join(TICK) ? :exit : limit(stream))
         return settle(reason, waiter) if reason
       end
@@ -740,6 +741,8 @@ module Dispatcher
   # (Ctrl+C, SIGHUP) also kills the group, so no agent run outlives the
   # dispatcher. A completion signal, or a final event without an error, is
   # success even when the process must be killed. An abort signal is failure.
+  # A child that calls setsid leaves the group. Tree finds such a child, and
+  # each end of the run stops it too (TERM, then KILL after GRACE).
   module Spawn
     GRACE = 5
     TIMEOUTS = %i[timeout idle].freeze
@@ -749,7 +752,7 @@ module Dispatcher
     def self.run(cmd, env:, timeout:, limits: Limits.new(0, GRACE))
       reader, writer = IO.pipe
       pid = start(env, cmd, writer)
-      collect(pid, Stream.new(reader.tap { writer.close }, limits.final), Watch.new(timeout, limits))
+      collect(pid, Tree.new(pid), Stream.new(reader.tap { writer.close }, limits.final), Watch.new(timeout, limits))
     end
 
     def self.start(env, cmd, writer)
@@ -769,13 +772,13 @@ module Dispatcher
       exit!(127)
     end
 
-    def self.collect(pid, stream, watch)
+    def self.collect(pid, tree, stream, watch)
       waiter = Process.detach(pid)
-      reason = watch.wait(waiter, stream)
-      reason == :exit ? end_group(pid) : stop(pid, waiter)
+      reason = watch.wait(waiter, stream) { tree.refresh }
+      reason == :exit ? end_group(pid, tree) : stop(pid, waiter, tree)
       result(stream.close(watch.grace), waiter, watch, reason)
     ensure
-      stop(pid, waiter) if waiter&.alive?
+      stop(pid, waiter, tree) if waiter&.alive? || tree.survivors.any?
     end
 
     def self.result(output, waiter, watch, reason)
@@ -785,18 +788,86 @@ module Dispatcher
       Result.new(output, success, TIMEOUTS.include?(reason), reason)
     end
 
-    def self.end_group(pid)
-      Process.kill("TERM", -pid)
+    def self.end_group(pid, tree)
+      deadline = Time.now + GRACE
+      group(pid, "TERM")
+      tree.signal("TERM")
+      tree.finish(deadline)
+    end
+
+    def self.stop(pid, waiter, tree)
+      tree.refresh(force: true)
+      deadline = Time.now + GRACE
+      group(pid, "TERM")
+      tree.signal("TERM")
+      group(pid, "KILL") unless waiter.join(GRACE)
+      tree.finish(deadline)
+    end
+
+    def self.group(pid, signal)
+      Process.kill(signal, -pid)
     rescue Errno::ESRCH, Errno::EPERM
       nil
     end
 
-    def self.stop(pid, waiter)
-      Process.kill("TERM", -pid)
-      Process.kill("KILL", -pid) unless waiter.join(GRACE)
-      true
-    rescue Errno::ESRCH
-      true
+    # Tree keeps each descendant of the agent with its start time. A known pid
+    # with another start time is a new process, and Tree does not signal it.
+    class Tree
+      SCAN_EVERY = 1.0
+      PS = %w[ps -A -o pid=,ppid=,lstart=].freeze
+
+      def initialize(root)
+        @root = root
+        @known = {}
+        @scanned_at = nil
+      end
+
+      def refresh(force: false)
+        return if !force && @scanned_at && Time.now - @scanned_at < SCAN_EVERY
+
+        @scanned_at = Time.now
+        @known.merge!(scan)
+      end
+
+      def survivors = @known.select { |pid, started| Maf::Shared::Processes.same?(pid, started) }.keys
+
+      def signal(name)
+        survivors.each do |pid|
+          Process.kill(name, pid)
+        rescue Errno::ESRCH, Errno::EPERM
+          nil
+        end
+      end
+
+      def finish(deadline)
+        sleep 0.1 while survivors.any? && Time.now < deadline
+        signal("KILL")
+      end
+
+      private
+
+      def scan
+        children = rows.group_by { |_pid, ppid, _started| ppid }
+        found = {}
+        queue = [@root, *@known.keys]
+        while (parent = queue.shift)
+          children.fetch(parent, []).each do |pid, _ppid, started|
+            queue << pid unless found.key?(pid)
+            found[pid] = started
+          end
+        end
+        found
+      end
+
+      def rows
+        out = IO.popen(Maf::Shared::Processes::PS_ENV, PS, err: File::NULL, &:read).to_s
+        out.lines.filter_map do |line|
+          pid, ppid, started = line.strip.split(" ", 3)
+          [pid.to_i, ppid.to_i, started] if started
+        end
+      rescue SystemCallError
+        []
+      end
     end
   end
 
@@ -1545,10 +1616,10 @@ module Dispatcher
     def failure_limit = @failure_limit ||= FailureLimit.new(@config, @poller)
 
     def start
+      @stop = StopSignal.new
       Log.line("started: role=#{@config.role} #{harness_label} #{timing_label}")
       Log.line("sandbox: #{Maf::Shared::Sandbox.describe(Harness.for(@config), coord_dir: @config.coord_dir)}")
       @mailbox.recover
-      @stop = StopSignal.new
     end
     def timing_label = "interval=#{@config.interval}s cache_window=#{@config.cache_window}s " \
                        "max_session_runs=#{@config.max_session_runs} max_context=#{@config.max_context}"

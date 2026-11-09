@@ -332,6 +332,7 @@ class SpawnTest < Minitest::Test
     codex = Dispatcher::Limits.from(Dispatcher::Config.new, Maf::Shared::Harness["codex"]).final
     assert_equal :final, claude.call('{"type":"result","result":"ok"}')
     assert_equal :final_error, claude.call('{"type":"result","is_error":true}')
+    assert_equal :final, claude.call('{"duration_ms":5,"result":"ok","type":"result","is_error":false}')
     assert_nil claude.call('{"type":"system"}')
     assert_nil claude.call('{"jsonrpc":"2.0","id":3,"result":{}}')
     assert_equal :final, codex.call('{"type":"turn.completed","usage":{}}')
@@ -399,6 +400,69 @@ class SpawnTest < Minitest::Test
     assert stops?(File.read(pid_file).to_i)
   ensure
     FileUtils.remove_entry(dir) if dir
+  end
+
+  ESCAPE = %(#{RbConfig.ruby} -e 'Process.setsid; exec("sleep", "30")' > /dev/null 2>&1 & echo $! > %<pid>s).freeze
+  STUBBORN = %(#{RbConfig.ruby} -e 'Process.setsid; trap("TERM") {}; sleep 30' > /dev/null 2>&1 & echo $! > %<pid>s).freeze
+
+  def with_escaped_child(template = ESCAPE)
+    Dir.mktmpdir("spawn-escape-test") do |dir|
+      pid_file = File.join(dir, "pid")
+      yield format(template, pid: pid_file), -> { File.read(pid_file).to_i }
+    end
+  end
+
+  # Regression: the Claude Bash tool starts a background shell with setsid.
+  # A kill of the process group did not reach the shell.
+  def test_the_final_event_stops_a_child_in_its_own_session
+    with_escaped_child do |start, child|
+      script = %(#{start}; sleep 1.5; echo '{"type":"result","result":"ok"}'; wait)
+      result = Dispatcher::Spawn.run(["sh", "-c", script], env: {}, timeout: 20, limits: limits(final: FINAL))
+      assert_equal :final, result.reason
+      assert stops?(child.call)
+    end
+  end
+
+  def test_a_timeout_stops_a_child_in_its_own_session
+    with_escaped_child do |start, child|
+      result = Dispatcher::Spawn.run(["sh", "-c", "#{start}; sleep 30"], env: {}, timeout: 2)
+      assert result.timed_out
+      assert stops?(child.call)
+    end
+  end
+
+  def test_a_normal_exit_stops_a_child_in_its_own_session
+    with_escaped_child do |start, child|
+      result = Dispatcher::Spawn.run(["sh", "-c", "#{start}; sleep 1.5"], env: {}, timeout: 20)
+      assert result.success
+      assert stops?(child.call)
+    end
+  end
+
+  def test_a_child_that_ignores_term_gets_kill
+    with_escaped_child(STUBBORN) do |start, child|
+      started = Time.now
+      result = Dispatcher::Spawn.run(["sh", "-c", "#{start}; sleep 30"], env: {}, timeout: 2)
+      assert result.timed_out
+      assert stops?(child.call)
+      assert_operator Time.now - started, :<, 15
+    end
+  end
+
+  def test_an_interrupt_stops_a_child_in_its_own_session
+    with_escaped_child do |start, child|
+      run = Thread.new { Dispatcher::Spawn.run(["sh", "-c", "#{start}; sleep 30"], env: {}, timeout: 60) }
+      sleep 1.5
+      run.raise(Interrupt)
+      assert_raises(Interrupt) { run.join }
+      assert stops?(child.call)
+    end
+  end
+
+  def test_the_tree_ignores_a_reused_pid
+    tree = Dispatcher::Spawn::Tree.new(Process.pid)
+    tree.instance_variable_set(:@known, { Process.pid => "Thu Jan  1 00:00:00 1970" })
+    assert_empty tree.survivors
   end
 
   # A killed child can stay a zombie until its new parent reaps it.
@@ -1352,7 +1416,8 @@ class StopSignalTest < Minitest::Test
     env = { "COORD_DIR" => dir, "DISPATCHER_LOG" => File.join(dir, "log") }
     pid = spawn(env, RbConfig.ruby, script, "tester", "--command", "true", "--interval", "600",
                 "--no-poll-tasks", chdir: dir)
-    sleep 1
+    log = File.join(dir, "log")
+    100.times { File.exist?(log) && File.read(log).include?("started:") ? break : sleep(0.1) }
     Process.kill("TERM", pid)
     _, status = Process.wait2(pid)
 
