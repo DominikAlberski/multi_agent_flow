@@ -12,6 +12,15 @@
   ends the run after the grace window, and the dispatcher stops the process group. A final event with
   `"is_error": true` is a failure. After a normal exit, the process group gets TERM, so no background
   job outlives the run. The one-shot prompt tells the agent to run each command in the foreground.
+- Fixed: the final event did not end a Claude Code run. With `--output-format json`, `claude -p`
+  prints its result only at the exit, after each background job ends. The dispatcher now starts
+  Claude Code with `--output-format stream-json --verbose`, so the result event comes first. The final
+  event check also found no event that had other keys in front of `"type"`.
+- Fixed: a background job of the agent outlived the run. The Claude Code Bash tool starts each
+  background shell in a new session, so a stop of the process group did not reach the shell. The
+  dispatcher now records each descendant of the agent with its start time while the run goes on. At
+  the end of the run, it sends TERM to each descendant that still runs, and KILL after the grace
+  window. A process that calls `setsid` and then forks before the next scan (each second) can escape.
 - Fixed: the dispatcher escalated LaunchServices denials of other sandboxes, for example of macOS
   services. The maf profile now tags its denials with the project, and the dispatcher reads only these.
 - Changed: all dispatchers of a project report a sandbox app once, until `.maf/sandbox.json` changes.

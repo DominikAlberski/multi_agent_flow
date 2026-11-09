@@ -100,13 +100,16 @@ module Maf
            "--", prompt]
         end
 
-        # `claude -p` prints one JSON object with session_id and result.
+        # `claude -p` prints one JSON event per line. The result event holds
+        # session_id and result, and comes before the exit.
         # LEAN starts no MCP server outside --mcp-config and lists no skill.
         # The user's CLAUDE.md and hooks stay.
         LEAN = %w[--strict-mcp-config --disable-slash-commands].freeze
 
+        PRINT = %w[claude -p --output-format stream-json --verbose --permission-mode bypassPermissions].freeze
+
         def build_command(config, prompt, session_id)
-          cmd = %w[claude -p --output-format json --permission-mode bypassPermissions --agent] + [config.role]
+          cmd = PRINT + ["--agent", config.role]
           cmd += model_flag(config.model) + effort_flag(config.effort)
           cmd += LEAN if config.lean
           cmd + flag_if("--mcp-config", run_file(config, "mcp", "claude.json")) +
