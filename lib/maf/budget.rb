@@ -33,8 +33,8 @@ module Maf
 
     # With exactly one allowed model for the harness, maf uses that model.
     def default_model(harness)
-      models = @allow.map { |spec| spec.split(":", 2) }.select { |name, _| name == harness }.map(&:last)
-      models.size == 1 ? models.first : nil
+      specs = @allow.map { |spec| spec.split(":", 2) }.select { |name, _| name == harness }
+      specs.size == 1 ? specs.first[1] : nil
     end
 
     def check!(harness, model, count)
